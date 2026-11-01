@@ -55,9 +55,18 @@ public final class TerminalAppModel {
     public private(set) var keys: [SSHKeyRecord] = []
     @ObservationIgnored private var connections: [UUID: SSHConnection] = [:]
 
+    // MARK: Remote development
+    public private(set) var builds: BuildCenter!
+
     public init(dependencies: AppDependencies) {
         self.dependencies = dependencies
         self.preferredMode = dependencies.preferences.preferredMode
+        self.builds = BuildCenter(dependencies: dependencies) { [weak self] hostID in
+            guard let self, let host = self.hosts.first(where: { $0.id == hostID }) else {
+                throw RemoteSessionError.unknownHost
+            }
+            return try await self.connection(for: host)
+        }
     }
 
     /// Wires prompts and loads persisted state. Call once from the root view.
@@ -67,6 +76,7 @@ public final class TerminalAppModel {
         }
         hosts = await dependencies.hostStore.all()
         keys = dependencies.keyManager.list()
+        await builds.reload()
         await refreshCapabilities()
         await DiagnosticLog.shared.record(.info, "app", "Started", metadata: ["build": dependencies.distribution.rawValue, "mode": preferredMode.rawValue])
     }
@@ -355,10 +365,12 @@ public final class TerminalAppModel {
 
 public enum RemoteSessionError: Error, LocalizedError, Equatable {
     case missingPassword(String)
+    case unknownHost
 
     public var errorDescription: String? {
         switch self {
         case .missingPassword(let host): "No password is saved for \(host). Edit the host to add one."
+        case .unknownHost: "The host for this build is no longer saved."
         }
     }
 }

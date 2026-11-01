@@ -18,6 +18,7 @@ import PackageDescription
 //   BuildOrchestrator            remote Swift / Xcode / .NET build and test runs, log parsing.
 //   ArtifactManager              artifact index and verified downloads.
 //   TerminalUI                   SwiftUI interface. Views compile on Apple platforms only.
+//   UnleashedIntegration         wires the Unleashed backend into TerminalUI (Unleashed app target only).
 //
 // The module the request calls "Security" is named `TerminalSecurity` so it does not shadow
 // Apple's Security framework (which it imports for Keychain access).
@@ -38,6 +39,8 @@ let package = Package(
         .library(name: "BuildOrchestrator", targets: ["BuildOrchestrator"]),
         .library(name: "ArtifactManager", targets: ["ArtifactManager"]),
         .library(name: "TerminalUI", targets: ["TerminalUI"]),
+        // Linked only by the Unleashed app target.
+        .library(name: "UnleashedIntegration", targets: ["UnleashedIntegration"]),
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.65.0"),
@@ -89,6 +92,13 @@ let package = Package(
                 "LocalCommandEngine", "VanillaExecutionProvider", "RemoteSSH", "DeveloperWorkspace",
                 "BuildOrchestrator", "ArtifactManager",
                 .product(name: "SwiftTerm", package: "SwiftTerm", condition: .when(platforms: [.iOS, .macOS])),
+            ]
+        ),
+        .target(
+            name: "UnleashedIntegration",
+            dependencies: [
+                "TerminalUI", "UnleashedExecutionProvider", "TerminalCapabilityProvider", "TerminalCore",
+                "TerminalSecurity", "FileWorkspace",
             ]
         ),
 
