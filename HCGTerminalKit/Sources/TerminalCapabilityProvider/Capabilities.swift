@@ -211,3 +211,16 @@ public struct UnleashedNotIncludedCapabilityProvider: TerminalCapabilityProvider
         )
     }
 }
+
+/// Plain-text rendering of a capability report (for the `capabilities` built-in and exports).
+public enum CapabilityReportFormatter {
+    public static func text(_ report: CapabilityReport) -> String {
+        var lines = ["\(report.mode.displayName) capabilities — \(report.headline)"]
+        for result in report.results {
+            lines.append("  \(result.kind.title.padding(toLength: 30, withPad: " ", startingAt: 0))\(result.availability.label)")
+            if let detail = result.availability.detail { lines.append("      \(detail)") }
+        }
+        for note in report.buildNotes { lines.append("  Note: \(note)") }
+        return lines.joined(separator: "\n")
+    }
+}
