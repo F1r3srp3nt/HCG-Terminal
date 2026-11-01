@@ -110,7 +110,7 @@ let package = Package(
         ),
         .testTarget(
             name: "TerminalUITests",
-            dependencies: ["TerminalUI", "TerminalCore", "TerminalCapabilityProvider", "TerminalSecurity"]
+            dependencies: ["TerminalUI", "TerminalCore", "TerminalCapabilityProvider", "TerminalSecurity", "FileWorkspace", "LocalCommandEngine"]
         ),
     ],
     swiftLanguageModes: [.v6]
