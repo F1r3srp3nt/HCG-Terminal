@@ -224,6 +224,54 @@ final class UnleashedRealExecutionTests: XCTestCase {
     }
 }
 
+final class WorkingDirectoryStrategyTests: XCTestCase {
+    func testLaunchPlans() throws {
+        XCTAssertEqual(
+            try POSIX.launchPlan(executable: "/bin/zsh", arguments: ["-l"], workingDirectory: nil, strategy: .shellTrampoline),
+            POSIX.LaunchPlan(argv: ["/bin/zsh", "-l"], chdirFileAction: nil)
+        )
+        XCTAssertEqual(
+            try POSIX.launchPlan(executable: "/bin/sh", arguments: ["-l"], workingDirectory: "/tmp", strategy: .fileAction),
+            POSIX.LaunchPlan(argv: ["/bin/sh", "-l"], chdirFileAction: "/tmp")
+        )
+        let trampoline = try POSIX.launchPlan(executable: "/var/jb/bin/bash", arguments: ["-l"], workingDirectory: "/var/mobile", strategy: .shellTrampoline)
+        XCTAssertNil(trampoline.chdirFileAction)
+        XCTAssertEqual(Array(trampoline.argv.suffix(4)), ["hcg-chdir", "/var/mobile", "/var/jb/bin/bash", "-l"])
+        XCTAssertThrowsError(try POSIX.launchPlan(executable: "/usr/bin/dpkg-query", arguments: [], workingDirectory: "/tmp", strategy: .shellTrampoline))
+        #if os(iOS)
+        XCTAssertEqual(POSIX.WorkingDirectoryStrategy.platformDefault, .shellTrampoline)
+        #else
+        XCTAssertEqual(POSIX.WorkingDirectoryStrategy.platformDefault, .fileAction)
+        #endif
+    }
+
+    /// Runs the iOS code path (shell trampoline) for real on this host, including a directory
+    /// with spaces and quotes, and a directory that does not exist.
+    func testTrampolineStartsShellInDirectory() async throws {
+        try XCTSkipUnless(FileManager.default.isExecutableFile(atPath: "/bin/sh"))
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("hcg dir 'q' \(UUID().uuidString.prefix(6))").path
+        try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+
+        for (requested, expectInside) in [(directory, true), ("/nonexistent-hcg-dir", false)] {
+            let process = try PTYProcess.spawn(
+                executable: "/bin/sh", arguments: [], environment: ["PATH": "/usr/bin:/bin", "PS1": "$ "],
+                workingDirectory: requested, size: .standard, workingDirectoryStrategy: .shellTrampoline
+            )
+            let (stream, continuation) = AsyncStream<[UInt8]>.makeStream()
+            process.startReading(onData: { continuation.yield($0) }, onExit: { _ in continuation.finish() })
+            try process.write(Array("printf 'CWD=[%s]\\n' \"$(pwd)\"; exit\r".utf8))
+            var text = ""
+            for await chunk in stream { text += String(decoding: chunk, as: UTF8.self) }
+            if expectInside {
+                XCTAssertTrue(text.contains("CWD=[\(directory)]"), text)
+            } else {
+                XCTAssertTrue(text.contains("CWD=["), "shell must still start: \(text)")
+            }
+        }
+    }
+}
+
 final class CommandGuardTests: XCTestCase {
     func testGuardSuspendedInAlternateScreenAndPasswordPrompts() {
         var guardState = CommandGuard()

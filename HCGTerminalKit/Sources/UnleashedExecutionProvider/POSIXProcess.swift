@@ -12,9 +12,12 @@ public enum ProcessSpawnError: Error, LocalizedError, Equatable {
     case pseudoTerminal(String)
     case spawn(executable: String, errno: Int32, message: String)
     case pipe(String)
+    case workingDirectoryUnsupported(executable: String)
 
     public var errorDescription: String? {
         switch self {
+        case .workingDirectoryUnsupported(let executable):
+            "Cannot start \(executable) in a chosen directory on this platform: only POSIX shells can change directory before starting."
         case .pseudoTerminal(let message): "Could not open a pseudo-terminal: \(message)"
         case .spawn(let executable, let code, let message): "Could not start \(executable): \(message) (errno \(code))"
         case .pipe(let message): "Could not create a pipe: \(message)"
@@ -50,6 +53,53 @@ enum POSIX {
         return pointers.withUnsafeMutableBufferPointer { body($0.baseAddress!) }
     }
 
+    /// How the child is started in a working directory.
+    enum WorkingDirectoryStrategy: Sendable {
+        /// `posix_spawn_file_actions_addchdir_np` (macOS, Linux).
+        case fileAction
+        /// The iOS SDK marks `posix_spawn_file_actions_addchdir_np` unavailable, so a POSIX shell
+        /// changes directory itself and then `exec`s the real program (no extra process remains).
+        case shellTrampoline
+
+        static var platformDefault: WorkingDirectoryStrategy {
+            #if os(iOS) || os(tvOS) || os(watchOS) || os(visionOS)
+            .shellTrampoline
+            #else
+            .fileAction
+            #endif
+        }
+    }
+
+    static let posixShellNames: Set<String> = ["sh", "bash", "zsh", "dash", "ksh", "mksh", "ash", "yash"]
+
+    struct LaunchPlan: Equatable {
+        var argv: [String]
+        /// Directory to apply with a spawn file action, if any.
+        var chdirFileAction: String?
+    }
+
+    /// Builds argv for `executable` so that it starts in `workingDirectory`.
+    static func launchPlan(
+        executable: String,
+        arguments: [String],
+        workingDirectory: String?,
+        strategy: WorkingDirectoryStrategy
+    ) throws -> LaunchPlan {
+        guard let workingDirectory else { return LaunchPlan(argv: [executable] + arguments, chdirFileAction: nil) }
+        switch strategy {
+        case .fileAction:
+            return LaunchPlan(argv: [executable] + arguments, chdirFileAction: workingDirectory)
+        case .shellTrampoline:
+            guard posixShellNames.contains((executable as NSString).lastPathComponent) else {
+                throw ProcessSpawnError.workingDirectoryUnsupported(executable: executable)
+            }
+            // $0 = "hcg-chdir", $1 = directory, then the real argv. If the directory cannot be
+            // entered, the program still starts (in the inherited directory), as a login shell would.
+            let script = #"cd -- "$1" 2>/dev/null; shift; exec "$@""#
+            return LaunchPlan(argv: [executable, "-c", script, "hcg-chdir", workingDirectory, executable] + arguments, chdirFileAction: nil)
+        }
+    }
+
     /// Spawns `executable` with the given stdio setup. The child gets a default signal
     /// disposition, an empty signal mask and (optionally) its own session.
     static func spawn(
@@ -58,8 +108,10 @@ enum POSIX {
         environment: [String],
         workingDirectory: String?,
         newSession: Bool,
+        workingDirectoryStrategy: WorkingDirectoryStrategy = .platformDefault,
         configure: (inout FileActions) -> Void
     ) throws -> pid_t {
+        let plan = try launchPlan(executable: executable, arguments: arguments, workingDirectory: workingDirectory, strategy: workingDirectoryStrategy)
         #if canImport(Darwin)
         var actions: FileActions = nil
         var attributes: Attributes = nil
@@ -74,8 +126,13 @@ enum POSIX {
             posix_spawnattr_destroy(&attributes)
         }
         configure(&actions)
-        if let workingDirectory {
-            posix_spawn_file_actions_addchdir_np(&actions, workingDirectory)
+        if let directory = plan.chdirFileAction {
+            #if os(iOS) || os(tvOS) || os(watchOS) || os(visionOS)
+            // Unreachable: `.platformDefault` is `.shellTrampoline` here, which never sets a file action.
+            throw ProcessSpawnError.workingDirectoryUnsupported(executable: executable + " (" + directory + ")")
+            #else
+            posix_spawn_file_actions_addchdir_np(&actions, directory)
+            #endif
         }
 
         var defaultSignals = sigset_t()
@@ -89,8 +146,7 @@ enum POSIX {
         posix_spawnattr_setflags(&attributes, Int16(truncatingIfNeeded: flags))
 
         var pid: pid_t = 0
-        let argv = [executable] + arguments
-        let result = withCStrings(argv) { argvPointer in
+        let result = withCStrings(plan.argv) { argvPointer in
             withCStrings(environment) { envPointer in
                 posix_spawn(&pid, executable, &actions, &attributes, argvPointer, envPointer)
             }
@@ -124,6 +180,22 @@ public final class PTYProcess: @unchecked Sendable {
         workingDirectory: String?,
         size: TerminalSize
     ) throws -> PTYProcess {
+        try spawn(
+            executable: executable, arguments: arguments, environment: environment,
+            workingDirectory: workingDirectory, size: size, workingDirectoryStrategy: .platformDefault
+        )
+    }
+
+    /// Same as the public `spawn`, with the working-directory strategy selectable (tests use this
+    /// to exercise the iOS trampoline on other platforms).
+    static func spawn(
+        executable: String,
+        arguments: [String],
+        environment: [String: String],
+        workingDirectory: String?,
+        size: TerminalSize,
+        workingDirectoryStrategy: POSIX.WorkingDirectoryStrategy
+    ) throws -> PTYProcess {
         let (master, secondaryName) = try openPseudoTerminal()
         _ = fcntl(master, F_SETFD, FD_CLOEXEC)
         setWindowSize(master, size)
@@ -132,7 +204,7 @@ public final class PTYProcess: @unchecked Sendable {
         do {
             let pid = try POSIX.spawn(
                 executable: executable, arguments: arguments, environment: env,
-                workingDirectory: workingDirectory, newSession: true
+                workingDirectory: workingDirectory, newSession: true, workingDirectoryStrategy: workingDirectoryStrategy
             ) { actions in
                 // Opening the terminal after setsid() makes it the controlling terminal on Linux.
                 // On Darwin it becomes stdio but not the controlling terminal (documented limitation).
