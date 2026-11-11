@@ -44,7 +44,7 @@ open HCGTerminal.xcodeproj
 # Scheme "HCGTerminal" for the standard build, "HCGTerminalUnleashed" for the Unleashed build.
 ```
 
-Set your team under Signing & Capabilities. The app icon set is an empty placeholder.
+Set your team under Signing & Capabilities. The app icon is `HCGTerminal/Resources/Assets.xcassets/AppIcon.appiconset` (iPhone, iPad and App Store sizes), shared by both targets.
 
 ### Package tests
 

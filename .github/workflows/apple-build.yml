@@ -1,7 +1,8 @@
 # Compile-only checks on GitHub-hosted macOS runners.
 #
-# - iOS: Release builds and UNSIGNED archives of both schemes, the way HCG Executable Maker
-#   invokes xcodebuild, plus which target and bundle identifier each scheme really produces.
+# - iOS: Debug and Release builds and UNSIGNED archives of both schemes, the way HCG Executable
+#   Maker invokes xcodebuild, plus which target and bundle identifier each scheme really produces
+#   and the app icon metadata of every built app (Scripts/verify_app_icons.py).
 # - macOS: the HCGTerminalKit package (Darwin code paths) builds and its tests run.
 #
 # No signing identities, profiles or secrets are used, nothing is exported to an IPA, and
@@ -18,7 +19,7 @@ permissions:
 
 jobs:
   ios:
-    name: iOS Release · ${{ matrix.scheme }}
+    name: iOS · ${{ matrix.scheme }}
     runs-on: macos-latest
     timeout-minutes: 60
     strategy:
@@ -39,9 +40,12 @@ jobs:
       - name: Schemes and targets
         run: |
           xcodebuild -list -project HCGTerminal.xcodeproj
-          xcodebuild -project HCGTerminal.xcodeproj -scheme "${{ matrix.scheme }}" -configuration Release \
-            -destination generic/platform=iOS -showBuildSettings 2>/dev/null \
-            | grep -E "^ *(TARGET_NAME|PRODUCT_BUNDLE_IDENTIFIER|SWIFT_ACTIVE_COMPILATION_CONDITIONS|SWIFT_VERSION|IPHONEOS_DEPLOYMENT_TARGET) =" | sort -u
+          for configuration in Debug Release; do
+            echo "-- $configuration"
+            xcodebuild -project HCGTerminal.xcodeproj -scheme "${{ matrix.scheme }}" -configuration $configuration \
+              -destination generic/platform=iOS -showBuildSettings 2>/dev/null \
+              | grep -E "^ *(TARGET_NAME|PRODUCT_BUNDLE_IDENTIFIER|ASSETCATALOG_COMPILER_APPICON_NAME|CODE_SIGN_STYLE|CODE_SIGN_ENTITLEMENTS|DEVELOPMENT_TEAM|SWIFT_ACTIVE_COMPILATION_CONDITIONS|SWIFT_VERSION|IPHONEOS_DEPLOYMENT_TARGET|TARGETED_DEVICE_FAMILY) =" | sort -u
+          done
 
       - name: Release build (iphoneos, signing disabled)
         run: |
@@ -50,6 +54,26 @@ jobs:
           xcodebuild -project HCGTerminal.xcodeproj -scheme "${{ matrix.scheme }}" -configuration Release \
             -destination generic/platform=iOS -derivedDataPath "$RUNNER_TEMP/DD-build" \
             COMPILER_INDEX_STORE_ENABLE=NO CODE_SIGNING_ALLOWED=NO build 2>&1 | tee "logs/${{ matrix.scheme }}-release-build.log"
+
+      - name: Debug build (iphoneos, signing disabled)
+        if: always()
+        run: |
+          set -o pipefail
+          mkdir -p logs
+          xcodebuild -project HCGTerminal.xcodeproj -scheme "${{ matrix.scheme }}" -configuration Debug \
+            -destination generic/platform=iOS -derivedDataPath "$RUNNER_TEMP/DD-debug" \
+            COMPILER_INDEX_STORE_ENABLE=NO CODE_SIGNING_ALLOWED=NO build 2>&1 | tee "logs/${{ matrix.scheme }}-debug-build.log"
+
+      - name: App icon metadata (Debug and Release builds)
+        if: always()
+        run: |
+          status=0
+          for config in debug:Debug build:Release; do
+            dd=${config%%:*}; name=${config##*:}
+            app="$RUNNER_TEMP/DD-$dd/Build/Products/$name-iphoneos/${{ matrix.scheme }}.app"
+            if [ -d "$app" ]; then python3 Scripts/verify_app_icons.py "$app" || status=1; else echo "No $name app at $app"; status=1; fi
+          done
+          exit $status
 
       - name: Unsigned archive (as HCG Executable Maker's Unsigned mode)
         if: always()
@@ -74,6 +98,7 @@ jobs:
             /usr/libexec/PlistBuddy -c "Print :MinimumOSVersion" "$app/Info.plist" || true
             lipo -info "$app/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Info.plist")"
             codesign -dv "$app" 2>&1 || echo "(not signed, as expected)"
+            python3 Scripts/verify_app_icons.py "$app"
           done
 
       - name: Diagnostics summary

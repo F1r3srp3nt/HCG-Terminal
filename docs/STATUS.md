@@ -56,4 +56,3 @@ Fixed after the first Xcode builds:
 - Importing existing private keys (only on-device Ed25519 generation); RSA keys (not supported by SwiftNIO SSH).
 - SFTP; artifacts transfer over the exec channel.
 - Reconnecting dropped SSH sessions automatically.
-- An app icon (the asset slot is empty).
