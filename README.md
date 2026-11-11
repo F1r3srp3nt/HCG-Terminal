@@ -2,7 +2,7 @@
 
 Native SwiftUI terminal for iPhone and iPad by Hakmi Capital Group. Local commands, remote SSH development, remote Swift / Xcode / .NET builds and tests, logs and artifacts.
 
-**Status: v0.1 development build.** The core modules are built and tested; the SwiftUI views and the iOS app targets have not yet been compiled with Xcode. See [`docs/STATUS.md`](docs/STATUS.md) for what is verified and what is not.
+**Status: v0.1 development build.** Both iOS schemes build and archive (unsigned) with Xcode 26.6 in CI; nothing has been signed, exported or run on a device yet. See [`docs/STATUS.md`](docs/STATUS.md) for what is verified and what is not.
 
 ## Modes
 
