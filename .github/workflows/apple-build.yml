@@ -75,6 +75,33 @@ jobs:
           done
           exit $status
 
+      - name: Encryption inventory (read-only)
+        if: always()
+        # Evidence for export compliance: which crypto the shipped binary links or contains.
+        # Symbols are read from the unstripped Release build product; the archive is stripped.
+        run: |
+          app="$RUNNER_TEMP/DD-build/Build/Products/Release-iphoneos/${{ matrix.scheme }}.app"
+          [ -d "$app" ] || { echo "No Release app"; exit 1; }
+          bin="$app/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Info.plist")"
+          echo "== $bin"
+          echo "-- linked dynamic libraries and frameworks (otool -L):"
+          otool -L "$bin" | tail -n +2
+          echo "-- embedded frameworks / dylibs in the bundle:"
+          ls "$app/Frameworks" 2>/dev/null || echo "none"
+          find "$app" -name "*.dylib" -o -name "*.framework" | sed "s#$app/##" || true
+          printf -- "-- Swift symbols imported from Apple CryptoKit (undefined \$s9CryptoKit...): "
+          nm -u "$bin" | grep -c 's9CryptoKit' || true
+          echo "-- distinct CryptoKit types referenced:"
+          nm -u "$bin" | grep -oE '9CryptoKit[0-9]+[A-Za-z0-9]+' | sort -u | head -40 || true
+          printf -- "-- BoringSSL symbols defined in the binary (CCryptoBoringSSL_*): "
+          nm "$bin" | grep -c 'CCryptoBoringSSL' || true
+          printf -- "-- OpenSSL/BoringSSL-style C symbols defined (EVP_, AES_encrypt, SSL_CTX, CRYPTO_): "
+          nm "$bin" | grep -cE ' [TtDdSs] _(EVP_|AES_encrypt|SSL_CTX|CRYPTO_)' || true
+          printf -- "-- 'BoringSSL'/'OpenSSL' strings in the binary: "
+          strings -a "$bin" | grep -ciE 'boringssl|openssl' || true
+          echo "-- SSH algorithm names compiled in:"
+          strings -a "$bin" | grep -oE '^(aes(128|256)-gcm@openssh\.com|curve25519-sha256(@libssh\.org)?|ecdh-sha2-nistp(256|384|521)|ssh-ed25519|ecdsa-sha2-nistp(256|384|521))$' | sort -u || true
+
       - name: Unsigned archive (as HCG Executable Maker's Unsigned mode)
         if: always()
         run: |
