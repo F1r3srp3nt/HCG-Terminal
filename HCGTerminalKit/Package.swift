@@ -102,18 +102,21 @@ let package = Package(
             ]
         ),
 
+        // Shared helpers for tests (deadlines for stream-based tests). Not a product.
+        .target(name: "TerminalTestSupport", dependencies: ["TerminalCore"], path: "Tests/TerminalTestSupport"),
+
         .testTarget(name: "TerminalCoreTests", dependencies: ["TerminalCore"]),
         .testTarget(name: "TerminalSecurityTests", dependencies: ["TerminalSecurity", "TerminalCore"]),
         .testTarget(name: "FileWorkspaceTests", dependencies: ["FileWorkspace", "TerminalCore"]),
-        .testTarget(name: "LocalCommandEngineTests", dependencies: ["LocalCommandEngine", "FileWorkspace", "TerminalCore"]),
+        .testTarget(name: "LocalCommandEngineTests", dependencies: ["LocalCommandEngine", "FileWorkspace", "TerminalCore", "TerminalTestSupport"]),
         .testTarget(
             name: "ExecutionProviderTests",
             dependencies: [
                 "VanillaExecutionProvider", "UnleashedExecutionProvider", "TerminalCapabilityProvider",
-                "TerminalSecurity", "LocalCommandEngine", "FileWorkspace", "TerminalCore", "Diagnostics",
+                "TerminalSecurity", "LocalCommandEngine", "FileWorkspace", "TerminalCore", "Diagnostics", "TerminalTestSupport",
             ]
         ),
-        .testTarget(name: "RemoteSSHTests", dependencies: ["RemoteSSH", "TerminalSecurity", "TerminalCore"]),
+        .testTarget(name: "RemoteSSHTests", dependencies: ["RemoteSSH", "TerminalSecurity", "TerminalCore", "TerminalTestSupport"]),
         .testTarget(
             name: "DeveloperToolsTests",
             dependencies: ["DeveloperWorkspace", "BuildOrchestrator", "ArtifactManager", "FileWorkspace", "TerminalCore"]

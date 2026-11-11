@@ -4,6 +4,7 @@ import LocalCommandEngine
 import TerminalCapabilityProvider
 import TerminalCore
 import TerminalSecurity
+import TerminalTestSupport
 @testable import UnleashedExecutionProvider
 import VanillaExecutionProvider
 import XCTest
@@ -116,14 +117,11 @@ final class UnleashedDetectionTests: XCTestCase {
 /// These run real processes on the machine executing the tests (Linux CI, or a Mac).
 final class UnleashedRealExecutionTests: XCTestCase {
     private func collect(_ session: LocalProcessSession, until predicate: @escaping @Sendable (String) -> Bool) -> Task<String, Never> {
-        Task {
-            var text = ""
-            for await event in session.events {
-                if case .output(let bytes) = event { text += String(decoding: bytes, as: UTF8.self) }
-                if case .stateChanged(let state) = event, state.isTerminal { break }
-                if predicate(text) { break }
-            }
-            return text
+        let events = session.events
+        return Task {
+            let output = await collectOutput(events, until: predicate)
+            if output.timedOut { XCTFail("Timed out waiting for terminal output. Received: \(output.text.debugDescription)") }
+            return output.text
         }
     }
 
@@ -165,9 +163,11 @@ final class UnleashedRealExecutionTests: XCTestCase {
     func testExitStatusIsReported() async throws {
         try XCTSkipUnless(FileManager.default.isExecutableFile(atPath: "/bin/sh"))
         let session = LocalProcessSession(executable: "/bin/sh", arguments: [], environment: ["PATH": "/usr/bin:/bin", "PS1": "$ "], workingDirectory: "/", observations: RuntimeObservations(), gate: AuthorizationGate())
+        let events = session.events
         let states = Task { () -> SessionState? in
-            for await event in session.events { if case .stateChanged(let s) = event, case .exited = s { return s } }
-            return nil
+            let output = await collectOutput(events)
+            if output.timedOut { XCTFail("Timed out waiting for the shell to exit. Received: \(output.text.debugDescription)") }
+            return output.finalState
         }
         try await session.start(size: .standard)
         try await session.send(text: "exit 7\r")
@@ -258,11 +258,16 @@ final class WorkingDirectoryStrategyTests: XCTestCase {
                 executable: "/bin/sh", arguments: [], environment: ["PATH": "/usr/bin:/bin", "PS1": "$ "],
                 workingDirectory: requested, size: .standard, workingDirectoryStrategy: .shellTrampoline
             )
-            let (stream, continuation) = AsyncStream<[UInt8]>.makeStream()
-            process.startReading(onData: { continuation.yield($0) }, onExit: { _ in continuation.finish() })
+            let (stream, continuation) = AsyncStream<TerminalEvent>.makeStream()
+            process.startReading(
+                onData: { continuation.yield(.output($0)) },
+                onExit: { continuation.yield(.stateChanged(.exited(status: $0))); continuation.finish() }
+            )
             try process.write(Array("printf 'CWD=[%s]\\n' \"$(pwd)\"; exit\r".utf8))
-            var text = ""
-            for await chunk in stream { text += String(decoding: chunk, as: UTF8.self) }
+            let output = await collectOutput(stream)
+            if output.timedOut { process.terminate() }
+            XCTAssertFalse(output.timedOut, "timed out: \(output.text.debugDescription)")
+            let text = output.text
             if expectInside {
                 XCTAssertTrue(text.contains("CWD=[\(directory)]"), text)
             } else {

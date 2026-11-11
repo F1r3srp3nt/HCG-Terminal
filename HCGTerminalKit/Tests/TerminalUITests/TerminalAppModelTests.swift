@@ -144,7 +144,8 @@ final class TerminalAppModelTests: XCTestCase {
         await model.bootstrap()
         let request = AuthorizationRequest(title: "t", commandLine: "sudo x", target: .local(.unleashed), reasons: ["r"])
         async let decision = model.dependencies.gate.requestAuthorization(request)
-        while model.authorizationPrompt == nil { try await Task.sleep(nanoseconds: 1_000_000) }
+        for _ in 0..<5_000 where model.authorizationPrompt == nil { try await Task.sleep(nanoseconds: 1_000_000) }
+        XCTAssertNotNil(model.authorizationPrompt, "authorization prompt never appeared")
         XCTAssertEqual(model.authorizationPrompt?.request.commandLine, "sudo x")
         model.answerAuthorization(false)
         let granted = await decision

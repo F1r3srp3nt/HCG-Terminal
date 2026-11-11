@@ -3,6 +3,7 @@ import Foundation
 import RemoteSSH
 import TerminalCore
 import TerminalSecurity
+import TerminalTestSupport
 import XCTest
 
 /// Integration tests against a real OpenSSH server. Start one with
@@ -119,13 +120,11 @@ final class RemoteSSHIntegrationTests: XCTestCase {
         XCTAssertEqual(first.target, .remote(endpoint))
         XCTAssertEqual(first.backend, .sshShell)
 
+        let firstEvents = first.events
         let output = Task { () -> String in
-            var text = ""
-            for await event in first.events {
-                if case .output(let bytes) = event { text += String(decoding: bytes, as: UTF8.self) }
-                if text.contains("RESIZED-30x100") { break }
-            }
-            return text
+            let collected = await collectOutput(firstEvents) { $0.contains("RESIZED-30x100") }
+            XCTAssertFalse(collected.timedOut, "timed out: \(collected.text.debugDescription)")
+            return collected.text
         }
         try await first.send(text: "stty size; echo MARK-$((2+3))\r")
         try await Task.sleep(nanoseconds: 500_000_000)
@@ -139,13 +138,11 @@ final class RemoteSSHIntegrationTests: XCTestCase {
 
         // Closing one session leaves the other session and the connection usable.
         await first.close()
+        let secondEvents = second.events
         let secondOutput = Task { () -> String in
-            var text = ""
-            for await event in second.events {
-                if case .output(let bytes) = event { text += String(decoding: bytes, as: UTF8.self) }
-                if text.contains("STILL-7") { break }
-            }
-            return text
+            let collected = await collectOutput(secondEvents) { $0.contains("STILL-7") }
+            XCTAssertFalse(collected.timedOut, "timed out: \(collected.text.debugDescription)")
+            return collected.text
         }
         try await second.send(text: "echo STILL-$((3+4))\r")
         let secondText = await secondOutput.value
@@ -160,12 +157,10 @@ final class RemoteSSHIntegrationTests: XCTestCase {
         let connection = try await connect()
         let session = try await connection.openSession(size: .standard, command: "printf 'claude-placeholder\\n'; exit 4")
         guard case .sshCommand = session.backend else { return XCTFail() }
-        var state: SessionState?
-        var text = ""
-        for await event in session.events {
-            if case .output(let bytes) = event { text += String(decoding: bytes, as: UTF8.self) }
-            if case .stateChanged(let s) = event, s.isTerminal { state = s; break }
-        }
+        let collected = await collectOutput(session.events)
+        XCTAssertFalse(collected.timedOut, "timed out: \(collected.text.debugDescription)")
+        let state = collected.finalState
+        let text = collected.text
         XCTAssertTrue(text.contains("claude-placeholder"))
         XCTAssertEqual(state, .exited(status: 4))
         await connection.close()

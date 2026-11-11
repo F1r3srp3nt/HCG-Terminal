@@ -2,6 +2,7 @@ import FileWorkspace
 import Foundation
 @testable import LocalCommandEngine
 import TerminalCore
+import TerminalTestSupport
 import XCTest
 
 final class CommandParserTests: XCTestCase {
@@ -150,13 +151,13 @@ final class BuiltinShellSessionTests: XCTestCase {
 
     func testInteractiveTypingProducesOutput() async throws {
         let session = makeSession()
+        let events = session.events
         let collected = Task { () -> String in
-            var text = ""
-            for await event in session.events {
-                if case .output(let bytes) = event { text += String(decoding: bytes, as: UTF8.self) }
-                if text.contains("hello-from-test") && text.hasSuffix("$ ") && text.components(separatedBy: "$ ").count >= 3 { break }
+            let output = await collectOutput(events) { text in
+                text.contains("hello-from-test") && text.hasSuffix("$ ") && text.components(separatedBy: "$ ").count >= 3
             }
-            return text
+            XCTAssertFalse(output.timedOut, "timed out: \(output.text.debugDescription)")
+            return output.text
         }
         try await session.start(size: .standard)
         try await session.send(text: "echo hello-from-test\r")
