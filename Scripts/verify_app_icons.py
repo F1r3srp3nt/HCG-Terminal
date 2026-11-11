@@ -10,9 +10,14 @@ Reports, from the built product (not from the source asset catalog):
     (needs `xcrun assetutil`, i.e. macOS with Xcode);
   - loose icon PNGs Xcode copies into the bundle.
 
-Fails (exit 1) when the icon name is missing from the plist, or when the compiled catalog lacks
-the iPhone home-screen icons (120, 180 px) or the iPad home-screen icons (152, 167 px).
+Fails (exit 1) when CFBundleIcons or CFBundleIcons~ipad does not name the icon set in
+CFBundlePrimaryIcon.CFBundleIconName, or when the compiled catalog lacks the iPhone home-screen
+icons (120, 180 px), the iPad home-screen icons (152, 167 px) or the App Store icon (1024 px).
 Everything else is reported, not enforced.
+
+On iOS, CFBundleIconName belongs inside CFBundleIcons / CFBundlePrimaryIcon; that is where actool
+writes it (verified with Xcode 26.6). A top-level CFBundleIconName is the macOS location and is
+only reported.
 """
 import json
 import os
@@ -28,7 +33,7 @@ EXPECTED = {
             58: "settings 29@2x", 80: "spotlight 40@2x", 76: "app 76@1x", 152: "app 76@2x", 167: "app 83.5@2x"},
     "marketing": {1024: "App Store 1024@1x"},
 }
-REQUIRED = {"phone": {120, 180}, "pad": {152, 167}}
+REQUIRED = {"phone": {120, 180}, "pad": {152, 167}, "marketing": {1024}}
 
 
 def main() -> int:
@@ -44,19 +49,15 @@ def main() -> int:
         info = plistlib.load(handle)
     print(f"== {app}")
     print(f"CFBundleIdentifier: {info.get('CFBundleIdentifier')}")
-    print(f"CFBundleIconName (top level): {info.get('CFBundleIconName')}")
+    print(f"CFBundleIconName (top level, macOS location, informational): {info.get('CFBundleIconName')}")
     for key in ("CFBundleIcons", "CFBundleIcons~ipad"):
         primary = (info.get(key) or {}).get("CFBundlePrimaryIcon") or {}
         print(f"{key}.CFBundlePrimaryIcon.CFBundleIconName: {primary.get('CFBundleIconName')}")
         print(f"{key}.CFBundlePrimaryIcon.CFBundleIconFiles: {primary.get('CFBundleIconFiles')}")
-    names = {info.get("CFBundleIconName")} | {
-        ((info.get(k) or {}).get("CFBundlePrimaryIcon") or {}).get("CFBundleIconName")
-        for k in ("CFBundleIcons", "CFBundleIcons~ipad")
-    }
-    if icon_name not in names:
-        failures.append(f"Info.plist does not name the icon set '{icon_name}'")
-    if info.get("CFBundleIconName") != icon_name:
-        failures.append(f"top-level CFBundleIconName is {info.get('CFBundleIconName')!r}, expected {icon_name!r}")
+    for key in ("CFBundleIcons", "CFBundleIcons~ipad"):
+        name = ((info.get(key) or {}).get("CFBundlePrimaryIcon") or {}).get("CFBundleIconName")
+        if name != icon_name:
+            failures.append(f"{key}.CFBundlePrimaryIcon.CFBundleIconName is {name!r}, expected {icon_name!r}")
 
     loose = sorted(f for f in os.listdir(app) if f.startswith(icon_name) and f.endswith(".png"))
     print(f"Loose icon PNGs in bundle: {loose or 'none'}")
