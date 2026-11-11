@@ -198,7 +198,19 @@ public final class PTYProcess: @unchecked Sendable {
     ) throws -> PTYProcess {
         let (master, secondaryName) = try openPseudoTerminal()
         _ = fcntl(master, F_SETFD, FD_CLOEXEC)
-        setWindowSize(master, size)
+        // Darwin initialises a terminal's state (including its window size) when the secondary
+        // side is first opened, discarding a size set earlier on the primary side; the child then
+        // sees 0x0 until the first resize. Holding the secondary side open here while setting the
+        // size and spawning keeps the size on every platform. O_CLOEXEC: the child gets the
+        // terminal only through its own stdio.
+        let secondary = open(secondaryName, O_RDWR | O_NOCTTY | O_CLOEXEC)
+        guard secondary >= 0 else {
+            let message = POSIX.errorString(errno)
+            close(master)
+            throw ProcessSpawnError.pseudoTerminal(message)
+        }
+        defer { close(secondary) }
+        setWindowSize(secondary, size)
 
         let env = environment.map { "\($0.key)=\($0.value)" }.sorted()
         do {
