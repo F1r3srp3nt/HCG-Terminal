@@ -1,0 +1,112 @@
+# Compile-only checks on GitHub-hosted macOS runners.
+#
+# - iOS: Release builds and UNSIGNED archives of both schemes, the way HCG Executable Maker
+#   invokes xcodebuild, plus which target and bundle identifier each scheme really produces.
+# - macOS: the HCGTerminalKit package (Darwin code paths) builds and its tests run.
+#
+# No signing identities, profiles or secrets are used, nothing is exported to an IPA, and
+# nothing is uploaded anywhere except these logs as workflow artifacts.
+name: Apple builds (compile only)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, "claude/**"]
+
+permissions:
+  contents: read
+
+jobs:
+  ios:
+    name: iOS Release · ${{ matrix.scheme }}
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        scheme: [HCGTerminal, HCGTerminalUnleashed]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select newest Xcode
+        run: |
+          XCODE=$(ls -d /Applications/Xcode*.app | sort -V | tail -1)
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
+          swift --version
+          xcodebuild -showsdks | grep -i -E "ios|iphone" || true
+
+      - name: Schemes and targets
+        run: |
+          xcodebuild -list -project HCGTerminal.xcodeproj
+          xcodebuild -project HCGTerminal.xcodeproj -scheme "${{ matrix.scheme }}" -configuration Release \
+            -destination generic/platform=iOS -showBuildSettings 2>/dev/null \
+            | grep -E "^ *(TARGET_NAME|PRODUCT_BUNDLE_IDENTIFIER|SWIFT_ACTIVE_COMPILATION_CONDITIONS|SWIFT_VERSION|IPHONEOS_DEPLOYMENT_TARGET) =" | sort -u
+
+      - name: Release build (iphoneos, signing disabled)
+        run: |
+          set -o pipefail
+          mkdir -p logs
+          xcodebuild -project HCGTerminal.xcodeproj -scheme "${{ matrix.scheme }}" -configuration Release \
+            -destination generic/platform=iOS -derivedDataPath "$RUNNER_TEMP/DD-build" \
+            COMPILER_INDEX_STORE_ENABLE=NO CODE_SIGNING_ALLOWED=NO build 2>&1 | tee "logs/${{ matrix.scheme }}-release-build.log"
+
+      - name: Unsigned archive (as HCG Executable Maker's Unsigned mode)
+        if: always()
+        run: |
+          set -o pipefail
+          mkdir -p logs
+          xcodebuild -project HCGTerminal.xcodeproj -scheme "${{ matrix.scheme }}" -configuration Release \
+            -derivedDataPath "$RUNNER_TEMP/DD-archive" -destination generic/platform=iOS \
+            -archivePath "$RUNNER_TEMP/${{ matrix.scheme }}.xcarchive" COMPILER_INDEX_STORE_ENABLE=NO \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= archive 2>&1 | tee "logs/${{ matrix.scheme }}-unsigned-archive.log"
+
+      - name: Inspect archive
+        if: always()
+        run: |
+          ARCHIVE="$RUNNER_TEMP/${{ matrix.scheme }}.xcarchive"
+          [ -d "$ARCHIVE" ] || { echo "No archive was produced."; exit 0; }
+          ls "$ARCHIVE/Products/Applications"
+          for app in "$ARCHIVE"/Products/Applications/*.app; do
+            echo "$app"
+            /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$app/Info.plist"
+            /usr/libexec/PlistBuddy -c "Print :CFBundleDisplayName" "$app/Info.plist" || true
+            /usr/libexec/PlistBuddy -c "Print :MinimumOSVersion" "$app/Info.plist" || true
+            lipo -info "$app/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Info.plist")"
+            codesign -dv "$app" 2>&1 || echo "(not signed, as expected)"
+          done
+
+      - name: Diagnostics summary
+        if: always()
+        run: |
+          for f in logs/*.log; do
+            echo "== $f"
+            grep -E "(error|warning): " "$f" | grep -v "/SourcePackages/checkouts/" | sort -u || echo "(no errors or warnings from project sources)"
+            tail -3 "$f"
+          done
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: logs-${{ matrix.scheme }}
+          path: logs/
+
+  macos-package:
+    name: macOS · HCGTerminalKit build and tests
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select newest Xcode
+        run: |
+          sudo xcode-select -s "$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+          xcodebuild -version
+      - name: Build and test (macOS)
+        working-directory: HCGTerminalKit
+        run: |
+          set -o pipefail
+          swift build 2>&1 | tee ../macos-package-build.log
+          swift test 2>&1 | tee ../macos-package-test.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: logs-macos-package
+          path: macos-package-*.log

@@ -42,16 +42,30 @@ public final class BuildCenter {
         guard activePlan == nil else { return }
         activePlan = plan
         liveLog = "$ \(plan.commandLine)\n"
-        runningTask = Task {
+        // The orchestrator calls back on its own actor. An ordered stream carries the text to the
+        // main actor, so the callback holds no reference to this object and chunks keep their order.
+        let (logStream, logSink) = AsyncStream<String>.makeStream()
+        let orchestrator = self.orchestrator
+        // The task deliberately keeps this object alive until the run has finished, recorded its
+        // result and cleared `activePlan`. It ends by setting `runningTask` to nil, so the
+        // reference cycle (self → runningTask → self) lasts only as long as the run.
+        // `cancel()` cancels this task; cancellation ends the remote output stream, which closes
+        // the SSH channel, and the orchestrator records the run as cancelled.
+        runningTask = Task { [self] in
+            let logPump = Task { [self] in
+                for await text in logStream { appendLog(text) }
+            }
             do {
                 let executor = try await executorFor(plan.hostID)
-                let run = await orchestrator.run(plan, on: executor) { [weak self] text in
-                    Task { @MainActor in self?.appendLog(text) }
-                }
+                let run = await orchestrator.run(plan, on: executor) { text in logSink.yield(text) }
+                logSink.finish()
+                await logPump.value
                 if run.status == .succeeded, let found = try? await ArtifactDiscovery.discover(for: plan, on: executor) {
                     discovered[run.id] = found
                 }
             } catch {
+                logSink.finish()
+                await logPump.value
                 lastError = error.localizedDescription
             }
             activePlan = nil
@@ -89,20 +103,27 @@ public final class BuildCenter {
     public func download(_ artifact: DiscoveredArtifact, from run: BuildRun) async {
         let key = artifact.remotePath
         downloadProgress[key] = 0
-        defer { downloadProgress[key] = nil }
+        // Progress arrives off the main actor. An ordered stream applies it here, and it is
+        // drained before `downloadProgress[key]` is cleared, so no late update can bring a
+        // finished download's progress bar back.
+        let (progressStream, progressSink) = AsyncStream<Double>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        let progressPump = Task { [self] in
+            for await fraction in progressStream { downloadProgress[key] = fraction }
+        }
         do {
             let executor = try await executorFor(run.plan.hostID)
             _ = try await ArtifactDownloader().download(
                 remotePath: artifact.remotePath, from: executor, into: workspaceProvider().workspace, index: index, buildRunID: run.id
-            ) { [weak self] received, total in
-                Task { @MainActor in
-                    if total > 0 { self?.downloadProgress[key] = Double(received) / Double(total) }
-                }
+            ) { received, total in
+                if total > 0 { progressSink.yield(Double(received) / Double(total)) }
             }
             artifacts = await index.all()
         } catch {
             lastError = error.localizedDescription
         }
+        progressSink.finish()
+        await progressPump.value
+        downloadProgress[key] = nil
     }
 
     public func localURL(for record: ArtifactRecord) -> URL? {

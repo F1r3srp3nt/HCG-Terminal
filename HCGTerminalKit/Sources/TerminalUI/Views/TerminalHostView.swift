@@ -8,7 +8,9 @@ import UIKit
 /// own instance with `.id(session.id)`.
 struct TerminalHostView: UIViewRepresentable {
     let session: SessionModel
-    let accent: Color
+    /// SwiftUI colour (from `ModeAccent`). Qualified because SwiftTerm also exports a `Color`
+    /// type (its terminal palette colour), which makes the bare name ambiguous in this file.
+    let accent: SwiftUI.Color
     var fontSize: CGFloat = 13
 
     func makeCoordinator() -> Coordinator { Coordinator(session: session) }
