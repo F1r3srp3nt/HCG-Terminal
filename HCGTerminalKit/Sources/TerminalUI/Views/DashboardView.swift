@@ -237,21 +237,25 @@ struct WorkspaceSummary: Equatable {
     static func load(_ workspace: FileWorkspace) async -> WorkspaceSummary {
         let root = workspace.rootURL
         let projects = ((try? workspace.list(.projects)) ?? []).count
-        return await Task.detached {
-            var bytes: Int64 = 0
-            var files = 0
-            var truncated = false
-            let keys: [URLResourceKey] = [.isRegularFileKey, .fileSizeKey]
-            if let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: keys) {
-                for case let url as URL in enumerator {
-                    guard let values = try? url.resourceValues(forKeys: Set(keys)), values.isRegularFile == true else { continue }
-                    files += 1
-                    bytes += Int64(values.fileSize ?? 0)
-                    if files >= 50_000 { truncated = true; break }
-                }
+        return await Task.detached { walk(root, projects: projects) }.value
+    }
+
+    /// Synchronous on purpose: `FileManager.DirectoryEnumerator` cannot be iterated in an async
+    /// context. Bounded at 50,000 files.
+    static func walk(_ root: URL, projects: Int) -> WorkspaceSummary {
+        var bytes: Int64 = 0
+        var files = 0
+        var truncated = false
+        let keys: [URLResourceKey] = [.isRegularFileKey, .fileSizeKey]
+        if let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: keys) {
+            while let url = enumerator.nextObject() as? URL {
+                guard let values = try? url.resourceValues(forKeys: Set(keys)), values.isRegularFile == true else { continue }
+                files += 1
+                bytes += Int64(values.fileSize ?? 0)
+                if files >= 50_000 { truncated = true; break }
             }
-            return WorkspaceSummary(bytes: bytes, files: files, projects: projects, truncated: truncated)
-        }.value
+        }
+        return WorkspaceSummary(bytes: bytes, files: files, projects: projects, truncated: truncated)
     }
 }
 #endif
