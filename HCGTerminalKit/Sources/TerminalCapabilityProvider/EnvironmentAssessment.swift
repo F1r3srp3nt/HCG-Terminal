@@ -328,7 +328,7 @@ public enum HostIdentity {
         guard sysctlbyname("hw.machine", nil, &size, nil, 0) == 0, size > 0 else { return nil }
         var buffer = [CChar](repeating: 0, count: size)
         guard sysctlbyname("hw.machine", &buffer, &size, nil, 0) == 0 else { return nil }
-        return String(cString: buffer)
+        return String(decoding: buffer.prefix(while: { $0 != 0 }).map { UInt8(bitPattern: $0) }, as: UTF8.self)
         #else
         return nil
         #endif
