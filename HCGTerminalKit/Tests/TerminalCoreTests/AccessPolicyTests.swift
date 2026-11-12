@@ -14,18 +14,27 @@ final class AccessPolicyTests: XCTestCase {
 
     func testDisablingAPrerequisiteDisablesDependents() throws {
         let policy = AccessPolicy.allEnabled()
-        XCTAssertEqual(Set(policy.newlyDisabled(ifSetting: .localShell, to: false)), [.localShell, .packageManagement, .privilegedOperations])
+        XCTAssertEqual(Set(policy.newlyDisabled(ifSetting: .localShell, to: false)), [.localShell, .privilegedOperations])
+        XCTAssertEqual(
+            Set(policy.newlyDisabled(ifSetting: .unleashedFeatures, to: false)),
+            [.unleashedFeatures, .localShell, .localhostSSH, .expandedFileRead, .expandedFileWrite, .packageManagement, .privilegedOperations]
+        )
         XCTAssertEqual(Set(policy.newlyDisabled(ifSetting: .remoteSSH, to: false)), [.remoteSSH, .remoteBuilds])
         XCTAssertEqual(Set(policy.newlyDisabled(ifSetting: .expandedFileRead, to: false)), [.expandedFileRead, .expandedFileWrite])
         policy.set(.localShell, enabled: false)
-        XCTAssertTrue(policy.isOn(.packageManagement), "the user's own choice is kept")
-        XCTAssertFalse(policy.isEnabled(.packageManagement), "but it is not in effect")
-        XCTAssertThrowsError(try policy.require(.packageManagement)) { error in
-            XCTAssertEqual(error as? AccessDenied, AccessDenied(control: .packageManagement, blockedBy: .localShell))
+        XCTAssertTrue(policy.isOn(.privilegedOperations), "the user's own choice is kept")
+        XCTAssertFalse(policy.isEnabled(.privilegedOperations), "but it is not in effect")
+        XCTAssertThrowsError(try policy.require(.privilegedOperations)) { error in
+            XCTAssertEqual(error as? AccessDenied, AccessDenied(control: .privilegedOperations, blockedBy: .localShell))
             XCTAssertTrue(error.localizedDescription.contains("needs"))
         }
         policy.set(.localShell, enabled: true)
-        XCTAssertNoThrow(try policy.require(.packageManagement))
+        XCTAssertNoThrow(try policy.require(.privilegedOperations))
+        // Indirect: the master switch blocks write through read.
+        policy.set(.unleashedFeatures, enabled: false)
+        XCTAssertThrowsError(try policy.require(.expandedFileWrite)) { error in
+            XCTAssertEqual((error as? AccessDenied)?.blockedBy, .unleashedFeatures)
+        }
     }
 
     func testSettingsPersistAndUnknownKeysSurvive() throws {

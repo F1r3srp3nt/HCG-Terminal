@@ -83,7 +83,7 @@ final class EnvironmentAssessmentTests: XCTestCase {
         let scan = UnleashedEnvironmentScanner(probe: ScriptedProbe.stockDevice).scan()
         let report = await UnleashedCapabilityProvider.report(for: scan, observations: RuntimeObservations())
         guard case .environmentUnknown(let reason) = report[.localShell].availability else { return XCTFail() }
-        XCTAssertTrue(reason.contains("does not show whether the device is jailbroken"))
+        XCTAssertTrue(reason.contains("says nothing about whether the device is jailbroken"), reason)
     }
 
     func testSwitchOverlayNeverUpgradesAndOnlyDisablesUsable() async {
@@ -93,7 +93,10 @@ final class EnvironmentAssessmentTests: XCTestCase {
         access.set(.localShell, enabled: false)
         let applied = report.applying(access: access)
         guard case .disabledByUser = applied[.localShell].availability else { return XCTFail() }
-        guard case .disabledByUser = applied[.packageManager].availability else { return XCTFail("prerequisite") }
+        guard case .availableUntested = applied[.packageManager].availability else { return XCTFail("the inventory does not need the shell") }
+        access.set(.unleashedFeatures, enabled: false)
+        guard case .disabledByUser = report.applying(access: access)[.packageManager].availability else { return XCTFail("master switch") }
+        access.set(.unleashedFeatures, enabled: true)
         XCTAssertFalse(applied.localFeaturesAvailable)
         // Privileged operations are off by default but were available-untested: disabled, not green.
         guard case .disabledByUser = applied[.privilegedOperations].availability else { return XCTFail() }

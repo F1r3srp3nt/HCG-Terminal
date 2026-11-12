@@ -15,7 +15,9 @@ import Foundation
 public enum AccessControl: String, CaseIterable, Codable, Sendable, Identifiable {
     case workspaceCommands
     case externalFiles
+    case unleashedFeatures
     case localShell
+    case localhostSSH
     case expandedFileRead
     case expandedFileWrite
     case packageManagement
@@ -30,9 +32,11 @@ public enum AccessControl: String, CaseIterable, Codable, Sendable, Identifiable
         switch self {
         case .workspaceCommands: "Local workspace commands"
         case .externalFiles: "Files you choose (import/export)"
-        case .localShell: "Unleashed shell and programs"
-        case .expandedFileRead: "Expanded filesystem: read"
-        case .expandedFileWrite: "Expanded filesystem: write"
+        case .unleashedFeatures: "Unleashed features"
+        case .localShell: "Local shell execution"
+        case .localhostSSH: "Localhost SSH fallback"
+        case .expandedFileRead: "Expanded filesystem browsing"
+        case .expandedFileWrite: "Filesystem modifications"
         case .packageManagement: "Package management"
         case .processInspection: "Process inspection"
         case .privilegedOperations: "Privileged operations"
@@ -45,7 +49,9 @@ public enum AccessControl: String, CaseIterable, Codable, Sendable, Identifiable
         switch self {
         case .workspaceCommands: "terminal"
         case .externalFiles: "doc.badge.arrow.up"
+        case .unleashedFeatures: "bolt.shield"
         case .localShell: "apple.terminal"
+        case .localhostSSH: "point.3.connected.trianglepath.dotted"
         case .expandedFileRead: "folder"
         case .expandedFileWrite: "square.and.pencil"
         case .packageManagement: "shippingbox"
@@ -59,7 +65,7 @@ public enum AccessControl: String, CaseIterable, Codable, Sendable, Identifiable
     /// Only meaningful in the Unleashed build (the code is not in the standard build).
     public var requiresUnleashedBackend: Bool {
         switch self {
-        case .localShell, .expandedFileRead, .expandedFileWrite, .packageManagement, .privilegedOperations: true
+        case .unleashedFeatures, .localShell, .localhostSSH, .expandedFileRead, .expandedFileWrite, .packageManagement, .privilegedOperations: true
         case .workspaceCommands, .externalFiles, .processInspection, .remoteSSH, .remoteBuilds: false
         }
     }
@@ -76,8 +82,8 @@ public enum AccessControl: String, CaseIterable, Codable, Sendable, Identifiable
     /// Switches that must also be on for this one to take effect.
     public var prerequisites: [AccessControl] {
         switch self {
+        case .localShell, .localhostSSH, .expandedFileRead, .packageManagement: [.unleashedFeatures]
         case .expandedFileWrite: [.expandedFileRead]
-        case .packageManagement: [.localShell]
         case .privilegedOperations: [.localShell]
         case .remoteBuilds: [.remoteSSH]
         default: []
@@ -95,14 +101,18 @@ public enum AccessControl: String, CaseIterable, Codable, Sendable, Identifiable
             "Local Vanilla sessions run HCG's built-in commands (ls, cat, grep, edit, …) on the app's own workspace."
         case .externalFiles:
             "You can import files you pick in the Files app into the workspace and export workspace files. HCG Terminal only sees the items you pick."
+        case .unleashedFeatures:
+            "HCG Terminal may use the Unleashed backend on this device: the switches below decide which parts. It does not grant any permission the device does not already give this app."
         case .localShell:
-            "Unleashed can start a shell in a pseudo-terminal and launch installed programs, with exactly the permissions the device gives this app."
+            "Unleashed may start a shell in a pseudo-terminal and launch installed programs, with exactly the permissions the device gives this app. Whether that works depends on how the app is installed (see Setup requirements)."
+        case .localhostSSH:
+            "You may sign in to an SSH service already running on this device (127.0.0.1) with that service's own account. The host key is verified like any other host."
         case .expandedFileRead:
             "Unleashed can list and read locations outside the app sandbox that the device lets this app read."
         case .expandedFileWrite:
             "Unleashed can create, edit, rename and delete items in those locations where the device allows writing. System and jailbreak locations still ask before every change."
         case .packageManagement:
-            "Unleashed lists installed packages. Installing, removing or refreshing packages is offered, and each one needs your approval and runs visibly."
+            "Unleashed reads the installed-package list (from the dpkg status file when it is readable). Installing, removing or refreshing packages is offered only when a local shell works, and each one needs your approval and runs visibly."
         case .processInspection:
             "Diagnostics and Unleashed Tools list running processes, as far as the system shows them to this app."
         case .privilegedOperations:
@@ -120,8 +130,12 @@ public enum AccessControl: String, CaseIterable, Codable, Sendable, Identifiable
             "New Vanilla sessions cannot be opened, and open ones refuse new commands. Workspace files and command history are kept."
         case .externalFiles:
             "Import and export are refused. Files already imported stay in the workspace."
+        case .unleashedFeatures:
+            "No Unleashed feature is used: no local shell, no localhost SSH, no browsing outside the sandbox, no package inventory. Open local shells are stopped after you confirm. Vanilla and remote development are unaffected."
         case .localShell:
-            "No shell or program is started on this device, and open local shells are stopped. Package management and privileged operations stop too, because they need it."
+            "No shell or program is started on this device, and open local shells are stopped after you confirm. Privileged operations and package changes stop too, because they need it. The package inventory and file browsing keep working."
+        case .localhostSSH:
+            "HCG Terminal does not connect to SSH services on this device; open localhost sessions are disconnected after you confirm. Remote SSH to other hosts is controlled separately."
         case .expandedFileRead:
             "Locations outside the sandbox cannot be listed or read. Writing stops too, because it needs reading. Nothing on the device is changed or removed."
         case .expandedFileWrite:
@@ -143,7 +157,8 @@ public enum AccessControl: String, CaseIterable, Codable, Sendable, Identifiable
     public var activeSessionEffect: String {
         switch self {
         case .workspaceCommands: "Open Vanilla sessions are ended after you confirm."
-        case .localShell: "Open local shells and programs are stopped after you confirm (the processes are ended and their exit is confirmed)."
+        case .unleashedFeatures, .localShell: "Open local shells and programs are stopped after you confirm (the processes are ended and their exit is confirmed)."
+        case .localhostSSH: "Open localhost SSH sessions are disconnected after you confirm. Programs started through them may keep running; that is not verified."
         case .remoteSSH: "Open SSH sessions are disconnected after you confirm. Programs you started on the host may keep running there; HCG Terminal cannot confirm that they stopped."
         case .remoteBuilds: "A running build is cancelled after you confirm: the channel is closed and the remote process group is sent TERM. Whether it stopped is shown in the log, not assumed."
         case .externalFiles, .expandedFileRead, .expandedFileWrite, .packageManagement, .processInspection, .privilegedOperations:

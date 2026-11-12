@@ -186,29 +186,38 @@ public struct UnleashedOperations: Sendable {
     public func verifyShell() async -> EnvironmentAssessment.Operation {
         let name = "Shell test"
         if let refusal = access.denial(.localShell) { return .init(name: name, outcome: refusal, succeeded: false) }
-        guard let shell = scan.shells.first else {
-            return .init(name: name, outcome: "No shell was found by the read-only scan; nothing was run.", succeeded: false)
+        // Candidates that exist as files, best first. A file whose access(X_OK) the sandbox
+        // refused is still tried: only a launch shows what really happens.
+        let candidates = scan.launchableShells
+        guard !candidates.isEmpty else {
+            let tried = scan.shellCandidates.map(\.path)
+            return .init(name: name, outcome: "Nothing to launch: none of the \(tried.count) shell paths exists as a file (\(tried.prefix(6).joined(separator: ", "))\(tried.count > 6 ? ", …" : "")). Nothing was run.", succeeded: false)
         }
-        do {
-            let result = try await ProcessRunner.run(
-                executable: shell, arguments: ["-c", "printf 'HCG_SHELL_OK\\n'; id -u"],
-                environment: ["PATH": scan.searchPath.joined(separator: ":"), "LANG": "C"],
-                outputLimit: 4096, timeout: 5
-            )
-            let ok = result.status == 0 && result.stdoutText.contains("HCG_SHELL_OK")
-            if ok {
-                await observations.record(executable: shell, outcome: .succeeded(pid: result.pid))
-                let uid = result.stdoutText.split(separator: "\n").last.map(String.init) ?? "?"
-                return .init(name: name, outcome: "\(shell) ran and printed the expected output (uid \(uid)).", succeeded: true)
+        var outcomes: [String] = []
+        for shell in candidates.prefix(3) {
+            do {
+                let result = try await ProcessRunner.run(
+                    executable: shell, arguments: ["-c", "printf 'HCG_SHELL_OK\\n'; id -u"],
+                    environment: ["PATH": scan.searchPath.joined(separator: ":"), "LANG": "C"],
+                    outputLimit: 4096, timeout: 5
+                )
+                let ok = result.status == 0 && result.stdoutText.contains("HCG_SHELL_OK")
+                if ok {
+                    await observations.record(executable: shell, outcome: .succeeded(pid: result.pid))
+                    let uid = result.stdoutText.split(separator: "\n").last.map(String.init) ?? "?"
+                    return .init(name: name, outcome: "\(shell) ran `printf HCG_SHELL_OK; id -u`, printed the expected output and exited with status 0 (uid \(uid)).", succeeded: true)
+                }
+                let detail = result.timedOut ? "did not finish within 5 seconds and was killed" : "exit status \(result.status)\(result.terminatingSignal.map { ", signal \($0)" } ?? "")"
+                await observations.record(executable: shell, outcome: .failed(errno: 0, message: "started but \(detail)"))
+                outcomes.append("\(shell) started but \(detail)")
+            } catch {
+                if case ProcessSpawnError.spawn(_, let code, let message) = error {
+                    await observations.record(executable: shell, outcome: .failed(errno: code, message: message))
+                }
+                outcomes.append(ToolLaunchError.from(error, path: shell).localizedDescription)
             }
-            let detail = result.timedOut ? "it did not finish within 5 seconds and was killed" : "exit status \(result.status)\(result.terminatingSignal.map { ", signal \($0)" } ?? "")"
-            return .init(name: name, outcome: "\(shell) started but did not complete the test (\(detail)).", succeeded: false)
-        } catch {
-            if case ProcessSpawnError.spawn(_, let code, let message) = error {
-                await observations.record(executable: shell, outcome: .failed(errno: code, message: message))
-            }
-            return .init(name: name, outcome: ToolLaunchError.from(error, path: shell).localizedDescription, succeeded: false)
         }
+        return .init(name: name, outcome: outcomes.joined(separator: " "), succeeded: false)
     }
 }
 

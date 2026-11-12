@@ -44,11 +44,31 @@ public struct VanillaCapabilityProvider: TerminalCapabilityProvider {
                 availability: writable && created
                     ? .verified("The workspace and its folders were created at launch and are writable.")
                     : .permissionDenied("The app workspace is not writable."),
-                summary: "Read and write inside the app's workspace (also visible in the Files app). Nothing outside it.",
+                summary: "List the app's workspace (also visible in the Files app). Nothing outside it.",
                 evidence: [
                     CapabilityEvidence(probe: "access(workspace, W_OK)", observation: writable ? "writable" : "not writable", positive: writable),
                     CapabilityEvidence(probe: "standard folders (/home, /projects, /artifacts, /logs, /tmp)", observation: created ? "created" : "missing", positive: created),
                 ]
+            ),
+            CapabilityResult(
+                kind: .localhostSSH,
+                availability: .notIncluded("Not part of Vanilla mode: connecting to services on this device is an Unleashed feature."),
+                summary: "Use Remote SSH for other hosts."
+            ),
+            CapabilityResult(
+                kind: .fileReading,
+                availability: writable && created ? .verified("Workspace files are read by the built-in commands.") : .permissionDenied("The app workspace is not accessible."),
+                summary: "Read files in the app workspace."
+            ),
+            CapabilityResult(
+                kind: .fileWriting,
+                availability: writable && created ? .verified("The workspace folders were created at launch.") : .permissionDenied("The app workspace is not writable."),
+                summary: "Write files in the app workspace. Nothing outside it."
+            ),
+            CapabilityResult(
+                kind: .packageChanges,
+                availability: .notIncluded("Not part of Vanilla mode: standard iOS has no package manager for apps."),
+                summary: "Install toolchains on a remote host instead."
             ),
             CapabilityResult(
                 kind: .packageManager,

@@ -121,11 +121,18 @@ final class AccessEnforcementTests: XCTestCase {
         do { _ = try await client.authorizedCommand(for: .install("htop")); XCTFail() } catch let denied as AccessDenied { XCTAssertEqual(denied.control, .packageManagement) }
         XCTAssertEqual(asked.value, 0, "the user is not asked about something that is turned off")
 
-        // Turning the shell off disables package management through the prerequisite.
+        // Package changes run in a local shell: turning the shell off refuses them, while the
+        // inventory itself does not need the shell.
         access.set(.packageManagement, enabled: true)
         access.set(.localShell, enabled: false)
         do { _ = try await client.authorizedCommand(for: .install("htop")); XCTFail() } catch let denied as AccessDenied {
-            XCTAssertEqual(denied, AccessDenied(control: .packageManagement, blockedBy: .localShell))
+            XCTAssertEqual(denied, AccessDenied(control: .localShell))
+        }
+        XCTAssertNoThrow(try access.require(.packageManagement))
+        // The master switch blocks everything Unleashed.
+        access.set(.unleashedFeatures, enabled: false)
+        do { _ = try await client.listInstalled(); XCTFail() } catch let denied as AccessDenied {
+            XCTAssertEqual(denied, AccessDenied(control: .packageManagement, blockedBy: .unleashedFeatures))
         }
     }
 
@@ -199,7 +206,7 @@ final class AccessEnforcementTests: XCTestCase {
         try XCTSkipUnless(FileManager.default.isExecutableFile(atPath: "/bin/echo") && FileManager.default.isExecutableFile(atPath: "/bin/sleep"))
         var scan = UnleashedEnvironmentScanner(probe: ScriptedProbe.stockDevice).scan()
         scan.executableDirectories = ["/bin": 2]
-        scan.shells = ["/bin/sh"]
+        scan.pretendShell("/bin/sh")
         let access = AccessPolicy.inMemory()
         let operations = UnleashedOperations(scan: scan, observations: RuntimeObservations(), gate: AuthorizationGate(access: access), access: access)
 

@@ -24,13 +24,16 @@ struct ScriptedProbe: SystemProbing {
     /// Symlink targets (`realpath`).
     var resolved: [String: String] = [:]
 
+    /// The sandbox refuses a denied path and everything below it.
+    func isDenied(_ path: String) -> Bool { denied.contains { path == $0 || path.hasPrefix($0 + "/") } }
+
     func probe(_ path: String) -> PathProbe {
-        if denied.contains(path) { return .denied(EPERM) }
+        if isDenied(path) { return .denied(EPERM) }
         return exists(path) ? .present : .missing
     }
 
     func listing(_ path: String) -> Result<[String], PathProbeFailure> {
-        if denied.contains(path) { return .failure(PathProbeFailure(.denied(EPERM))) }
+        if isDenied(path) { return .failure(PathProbeFailure(.denied(EPERM))) }
         if let entries = listings[path] { return .success(entries) }
         return .failure(PathProbeFailure(.missing))
     }
@@ -121,7 +124,9 @@ final class UnleashedDetectionTests: XCTestCase {
         guard case .availableUntested = report[.localShell].availability else { return XCTFail("\(report[.localShell].availability)") }
         guard case .availableUntested = report[.executableAccess].availability else { return XCTFail() }
         guard case .availableUntested = report[.packageManager].availability else { return XCTFail() }
-        XCTAssertTrue(report[.packageManager].requiresAuthorization)
+        XCTAssertFalse(report[.packageManager].requiresAuthorization, "reading the inventory needs no approval")
+        guard case .availableUntested = report[.packageChanges].availability else { return XCTFail("\(report[.packageChanges].availability)") }
+        XCTAssertTrue(report[.packageChanges].requiresAuthorization)
         guard case .availableUntested = report[.privilegedOperations].availability else { return XCTFail() }
         XCTAssertTrue(report[.privilegedOperations].requiresAuthorization)
         guard case .verified = report[.processInspection].availability else { return XCTFail("reading the process table is a real read") }
@@ -131,9 +136,11 @@ final class UnleashedDetectionTests: XCTestCase {
     func testLoopbackServiceIsReportedWithoutShell() async {
         let probe = ScriptedProbe(ports: [22])
         let report = await UnleashedCapabilityProvider(probe: probe, observations: RuntimeObservations()).detectCapabilities()
-        XCTAssertTrue(report.localFeaturesAvailable)
-        guard case .availableUntested(let reason) = report[.localShell].availability else { return XCTFail() }
+        XCTAssertTrue(report.localFeaturesAvailable, "a session is possible through the service")
+        XCTAssertFalse(report[.localShell].availability.isUsable, "the local shell is a separate capability")
+        guard case .availableUntested(let reason) = report[.localhostSSH].availability else { return XCTFail("\(report[.localhostSSH].availability)") }
         XCTAssertTrue(reason.contains("127.0.0.1:22"))
+        XCTAssertTrue(reason.contains("open port alone proves neither"), "an open port is not a working sign-in")
     }
 
     func testSpawnFailureIsReportedWithRealError() async throws {
@@ -144,7 +151,7 @@ final class UnleashedDetectionTests: XCTestCase {
             XCTFail("spawn must fail")
         } catch {}
         var scan = UnleashedEnvironmentScanner(probe: ScriptedProbe.stockDevice).scan()
-        scan.shells = ["/nonexistent/hcg-sh"]
+        scan.pretendShell("/nonexistent/hcg-sh")
         let report = await UnleashedCapabilityProvider.report(for: scan, observations: observations)
         guard case .toolMissing(let reason) = report[.localShell].availability else { return XCTFail("\(report[.localShell].availability)") }
         XCTAssertTrue(reason.contains("No such file or directory"), reason)
@@ -211,7 +218,7 @@ final class UnleashedRealExecutionTests: XCTestCase {
         guard case .succeeded? = await observations.outcome(for: "/bin/sh") else { return XCTFail() }
 
         var scan = UnleashedEnvironmentScanner(probe: ScriptedProbe.stockDevice).scan()
-        scan.shells = ["/bin/sh"]
+        scan.pretendShell("/bin/sh")
         let report = await UnleashedCapabilityProvider.report(for: scan, observations: observations)
         guard case .verified = report[.localShell].availability else { return XCTFail("\(report[.localShell].availability)") }
         await session.close()
@@ -426,5 +433,13 @@ final class VanillaProviderTests: XCTestCase {
             guard case .notIncluded = report[kind].availability else { return XCTFail(kind.rawValue) }
         }
         guard case .availableUntested = report[.remoteSSH].availability else { return XCTFail() }
+    }
+}
+
+extension UnleashedEnvironmentScan {
+    /// Test helper: as if `path` had been found and passed access(X_OK).
+    mutating func pretendShell(_ path: String) {
+        shellCandidates = [ToolCandidate(name: (path as NSString).lastPathComponent, path: path, resolvedPath: nil, state: .executable, probes: [])]
+        shells = [path]
     }
 }

@@ -1,6 +1,11 @@
 import Foundation
 import TerminalCapabilityProvider
 import TerminalCore
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 
 /// Capability report for Unleashed, built from the read-only scan plus runtime observations.
 public struct UnleashedCapabilityProvider: TerminalCapabilityProvider {
@@ -8,8 +13,13 @@ public struct UnleashedCapabilityProvider: TerminalCapabilityProvider {
     private let scanner: UnleashedEnvironmentScanner
     private let observations: RuntimeObservations
 
-    public init(probe: any SystemProbing = LiveSystemProbe(), observations: RuntimeObservations, customRoots: @escaping @Sendable () -> [String] = { [] }) {
-        self.scanner = UnleashedEnvironmentScanner(probe: probe, customRoots: customRoots)
+    public init(
+        probe: any SystemProbing = LiveSystemProbe(),
+        observations: RuntimeObservations,
+        customRoots: @escaping @Sendable () -> [String] = { [] },
+        prefixResolver: @escaping @Sendable () -> String? = { JailbreakPrefixResolver.prefixFromLoadedResolver() }
+    ) {
+        self.scanner = UnleashedEnvironmentScanner(probe: probe, customRoots: customRoots, prefixResolver: prefixResolver)
         self.observations = observations
     }
 
@@ -20,149 +30,282 @@ public struct UnleashedCapabilityProvider: TerminalCapabilityProvider {
         return await Self.report(for: scan, observations: observations)
     }
 
-    /// Builds the report from the read-only scan and what real use has shown.
-    ///
-    /// Decision order for each capability:
-    /// 1. real use (spawn succeeded / failed with errno) decides first;
-    /// 2. then read-only checks: found → "available, not tested";
-    /// 3. a probe the system refused (EPERM/EACCES) → "permission denied";
-    /// 4. a visible environment without the needed program → "required tool missing";
-    /// 5. nothing of a shell environment visible → "unsupported environment".
-    /// Linked modules or a jailbreak marker alone never make anything available.
+    // MARK: - Report
+
+    /// Builds the report. Every capability is decided independently from its own evidence:
+    /// 1. what real use showed (a launch, a sign-in, a write) — but only while the thing used
+    ///    still exists (older results for something no longer found are reported as stale);
+    /// 2. read-only checks that passed → "available, untested";
+    /// 3. EPERM/EACCES → "permission denied" (never "missing");
+    /// 4. ENOENT for every candidate in roots that could be inspected → "tool missing";
+    /// 5. otherwise "environment unknown".
+    /// Bootstrap markers never make anything available.
     public static func report(for scan: UnleashedEnvironmentScan, observations: RuntimeObservations) async -> CapabilityReport {
-        let denied = scan.deniedPaths
-        let deniedNote = denied.isEmpty ? nil : "The system refused this app access to \(denied.joined(separator: ", "))."
-        let stockReason = "No shell environment is observable from this app. A sandboxed install sees this even on a jailbroken device, so it does not show whether the device is jailbroken."
-        func absent(_ tool: String) -> CapabilityAvailability {
-            if let deniedNote, !scan.environmentVisible { return .permissionDenied(deniedNote) }
-            return scan.environmentVisible ? .toolMissing("\(tool) was not found in the visible environment.") : .environmentUnknown(stockReason)
-        }
-        func spawnState(_ code: Int32, _ message: String) -> CapabilityAvailability {
-            switch code {
-            case EPERM, EACCES: .permissionDenied("The system refused to start it: \(message). Apps installed through TestFlight, the App Store or Xcode run in the sandbox and cannot start processes.")
-            case ENOENT: .toolMissing("It disappeared before it could be started: \(message).")
-            case ENOEXEC: .toolMissing("It is not a program this device can run: \(message).")
-            default: .environmentUnknown("Starting it failed: \(message).")
-            }
-        }
+        let spawns = await observations.allObservations()
+        let signIn = await observations.loopbackSignIn()
+        let writes = await observations.verifiedWrites()
+        let time = scan.scannedAt
+        let sandboxNote = "Apps installed from Xcode, TestFlight or the App Store run in the iOS sandbox, which refuses this. Reinstalling the tools will not change it; see Setup requirements."
 
-        // Local shell
-        let shellChecks = scan.evidence.filter { $0.probe.contains("X_OK") || $0.probe.contains("127.0.0.1") || $0.probe.hasPrefix("lstat") }
-        var shellOutcome: RuntimeObservations.SpawnOutcome?
-        if let shell = scan.shells.first { shellOutcome = await observations.outcome(for: shell) }
-        var shellAvailability: CapabilityAvailability
-        var shellSummary = "Start a shell on this device in a pseudo-terminal."
-        if let shell = scan.shells.first {
-            switch shellOutcome {
-            case .succeeded(let pid)?:
-                shellAvailability = .verified("\(shell) started in a pseudo-terminal (pid \(pid)).")
-            case .failed(let code, let message)?:
-                shellAvailability = spawnState(code, message)
-            case nil:
-                shellAvailability = .availableUntested("\(shell) exists and is executable; it has not been started yet.")
-            }
-            if !shellAvailability.isUsable, let port = scan.loopbackServicePorts.first {
-                shellSummary = "Start a shell on this device, or sign in to the terminal service on 127.0.0.1:\(port)."
-                shellAvailability = .availableUntested("\(shellAvailability.reason) A terminal service accepts connections on 127.0.0.1:\(port); signing in has not been tested.")
-            }
-        } else if let port = scan.loopbackServicePorts.first {
-            shellSummary = "Sign in to the terminal service running on this device."
-            shellAvailability = .availableUntested("A terminal service accepts connections on 127.0.0.1:\(port) (no data sent). Signing in uses that service's own account and has not been tested.")
-        } else {
-            shellAvailability = absent("No shell (sh, bash, zsh, dash) and no terminal service on 127.0.0.1:22/2222")
-        }
-        let shellResult = CapabilityResult(kind: .localShell, availability: shellAvailability, summary: shellSummary, evidence: shellChecks)
-
-        // Executable access
-        let executableCount = scan.executableDirectories.values.reduce(0, +)
-        let executableChecks = scan.evidence.filter { $0.probe.hasPrefix("list ") }
-        let executableAvailability: CapabilityAvailability
-        if executableCount == 0 {
-            executableAvailability = absent("No directory with executables")
-        } else if case .failed(let code, let message)? = shellOutcome {
-            executableAvailability = spawnState(code, message)
-        } else if await observations.anySucceeded() {
-            executableAvailability = .verified("Processes started successfully; \(executableCount) executables visible.")
-        } else {
-            executableAvailability = .availableUntested("\(executableCount) executables visible in \(scan.executableDirectories.keys.sorted().joined(separator: ", ")); none started yet.")
-        }
-        let executableResult = CapabilityResult(kind: .executableAccess, availability: executableAvailability, summary: "Run installed command-line tools from a local shell.", evidence: executableChecks)
-
-        // Filesystem
-        let listable = scan.locations.filter(\.listable).map(\.path)
-        let writable = scan.locations.filter(\.writable).map(\.path)
-        let fsChecks = scan.locations.map { location in
-            CapabilityEvidence(
-                probe: "lstat/list \(location.path)",
-                observation: location.exists
-                    ? "listable=\(location.listable) readable=\(location.readable) writable(access)=\(location.writable)"
-                    : (scan.pathProbes[location.path]?.description ?? "not found"),
-                positive: location.listable
+        func record(_ probe: ProbeRecord) -> CapabilityEvidence { CapabilityEvidence(probe) }
+        func candidateEvidence(_ candidate: ToolCandidate) -> CapabilityEvidence {
+            let last = candidate.probes.last
+            return CapabilityEvidence(
+                probe: candidate.path + (candidate.resolvedPath.map { $0 == candidate.path ? "" : " → \($0)" } ?? ""),
+                observation: candidate.state.label, positive: candidate.state == .executable,
+                returnValue: last?.returnValue, errorCode: last?.errorCode, timestamp: last?.timestamp
             )
         }
-        let fsAvailability: CapabilityAvailability
-        if !listable.isEmpty {
-            fsAvailability = .verified("Listed \(listable.joined(separator: ", ")). Writable per access(2), not yet written: \(writable.isEmpty ? "none" : writable.joined(separator: ", ")).")
-        } else if scan.locations.contains(where: { scan.pathProbes[$0.path]?.isDenied == true || ($0.exists && !$0.listable) }) {
-            fsAvailability = .permissionDenied("Locations outside the app sandbox exist but this app may not list them.")
+        func launchState(_ path: String, _ observation: RuntimeObservations.Observation) -> CapabilityAvailability {
+            let when = observation.date.formatted(date: .omitted, time: .standard)
+            switch observation.outcome {
+            case .succeeded(let pid):
+                return .verified("\(path) was launched at \(when) (pid \(pid)) and completed.")
+            case .failed(let code, let message):
+                switch code {
+                case EPERM, EACCES: return .permissionDenied("Launching \(path) was refused at \(when): \(message). \(sandboxNote)")
+                case ENOENT: return .toolMissing("\(path) was not there when launched at \(when): \(message).")
+                case ENOEXEC: return .toolMissing("\(path) is not a program this device can run (\(message)).")
+                default: return .environmentUnknown("Launching \(path) failed at \(when): \(message).")
+                }
+            }
+        }
+        /// Observations for paths that still exist; others are stale.
+        func currentObservations(_ candidates: [ToolCandidate]) -> (current: [(String, RuntimeObservations.Observation)], stale: [String]) {
+            var current: [(String, RuntimeObservations.Observation)] = []
+            var stale: [String] = []
+            for (path, observation) in spawns {
+                guard let candidate = candidates.first(where: { $0.path == path }) else { continue }
+                if candidate.state.exists { current.append((path, observation)) } else { stale.append(path) }
+            }
+            return (current.sorted { $0.1.date > $1.1.date }, stale)
+        }
+        let deniedRoots = scan.roots.filter { $0.probe.isDenied }.map { $0.path.isEmpty ? "/" : $0.path }
+        let visibleRoots = scan.roots.filter { !$0.path.isEmpty && $0.probe == .present }.map(\.path)
+        /// For tools not found: absence only when the roots they live in could be inspected.
+        func notFound(_ what: String, candidates: [ToolCandidate]) -> CapabilityAvailability {
+            let denied = candidates.filter { if case .denied = $0.state { true } else { false } }
+            if let first = denied.first, case .denied(let operation, let code) = first.state {
+                let paths = denied.prefix(4).map(\.path).joined(separator: ", ")
+                let roots = deniedRoots.isEmpty ? "" : " Access to \(deniedRoots.joined(separator: ", ")) was refused as well."
+                if operation == "lstat" {
+                    return .permissionDenied("\(paths) could not be inspected (lstat refused: \(PathProbe.errnoName(code))).\(roots) Whether \(what) is installed cannot be determined. \(sandboxNote)")
+                }
+                return .permissionDenied("\(paths) \(denied.count == 1 ? "exists" : "exist") but \(operation) was refused (\(PathProbe.errnoName(code))). That does not mean \(what) is missing. \(sandboxNote)")
+            }
+            if let broken = candidates.first(where: { if case .brokenSymlink = $0.state { true } else { false } }), case .brokenSymlink(let target) = broken.state {
+                return .toolMissing("\(broken.path) is a symlink to \(target), which does not exist.")
+            }
+            if candidates.contains(where: { $0.state == .notExecutable }) {
+                return .toolMissing("\(what.capitalized) exists but has no execute permission: \(candidates.filter { $0.state == .notExecutable }.map(\.path).joined(separator: ", ")).")
+            }
+            if !visibleRoots.isEmpty || !scan.programFolderListings.filter(\.succeeded).isEmpty {
+                return .toolMissing("No \(what) found. Checked \(candidates.count) paths under \(visibleRoots.isEmpty ? "/" : visibleRoots.joined(separator: ", ")) (all ENOENT).")
+            }
+            if !deniedRoots.isEmpty {
+                return .permissionDenied("The system refused this app access to \(deniedRoots.joined(separator: ", ")); whether \(what) is installed cannot be determined.")
+            }
+            return .environmentUnknown("No bootstrap root is visible to this app. A sandboxed install sees this even on a jailbroken device, so it says nothing about whether the device is jailbroken.")
+        }
+
+        var results: [CapabilityResult] = []
+
+        // Local shell -------------------------------------------------------------
+        let (shellObservations, staleShells) = currentObservations(scan.shellCandidates)
+        var shellAvailability: CapabilityAvailability
+        if let success = shellObservations.first(where: { if case .succeeded = $0.1.outcome { true } else { false } }) {
+            shellAvailability = launchState(success.0, success.1)
+        } else if let failure = shellObservations.first {
+            shellAvailability = launchState(failure.0, failure.1)
+        } else if let shell = scan.shellCandidates.first(where: { $0.state == .executable }) {
+            shellAvailability = .availableUntested("\(shell.path) passed access(X_OK). It has not been launched yet; use Test local shell.")
         } else {
-            fsAvailability = .environmentUnknown("No location outside the app sandbox is visible to this app.")
+            shellAvailability = notFound("a shell", candidates: scan.shellCandidates)
         }
-        let filesystemResult = CapabilityResult(kind: .filesystemPermissions, availability: fsAvailability, summary: "Browse and read permitted locations outside the app sandbox; access is exactly what the device grants.", evidence: fsChecks)
-
-        // Package manager
-        let packageChecks = scan.packageManagers.map { CapabilityEvidence(probe: "access(\($0.path), X_OK)", observation: "executable", positive: true) }
-        let packageAvailability: CapabilityAvailability = scan.packageManagers.isEmpty
-            ? absent("No apt or dpkg")
-            : .availableUntested("\(scan.packageManagers.map(\.name).joined(separator: ", ")) found; listing installed packages has not run yet.")
-        let packageResult = CapabilityResult(
-            kind: .packageManager, availability: packageAvailability,
-            summary: "List installed packages (read-only); install or remove only after your approval, with the device's permissions.",
-            evidence: packageChecks, requiresAuthorization: !scan.packageManagers.isEmpty
-        )
-
-        // Process inspection
-        let processChecks = scan.evidence.filter { $0.probe.hasPrefix("sysctl") }
-        let processAvailability: CapabilityAvailability
-        switch scan.visibleProcessCount {
-        case .some(let count) where count > 1: processAvailability = .verified("The process table returned \(count) processes.")
-        case .some: processAvailability = .permissionDenied("The system shows this app only its own process.")
-        case nil: processAvailability = .permissionDenied("sysctl(KERN_PROC_ALL) was refused.")
+        var shellEvidence = scan.shellCandidates.filter { $0.state != .missing }.map(candidateEvidence)
+        let missingShells = scan.shellCandidates.filter { $0.state == .missing }.map(\.path)
+        for root in scan.roots where root.probe.isDenied {
+            shellEvidence.append(CapabilityEvidence(probe: "lstat(\(root.path.isEmpty ? "/" : root.path))", observation: root.probe.description, positive: false, returnValue: -1, errorCode: { if case .denied(let c) = root.probe { c } else { nil } }(), timestamp: time))
         }
-        let processResult = CapabilityResult(kind: .processInspection, availability: processAvailability, summary: "List running processes (read-only).", evidence: processChecks)
+        if !missingShells.isEmpty {
+            shellEvidence.append(CapabilityEvidence(probe: "lstat: " + missingShells.joined(separator: ", "), observation: "not found (ENOENT)", positive: false, returnValue: -1, errorCode: ENOENT, timestamp: time))
+        }
+        for path in staleShells {
+            shellEvidence.append(CapabilityEvidence(probe: "earlier result for \(path)", observation: "no longer applies: the file is not found now", positive: false, timestamp: time))
+        }
+        results.append(CapabilityResult(kind: .localShell, availability: shellAvailability, summary: "Start a shell on this device in a pseudo-terminal.", evidence: shellEvidence))
 
-        // Privileged operations
-        let privilegeChecks = scan.evidence.filter { $0.probe == "geteuid()" }
-            + scan.elevationTools.map { CapabilityEvidence(probe: "access(\($0.path), X_OK)", observation: "executable", positive: true) }
+        // Localhost SSH fallback ----------------------------------------------------
+        let loopbackAvailability: CapabilityAvailability
+        if let (endpoint, date) = signIn {
+            loopbackAvailability = .verified("Signed in to \(endpoint) and opened a terminal at \(date.formatted(date: .omitted, time: .standard)).")
+        } else if let open = scan.loopbackProbes.first(where: \.succeeded) {
+            loopbackAvailability = .availableUntested("\(open.path) accepts connections. Sign-in and a terminal have not been tested; an open port alone proves neither.")
+        } else if !scan.loopbackProbes.isEmpty, scan.loopbackProbes.allSatisfy({ $0.errorCode == ECONNREFUSED }) {
+            loopbackAvailability = .toolMissing("Nothing is listening on \(scan.loopbackProbes.map(\.path).joined(separator: " or ")) (connection refused). If your SSH service uses another port, enter it in Configure connection.")
+        } else {
+            loopbackAvailability = .environmentUnknown("No answer from \(scan.loopbackProbes.map(\.path).joined(separator: " or ")) (filtered or busy).")
+        }
+        results.append(CapabilityResult(kind: .localhostSSH, availability: loopbackAvailability, summary: "Sign in to an SSH service already running on this device; host key verified.", evidence: scan.loopbackProbes.map(record)))
+
+        // Running programs ---------------------------------------------------------
+        let allCandidates = scan.shellCandidates + scan.toolCandidates
+        let (programObservations, _) = currentObservations(allCandidates)
+        let programAvailability: CapabilityAvailability
+        let deniedFolders = scan.programFolderListings.filter(\.showsDenial)
+        if let success = programObservations.first(where: { if case .succeeded = $0.1.outcome { true } else { false } }) {
+            programAvailability = launchState(success.0, success.1)
+        } else if let failure = programObservations.first {
+            programAvailability = launchState(failure.0, failure.1)
+        } else if let tool = allCandidates.first(where: { $0.state == .executable }) {
+            programAvailability = .availableUntested("\(tool.path) passed access(X_OK); nothing has been launched yet.")
+        } else if !scan.executableDirectories.isEmpty {
+            programAvailability = .availableUntested("Executables are listed in \(scan.executableDirectories.keys.sorted().joined(separator: ", ")); none launched yet.")
+        } else if !deniedFolders.isEmpty || allCandidates.contains(where: { if case .denied = $0.state { true } else { false } }) {
+            let folders = deniedFolders.map(\.path).joined(separator: ", ")
+            let deniedTools = allCandidates.filter { if case .denied = $0.state { true } else { false } }
+            let parts = [folders.isEmpty ? nil : "listing \(folders) was refused (EPERM)", deniedTools.isEmpty ? nil : "access to \(deniedTools.prefix(3).map(\.path).joined(separator: ", ")) was refused"].compactMap { $0 }
+            programAvailability = .permissionDenied("The system refused this app: \(parts.joined(separator: "; ")). That does not mean the programs are missing. \(sandboxNote)")
+        } else {
+            programAvailability = notFound("any program", candidates: allCandidates)
+        }
+        results.append(CapabilityResult(kind: .executableAccess, availability: programAvailability, summary: "Run installed command-line programs from a local shell or Unleashed Tools.", evidence: scan.programFolderListings.map(record)))
+
+        // Filesystem: listing, reading, writing (separate) --------------------------
+        let listed = scan.locationProbes.filter(\.listing.succeeded)
+        let listDenied = scan.locationProbes.filter(\.listing.showsDenial)
+        let listingAvailability: CapabilityAvailability
+        if !listed.isEmpty {
+            listingAvailability = .verified("Listed \(listed.map(\.path).joined(separator: ", ")) at \(time.formatted(date: .omitted, time: .standard)).")
+        } else if !listDenied.isEmpty {
+            listingAvailability = .permissionDenied("Listing was refused for \(listDenied.map(\.path).joined(separator: ", ")).")
+        } else {
+            listingAvailability = .environmentUnknown("No location outside the app sandbox is visible to this app.")
+        }
+        results.append(CapabilityResult(
+            kind: .filesystemPermissions, availability: listingAvailability,
+            summary: "List folders outside the app sandbox. Listing a folder does not prove its files can be read.",
+            evidence: scan.locationProbes.map { record($0.listing) },
+            partial: !listed.isEmpty && !listDenied.isEmpty, scope: listed.map(\.path)
+        ))
+
+        let reads = scan.locationProbes.compactMap(\.fileRead)
+        let readOK = reads.filter(\.succeeded)
+        let readAvailability: CapabilityAvailability
+        if !readOK.isEmpty {
+            readAvailability = .verified("Read \(readOK.map(\.path).joined(separator: ", ")).")
+        } else if let denied = reads.first(where: \.showsDenial) {
+            readAvailability = .permissionDenied("Opening \(denied.path) was refused (\(PathProbe.errnoName(denied.errorCode ?? EPERM))).")
+        } else if !listed.isEmpty {
+            readAvailability = .availableUntested("Folders can be listed, but no file in them has been read yet.")
+        } else {
+            readAvailability = listingAvailability.isUsable ? .availableUntested("Not tested yet.") : listingAvailability
+        }
+        results.append(CapabilityResult(
+            kind: .fileReading, availability: readAvailability,
+            summary: "Read file contents outside the app sandbox (one byte of one file per folder is read during the check).",
+            evidence: reads.map(record),
+            partial: !readOK.isEmpty && (readOK.count < reads.count || !listDenied.isEmpty),
+            scope: readOK.map { ($0.path as NSString).deletingLastPathComponent }
+        ))
+
+        let writable = scan.locationProbes.filter { $0.writeCheck?.succeeded == true }
+        let writeAvailability: CapabilityAvailability
+        if let (directory, date) = writes.max(by: { $0.value < $1.value }) {
+            writeAvailability = .verified("A test file was written, read back and removed in \(directory) at \(date.formatted(date: .omitted, time: .standard)).")
+        } else if !writable.isEmpty {
+            writeAvailability = .availableUntested("access(W_OK) passes in \(writable.map(\.path).joined(separator: ", ")). Nothing has been written; run the write test to verify.")
+        } else if !listed.isEmpty {
+            writeAvailability = .permissionDenied("access(W_OK) was refused in every listed location (\(listed.map(\.path).joined(separator: ", "))).")
+        } else {
+            writeAvailability = .environmentUnknown("No location outside the app sandbox is visible to this app.")
+        }
+        results.append(CapabilityResult(
+            kind: .fileWriting, availability: writeAvailability,
+            summary: "Create or change files outside the sandbox; always controlled by you, with approval for system locations.",
+            evidence: scan.locationProbes.compactMap(\.writeCheck).map(record),
+            partial: writes.isEmpty == false && writable.count > writes.count,
+            scope: writes.isEmpty ? writable.map(\.path) : Array(writes.keys)
+        ))
+
+        // Packages: inventory and changes (separate) --------------------------------
+        let packageTools = scan.toolCandidates.filter { UnleashedEnvironmentScanner.packageToolNames.contains($0.name) }
+        let inventoryAvailability: CapabilityAvailability
+        if let database = scan.packageDatabase {
+            inventoryAvailability = .availableUntested("The dpkg status database \(database) is readable; the inventory is read from it without running apt.")
+        } else if let query = packageTools.first(where: { ($0.name == "dpkg-query" || $0.name == "dpkg") && $0.state == .executable }) {
+            inventoryAvailability = .availableUntested("\(query.path) passed access(X_OK); listing needs a working local shell launch.")
+        } else if let denied = scan.packageDatabaseProbes.first(where: \.showsDenial) {
+            inventoryAvailability = .permissionDenied("Reading \(denied.path) was refused (\(PathProbe.errnoName(denied.errorCode ?? EPERM))), and dpkg cannot be run.")
+        } else if !scan.packageDatabaseProbes.isEmpty, scan.packageDatabaseProbes.allSatisfy(\.showsAbsence), !visibleRoots.isEmpty {
+            inventoryAvailability = .toolMissing("No dpkg status database at \(scan.packageDatabaseProbes.map(\.path).joined(separator: ", ")) and no runnable dpkg.")
+        } else {
+            inventoryAvailability = notFound("dpkg", candidates: packageTools)
+        }
+        results.append(CapabilityResult(
+            kind: .packageManager, availability: inventoryAvailability,
+            summary: "List installed packages (read-only).",
+            evidence: scan.packageDatabaseProbes.map(record) + packageTools.filter { $0.state != .missing }.map(candidateEvidence),
+            scope: scan.packageDatabase.map { [$0] } ?? []
+        ))
+
+        let apt = packageTools.first { ($0.name == "apt" || $0.name == "apt-get") && $0.state.exists }
+        let changesAvailability: CapabilityAvailability
+        if !shellAvailability.isUsable {
+            changesAvailability = .permissionDenied("Package changes run apt in a visible local shell, and the local shell is not available: \(shellAvailability.label.lowercased()).")
+        } else if let apt, apt.state == .executable {
+            changesAvailability = .availableUntested("\(apt.path) passed access(X_OK). Each change needs your approval and runs visibly.")
+        } else {
+            changesAvailability = notFound("apt", candidates: packageTools.filter { $0.name == "apt" || $0.name == "apt-get" })
+        }
+        results.append(CapabilityResult(kind: .packageChanges, availability: changesAvailability, summary: "Install, remove or refresh packages after your approval, in a visible shell.", evidence: apt.map { [candidateEvidence($0)] } ?? [], requiresAuthorization: true))
+
+        // Processes -------------------------------------------------------------------
+        let processAvailability: CapabilityAvailability = switch scan.visibleProcessCount {
+        case .some(let count) where count > 1: .verified("The process table returned \(count) processes.")
+        case .some: .permissionDenied("The system shows this app only its own process.")
+        case nil: .permissionDenied("sysctl(KERN_PROC_ALL) was refused.")
+        }
+        results.append(CapabilityResult(kind: .processInspection, availability: processAvailability, summary: "List running processes (read-only).", evidence: scan.evidence.filter { $0.probe.hasPrefix("sysctl") }))
+
+        // Privileged operations ---------------------------------------------------------
+        let elevation = scan.toolCandidates.filter { UnleashedEnvironmentScanner.elevationToolNames.contains($0.name) }
         let privilegedAvailability: CapabilityAvailability
         if scan.effectiveUserID == 0 {
             privilegedAvailability = .availableUntested("This app process runs as root (euid 0).")
-        } else if let tool = scan.elevationTools.first {
-            privilegedAvailability = .availableUntested("\(tool.name) found at \(tool.path). It asks for its own password, which HCG Terminal never supplies or stores.")
+        } else if !shellAvailability.isUsable {
+            privilegedAvailability = .permissionDenied("Privileged commands run in a local shell, and the local shell is not available: \(shellAvailability.label.lowercased()). This app runs as uid \(scan.effectiveUserID).")
+        } else if let tool = elevation.first(where: { $0.state == .executable }) {
+            privilegedAvailability = .availableUntested("\(tool.path) passed access(X_OK). It asks for its own password, which HCG Terminal never supplies or stores.")
         } else {
-            privilegedAvailability = absent("No sudo or su (commands would run as uid \(scan.effectiveUserID))")
+            privilegedAvailability = notFound("sudo or su", candidates: elevation)
         }
-        let privilegedResult = CapabilityResult(
+        results.append(CapabilityResult(
             kind: .privilegedOperations, availability: privilegedAvailability,
             summary: "Run privileged commands only after you approve each one; HCG Terminal never elevates by itself.",
-            evidence: privilegeChecks, requiresAuthorization: true
-        )
+            evidence: scan.evidence.filter { $0.probe == "geteuid()" } + elevation.filter { $0.state != .missing }.map(candidateEvidence),
+            requiresAuthorization: true
+        ))
 
-        let localAvailable = shellResult.availability.isUsable
-        var notes = ["Unleashed build: backend linked. \(scan.operatingSystem)"]
-        if let deniedNote { notes.append(deniedNote) }
-        return CapabilityReport(
+        results.append(SharedCapabilities.remoteSSH())
+        results.append(SharedCapabilities.buildOrchestration())
+
+        let sessionPossible = shellAvailability.isUsable || loopbackAvailability.isUsable
+        var notes = ["Unleashed build: backend linked. \(scan.operatingSystem)", "Checked \(time.formatted(date: .omitted, time: .standard)); results from tests keep their own times."]
+        if !deniedRoots.isEmpty || !scan.deniedPaths.isEmpty {
+            notes.append("The system refused this app access to \(Set(scan.deniedPaths).sorted().prefix(8).joined(separator: ", ")).")
+        }
+        let report = CapabilityReport(
             mode: .unleashed,
-            results: [
-                shellResult, executableResult, filesystemResult, packageResult, processResult, privilegedResult,
-                SharedCapabilities.remoteSSH(), SharedCapabilities.buildOrchestration(),
-            ],
-            localFeaturesAvailable: localAvailable,
-            headline: localAvailable
-                ? "Unleashed: \(shellResult.availability.label.lowercased()). Nothing is installed or elevated automatically."
+            generatedAt: time,
+            results: results,
+            localFeaturesAvailable: sessionPossible,
+            headline: sessionPossible
+                ? "Unleashed: local terminal \(shellAvailability.isUsable ? shellAvailability.label.lowercased() : "through the localhost SSH service"). Nothing is installed or elevated automatically."
                 : CapabilityReport.unleashedUnavailableMessage,
             buildNotes: notes
         )
+        return report
     }
 }
 

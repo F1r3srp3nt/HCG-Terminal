@@ -25,14 +25,24 @@ public struct UnleashedExecutionProvider: LocalExecutionProvider {
         self.access = access
     }
 
+    /// The shell to launch: one that already launched successfully, else one that passed
+    /// `access(X_OK)`, else an existing file the sandbox refused to check (a launch shows the
+    /// real result). Shells whose last launch failed are skipped.
+    func preferredShell(_ scan: UnleashedEnvironmentScan) async -> String? {
+        var failed: Set<String> = []
+        for path in scan.launchableShells {
+            switch await observations.outcome(for: path) {
+            case .succeeded?: return path
+            case .failed?: failed.insert(path)
+            case nil: break
+            }
+        }
+        return scan.shells.first { !failed.contains($0) } ?? scan.launchableShells.first { !failed.contains($0) }
+    }
+
     public func availableBackend() async -> SessionBackend? {
         let scan = capabilities.scan()
-        if let shell = scan.shells.first {
-            if case .failed? = await observations.outcome(for: shell) {
-                return scan.loopbackServicePorts.first.map { .loopbackService(host: "127.0.0.1", port: $0) }
-            }
-            return .localProcess(executable: shell)
-        }
+        if let shell = await preferredShell(scan) { return .localProcess(executable: shell) }
         return scan.loopbackServicePorts.first.map { .loopbackService(host: "127.0.0.1", port: $0) }
     }
 
@@ -42,11 +52,11 @@ public struct UnleashedExecutionProvider: LocalExecutionProvider {
     public func makeSession() async throws -> any TerminalSession {
         try access.require(.localShell)
         let scan = capabilities.scan()
-        guard let shell = scan.shells.first else {
-            throw ExecutionError.modeUnavailable(.unleashed, reason: "No local shell can be started in this environment.")
-        }
-        if case .failed(_, let message)? = await observations.outcome(for: shell) {
-            throw ExecutionError.modeUnavailable(.unleashed, reason: message)
+        guard let shell = await preferredShell(scan) else {
+            if let path = scan.launchableShells.first, case .failed(_, let message)? = await observations.outcome(for: path) {
+                throw ExecutionError.modeUnavailable(.unleashed, reason: "\(path) could not be started: \(message)")
+            }
+            throw ExecutionError.modeUnavailable(.unleashed, reason: "No shell file exists in the locations checked; see Unleashed checks for every path tried.")
         }
         return LocalProcessSession(
             executable: shell,
@@ -92,6 +102,52 @@ public struct InstalledPackage: Hashable, Sendable, Identifiable {
     public var version: String
     public var status: String
     public var id: String { name }
+}
+
+/// The installed-package list and where it came from.
+public struct PackageInventory: Hashable, Sendable {
+    public var packages: [InstalledPackage]
+    /// The status database path, or `dpkg-query`.
+    public var source: String
+    /// Entries that could not be parsed (counted, not guessed).
+    public var skippedEntries: Int
+    /// False when entries were skipped or the database looked truncated.
+    public var complete: Bool
+}
+
+/// Parses dpkg's status database (`var/lib/dpkg/status`): RFC-822-style stanzas separated by
+/// blank lines. Only packages whose status is "install ok installed" (or another installed
+/// state) are listed; malformed stanzas are counted as skipped.
+public enum DpkgStatusParser {
+    public static func parse(_ text: String, source: String) -> PackageInventory {
+        var packages: [InstalledPackage] = []
+        var skipped = 0
+        let normalized = text.replacingOccurrences(of: "\r\n", with: "\n")
+        for stanza in normalized.components(separatedBy: "\n\n") {
+            let trimmed = stanza.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty { continue }
+            var fields: [String: String] = [:]
+            var lastKey: String?
+            for line in trimmed.split(separator: "\n", omittingEmptySubsequences: false) {
+                if line.first == " " || line.first == "\t" { continue } // continuation lines
+                guard let colon = line.firstIndex(of: ":") else { lastKey = nil; continue }
+                let key = String(line[..<colon]).trimmingCharacters(in: .whitespaces)
+                let value = String(line[line.index(after: colon)...]).trimmingCharacters(in: .whitespaces)
+                fields[key] = value
+                lastKey = key
+            }
+            _ = lastKey
+            guard let name = fields["Package"], !name.isEmpty, let status = fields["Status"] else { skipped += 1; continue }
+            let state = status.split(separator: " ").last.map(String.init) ?? ""
+            guard ["installed", "half-configured", "unpacked", "half-installed", "triggers-awaited", "triggers-pending"].contains(state) else { continue }
+            packages.append(InstalledPackage(name: name, version: fields["Version"] ?? "?", status: state))
+        }
+        let truncated = !normalized.isEmpty && !normalized.hasSuffix("\n")
+        return PackageInventory(
+            packages: packages.sorted { $0.name < $1.name }, source: source,
+            skippedEntries: skipped, complete: skipped == 0 && !truncated
+        )
+    }
 }
 
 public enum PackageAction: Hashable, Sendable {
@@ -143,6 +199,21 @@ public struct PackageManagerClient: Sendable {
 
     private func tool(_ name: String) -> DetectedTool? { scan.packageManagers.first { $0.name == name } }
 
+    /// The installed-package inventory. Read from the dpkg status database when it is readable
+    /// (no program is run); otherwise from `dpkg-query`, which needs a working launch.
+    public func inventory() async throws -> PackageInventory {
+        try access.require(.packageManagement)
+        if let database = scan.packageDatabase {
+            let data: Data
+            do { data = try Data(contentsOf: URL(fileURLWithPath: database)) } catch {
+                throw PackageManagerError.failed("\(database) could not be read: \(error.localizedDescription)")
+            }
+            return DpkgStatusParser.parse(String(decoding: data, as: UTF8.self), source: database)
+        }
+        let packages = try await listInstalled()
+        return PackageInventory(packages: packages, source: "dpkg-query", skippedEntries: 0, complete: true)
+    }
+
     public func listInstalled() async throws -> [InstalledPackage] {
         try access.require(.packageManagement)
         guard let query = tool("dpkg-query") ?? tool("dpkg") else { throw PackageManagerError.notAvailable }
@@ -189,7 +260,8 @@ public struct PackageManagerClient: Sendable {
 
     /// Asks the user. Returns the command line only if they explicitly approved it.
     public func authorizedCommand(for action: PackageAction) async throws -> String {
-        try access.require(.packageManagement)
+        // Changes run apt in a visible local shell: both switches must be on.
+        try access.requireAll([.packageManagement, .localShell])
         let command = try commandLine(for: action)
         let request = AuthorizationRequest(
             title: action.title,
@@ -256,7 +328,7 @@ public struct HostFileSystem: Sendable {
     private let access: AccessPolicy
 
     public init(scan: UnleashedEnvironmentScan, gate: AuthorizationGate? = nil, access: AccessPolicy = .shared) {
-        self.init(roots: scan.permittedLocations.filter(\.listable).map(\.path), gate: gate, access: access)
+        self.init(roots: scan.locations.filter(\.listable).map(\.path), gate: gate, access: access)
     }
 
     public init(

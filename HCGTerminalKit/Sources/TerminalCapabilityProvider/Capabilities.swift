@@ -5,8 +5,14 @@ import TerminalCore
 public enum CapabilityKind: String, CaseIterable, Codable, Sendable, Identifiable {
     case localShell
     case executableAccess
+    case localhostSSH
+    /// Directory listing (the raw value is kept for stored reports).
     case filesystemPermissions
+    case fileReading
+    case fileWriting
+    /// Installed-package inventory (the raw value is kept for stored reports).
     case packageManager
+    case packageChanges
     case processInspection
     case privilegedOperations
     case remoteSSH
@@ -17,9 +23,13 @@ public enum CapabilityKind: String, CaseIterable, Codable, Sendable, Identifiabl
     public var title: String {
         switch self {
         case .localShell: "Local shell"
-        case .executableAccess: "Executable access"
-        case .filesystemPermissions: "Filesystem permissions"
-        case .packageManager: "Package manager"
+        case .executableAccess: "Running programs"
+        case .localhostSSH: "Localhost SSH fallback"
+        case .filesystemPermissions: "Directory listing"
+        case .fileReading: "Reading files"
+        case .fileWriting: "Writing files"
+        case .packageManager: "Package inventory"
+        case .packageChanges: "Package changes"
         case .processInspection: "Process inspection"
         case .privilegedOperations: "Privileged operations"
         case .remoteSSH: "Remote SSH"
@@ -31,14 +41,21 @@ public enum CapabilityKind: String, CaseIterable, Codable, Sendable, Identifiabl
         switch self {
         case .localShell: "terminal"
         case .executableAccess: "gearshape.2"
-        case .filesystemPermissions: "folder.badge.gearshape"
+        case .localhostSSH: "point.3.connected.trianglepath.dotted"
+        case .filesystemPermissions: "folder"
+        case .fileReading: "doc.text.magnifyingglass"
+        case .fileWriting: "square.and.pencil"
         case .packageManager: "shippingbox"
+        case .packageChanges: "shippingbox.and.arrow.backward"
         case .processInspection: "list.bullet.rectangle"
         case .privilegedOperations: "lock.shield"
         case .remoteSSH: "network"
         case .buildOrchestration: "hammer"
         }
     }
+
+    /// Capabilities that act on this device (as opposed to remote development).
+    public var isLocal: Bool { self != .remoteSSH && self != .buildOrchestration }
 }
 
 /// State of one capability. Never optimistic: a capability is "verified" only after it was
@@ -139,11 +156,28 @@ public struct CapabilityEvidence: Hashable, Codable, Sendable {
     public var observation: String
     /// Whether this observation supports the capability being present.
     public var positive: Bool
+    /// The C return value, when the probe was a system call.
+    public var returnValue: Int32?
+    /// `errno` after a failed system call (EPERM, EACCES, ENOENT, …).
+    public var errorCode: Int32?
+    /// When the probe ran.
+    public var timestamp: Date?
 
-    public init(probe: String, observation: String, positive: Bool) {
+    public init(probe: String, observation: String, positive: Bool, returnValue: Int32? = nil, errorCode: Int32? = nil, timestamp: Date? = nil) {
         self.probe = probe
         self.observation = observation
         self.positive = positive
+        self.returnValue = returnValue
+        self.errorCode = errorCode
+        self.timestamp = timestamp
+    }
+
+    public init(_ record: ProbeRecord, positive: Bool? = nil) {
+        self.init(
+            probe: "\(record.operation)(\(record.path))", observation: record.summary,
+            positive: positive ?? record.succeeded, returnValue: record.returnValue,
+            errorCode: record.errorCode, timestamp: record.timestamp
+        )
     }
 }
 
@@ -156,6 +190,10 @@ public struct CapabilityResult: Hashable, Codable, Sendable, Identifiable {
     public var evidence: [CapabilityEvidence]
     /// Each use needs explicit user approval (privileged commands, package changes).
     public var requiresAuthorization: Bool
+    /// Works only for part of what it covers (for example some folders but not others).
+    public var partial: Bool
+    /// Exactly where it applies, e.g. the folders that could be listed.
+    public var scope: [String]
 
     public var id: CapabilityKind { kind }
 
@@ -164,13 +202,22 @@ public struct CapabilityResult: Hashable, Codable, Sendable, Identifiable {
         availability: CapabilityAvailability,
         summary: String,
         evidence: [CapabilityEvidence] = [],
-        requiresAuthorization: Bool = false
+        requiresAuthorization: Bool = false,
+        partial: Bool = false,
+        scope: [String] = []
     ) {
         self.kind = kind
         self.availability = availability
         self.summary = summary
         self.evidence = evidence
         self.requiresAuthorization = requiresAuthorization
+        self.partial = partial
+        self.scope = scope
+    }
+
+    /// The badge text: the state, marked partial when it only covers part of its scope.
+    public var statusLabel: String {
+        partial && availability.isUsable ? "\(availability.label) · partial" : availability.label
     }
 
     /// The state's reason, unless it only repeats the summary.
@@ -256,6 +303,33 @@ public struct CapabilityReport: Hashable, Codable, Sendable {
         return copy
     }
 
+    /// How much of the mode's local side works. `available`: a local session can be opened.
+    /// `partial`: some local capabilities work (e.g. listing folders) but not a session.
+    public enum Level: String, Sendable {
+        case available, partial, unavailable
+    }
+
+    public var level: Level {
+        if localFeaturesAvailable { return .available }
+        return results.contains { $0.kind.isLocal && $0.availability.isUsable } ? .partial : .unavailable
+    }
+
+    /// The banner: names what works and what blocks the rest, from the results themselves.
+    public var bannerText: String {
+        switch level {
+        case .available:
+            return headline
+        case .unavailable:
+            return Self.unleashedUnavailableMessage
+        case .partial:
+            let working = results.filter { $0.kind.isLocal && $0.availability.isUsable }.map { $0.partial ? "\($0.kind.title) (partial)" : $0.kind.title }
+            let blocked = results.filter { $0.kind.isLocal && !$0.availability.isUsable }.map { "\($0.kind.title.lowercased()): \($0.availability.label.lowercased())" }
+            var text = "\(mode.displayName) partially available. Working: \(working.joined(separator: ", "))."
+            if !blocked.isEmpty { text += " Not working: \(blocked.joined(separator: "; "))." }
+            return text
+        }
+    }
+
     /// The exact message the interface shows when Unleashed features are unavailable.
     public static let unleashedUnavailableMessage =
         "Unleashed features are not available in this environment. Vanilla terminal and remote development remain available."
@@ -267,14 +341,16 @@ public extension AccessControl {
         switch (kind, mode) {
         case (.localShell, .vanilla): .workspaceCommands
         case (.localShell, .unleashed), (.executableAccess, .unleashed): .localShell
-        case (.executableAccess, .vanilla): nil
-        case (.filesystemPermissions, .unleashed): .expandedFileRead
-        case (.filesystemPermissions, .vanilla): nil
-        case (.packageManager, _): .packageManagement
+        case (.localhostSSH, .unleashed): .localhostSSH
+        case (.filesystemPermissions, .unleashed), (.fileReading, .unleashed): .expandedFileRead
+        case (.fileWriting, .unleashed): .expandedFileWrite
+        case (.packageManager, _), (.packageChanges, .unleashed): .packageManagement
         case (.processInspection, _): .processInspection
         case (.privilegedOperations, _): .privilegedOperations
         case (.remoteSSH, _): .remoteSSH
         case (.buildOrchestration, _): .remoteBuilds
+        case (.executableAccess, .vanilla), (.localhostSSH, .vanilla), (.filesystemPermissions, .vanilla),
+             (.fileReading, .vanilla), (.fileWriting, .vanilla), (.packageChanges, .vanilla): nil
         }
     }
 
@@ -282,9 +358,11 @@ public extension AccessControl {
     func capability(in mode: ExecutionMode) -> CapabilityKind? {
         switch self {
         case .workspaceCommands: mode == .vanilla ? .localShell : nil
-        case .externalFiles: nil
+        case .externalFiles, .unleashedFeatures: nil
         case .localShell: mode == .unleashed ? .localShell : nil
-        case .expandedFileRead, .expandedFileWrite: mode == .unleashed ? .filesystemPermissions : nil
+        case .localhostSSH: mode == .unleashed ? .localhostSSH : nil
+        case .expandedFileRead: mode == .unleashed ? .filesystemPermissions : nil
+        case .expandedFileWrite: mode == .unleashed ? .fileWriting : nil
         case .packageManagement: .packageManager
         case .processInspection: .processInspection
         case .privilegedOperations: .privilegedOperations
@@ -344,8 +422,12 @@ public struct UnleashedNotIncludedCapabilityProvider: TerminalCapabilityProvider
         let local: [CapabilityResult] = [
             (CapabilityKind.localShell, "Start a shell on this device."),
             (.executableAccess, "Run installed command-line tools."),
-            (.filesystemPermissions, "Access permitted locations outside the app sandbox."),
-            (.packageManager, "List and change installed packages."),
+            (.localhostSSH, "Sign in to an SSH service running on this device."),
+            (.filesystemPermissions, "List folders outside the app sandbox."),
+            (.fileReading, "Read files outside the app sandbox."),
+            (.fileWriting, "Write files outside the app sandbox."),
+            (.packageManager, "List installed packages."),
+            (.packageChanges, "Install or remove packages after your approval."),
             (.processInspection, "List running processes."),
             (.privilegedOperations, "Run privileged commands after your approval."),
         ].map { CapabilityResult(kind: $0.0, availability: .notIncluded(Self.reason), summary: $0.1, evidence: evidence) }
