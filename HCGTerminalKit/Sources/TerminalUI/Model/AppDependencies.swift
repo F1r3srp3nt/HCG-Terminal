@@ -42,12 +42,15 @@ public struct HostFileRow: Hashable, Sendable, Identifiable {
     public var name: String
     public var isDirectory: Bool
     public var size: Int64
+    /// `access(W_OK)` succeeded when listed.
+    public var writable: Bool
     public var id: String { path }
-    public init(path: String, name: String, isDirectory: Bool, size: Int64) {
+    public init(path: String, name: String, isDirectory: Bool, size: Int64, writable: Bool = false) {
         self.path = path
         self.name = name
         self.isDirectory = isDirectory
         self.size = size
+        self.writable = writable
     }
 }
 
@@ -68,6 +71,14 @@ public protocol UnleashedTools: Sendable {
     func logRoots() async -> [String]
     func list(_ path: String) async throws -> [HostFileRow]
     func readTail(_ path: String) async throws -> String
+    /// Whether this app may write in `path` now (`access(W_OK)`), inside a permitted location.
+    func canWrite(_ path: String) async -> Bool
+    func readText(_ path: String) async throws -> String
+    /// Writes need approval each time for system and jailbreak locations.
+    func writeText(_ text: String, to path: String) async throws
+    func createDirectory(named name: String, in directory: String) async throws
+    func rename(_ path: String, to newName: String) async throws
+    func delete(_ path: String) async throws
 }
 
 /// Everything the interface needs, assembled by the app target's composition root.

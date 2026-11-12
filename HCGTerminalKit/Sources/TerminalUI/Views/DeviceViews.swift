@@ -95,47 +95,172 @@ struct UnleashedToolsView: View {
     }
 }
 
-/// Read-only listing of a permitted directory, with a log/text viewer for files.
+/// A permitted directory outside the sandbox. Changes are offered only where this app may
+/// write; system and jailbreak locations ask for approval each time.
 struct HostDirectoryView: View {
     @Environment(TerminalAppModel.self) private var model
     let path: String
     @State private var rows: [HostFileRow] = []
+    @State private var writable = false
+    @State private var newFolderName = ""
+    @State private var showNewFolder = false
+    @State private var renaming: HostFileRow?
+    @State private var newName = ""
+    @State private var deleting: HostFileRow?
+    @State private var status: String?
+
+    private var tools: (any UnleashedTools)? { model.dependencies.unleashedTools }
 
     var body: some View {
-        List(rows) { row in
-            if row.isDirectory {
-                NavigationLink { HostDirectoryView(path: row.path) } label: { Label(row.name, systemImage: "folder") }
-            } else {
-                NavigationLink { HostFileTailView(path: row.path) } label: {
-                    HStack {
-                        Label(row.name, systemImage: "doc.text")
-                        Spacer()
-                        Text(ByteCountFormatter.string(fromByteCount: row.size, countStyle: .file)).font(.caption).foregroundStyle(.secondary)
+        List {
+            Section {
+                Label(writable ? "This app may change items here." : "Read-only for this app.", systemImage: writable ? "pencil" : "lock")
+                    .font(.footnote).foregroundStyle(.secondary)
+                if let status { Text(status).font(.footnote).foregroundStyle(HCGPalette.warn) }
+            }
+            ForEach(rows) { row in
+                Group {
+                    if row.isDirectory {
+                        NavigationLink { HostDirectoryView(path: row.path) } label: { label(row) }
+                    } else {
+                        NavigationLink { HostFileView(path: row.path, writable: row.writable) } label: { label(row) }
+                    }
+                }
+                .swipeActions {
+                    if row.writable && writable {
+                        Button("Delete", role: .destructive) { deleting = row }
+                        Button("Rename") { newName = row.name; renaming = row }
                     }
                 }
             }
         }
         .navigationTitle((path as NSString).lastPathComponent)
-        .task {
-            do { rows = try await model.dependencies.unleashedTools?.list(path) ?? [] } catch { model.errorMessage = error.localizedDescription }
+        .toolbar {
+            if writable {
+                Button { newFolderName = ""; showNewFolder = true } label: { Label("New Folder", systemImage: "folder.badge.plus") }
+            }
+        }
+        .task { await load() }
+        .refreshable { await load() }
+        .alert("New Folder", isPresented: $showNewFolder) {
+            TextField("Name", text: $newFolderName)
+            Button("Create") { change { try await $0.createDirectory(named: newFolderName, in: path) } }
+            Button("Cancel", role: .cancel) {}
+        }
+        .alert("Rename", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
+            TextField("Name", text: $newName)
+            Button("Rename") {
+                if let row = renaming { change { try await $0.rename(row.path, to: newName) } }
+                renaming = nil
+            }
+            Button("Cancel", role: .cancel) { renaming = nil }
+        }
+        .confirmationDialog("Delete “\(deleting?.name ?? "")”?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }), titleVisibility: .visible) {
+            Button("Delete", role: .destructive) {
+                if let row = deleting { change { try await $0.delete(row.path) } }
+                deleting = nil
+            }
+        } message: {
+            Text("This removes it from the device, outside HCG Terminal's own storage. It cannot be undone.")
+        }
+    }
+
+    private func label(_ row: HostFileRow) -> some View {
+        HStack {
+            Label(row.name, systemImage: row.isDirectory ? "folder" : "doc.text")
+            Spacer()
+            if !row.writable { Image(systemName: "lock").font(.caption2).foregroundStyle(.secondary) }
+            if !row.isDirectory {
+                Text(ByteCountFormatter.string(fromByteCount: row.size, countStyle: .file)).font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func load() async {
+        guard let tools else { return }
+        writable = await tools.canWrite(path)
+        do { rows = try await tools.list(path) } catch { status = error.localizedDescription }
+    }
+
+    private func change(_ action: @escaping (any UnleashedTools) async throws -> Void) {
+        guard let tools else { return }
+        Task {
+            do {
+                try await action(tools)
+                status = nil
+                model.recordVerification(.filesystemPermissions, mode: .unleashed, observation: "Changed an item in \(path).")
+            } catch {
+                status = error.localizedDescription
+            }
+            await load()
         }
     }
 }
 
-struct HostFileTailView: View {
+/// Shows a file (the end of large logs); text files this app may write can be edited.
+struct HostFileView: View {
     @Environment(TerminalAppModel.self) private var model
     let path: String
+    let writable: Bool
     @State private var text = ""
+    @State private var original = ""
+    @State private var editing = false
+    @State private var status: String?
 
     var body: some View {
-        ScrollView {
-            Text(text).font(.system(size: 11, design: .monospaced)).textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading).padding()
+        Group {
+            if editing {
+                TextEditor(text: $text)
+                    .font(.system(.body, design: .monospaced))
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+            } else {
+                ScrollView {
+                    Text(text).font(.system(size: 11, design: .monospaced)).textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading).padding()
+                }
+                .defaultScrollAnchor(.bottom)
+            }
         }
-        .defaultScrollAnchor(.bottom)
+        .safeAreaInset(edge: .top) {
+            if let status { Text(status).font(.footnote).foregroundStyle(HCGPalette.warn).padding(6) }
+        }
         .navigationTitle((path as NSString).lastPathComponent)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if writable {
+                if editing {
+                    Button("Save") { Task { await save() } }.disabled(text == original)
+                } else {
+                    Button("Edit") { Task { await startEditing() } }
+                }
+            }
+        }
         .task {
             do { text = try await model.dependencies.unleashedTools?.readTail(path) ?? "" } catch { text = error.localizedDescription }
+        }
+    }
+
+    private func startEditing() async {
+        do {
+            let full = try await model.dependencies.unleashedTools?.readText(path) ?? ""
+            text = full
+            original = full
+            editing = true
+            status = nil
+        } catch {
+            status = error.localizedDescription
+        }
+    }
+
+    private func save() async {
+        do {
+            try await model.dependencies.unleashedTools?.writeText(text, to: path)
+            original = text
+            status = "Saved."
+            model.recordVerification(.filesystemPermissions, mode: .unleashed, observation: "Wrote \(path).")
+        } catch {
+            status = error.localizedDescription
         }
     }
 }

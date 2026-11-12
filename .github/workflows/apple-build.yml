@@ -150,6 +150,18 @@ jobs:
             echo "HCGBuildVariant=$(/usr/libexec/PlistBuddy -c 'Print :HCGBuildVariant' "$app/Info.plist") HCGSourceRevision=$(/usr/libexec/PlistBuddy -c 'Print :HCGSourceRevision' "$app/Info.plist")"
           done
 
+      - name: Package variant (unsigned, separate folders)
+        if: always()
+        run: |
+          variant=$([ "${{ matrix.scheme }}" = HCGTerminalUnleashed ] && echo unleashed || echo standard)
+          Scripts/package-ios.sh "$variant" "$RUNNER_TEMP/dist" --archive "$RUNNER_TEMP/${{ matrix.scheme }}.xcarchive"
+          find "$RUNNER_TEMP/dist" -maxdepth 2 | sed "s#$RUNNER_TEMP/##"
+          if [ "$variant" = unleashed ]; then
+            ipa=$(ls "$RUNNER_TEMP"/dist/unleashed/*.ipa)
+            unzip -l "$ipa" | grep -E "Payload/HCGTerminalUnleashed.app/(Info.plist|HCGTerminalUnleashed)$"
+          fi
+          [ ! -d "$RUNNER_TEMP/dist/$([ "$variant" = standard ] && echo unleashed || echo standard)" ] || { echo "FAIL: artifacts mixed"; exit 1; }
+
       - name: Diagnostics summary
         if: always()
         run: |

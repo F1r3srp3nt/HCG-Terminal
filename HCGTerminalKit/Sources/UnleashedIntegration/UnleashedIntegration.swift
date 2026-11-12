@@ -66,16 +66,29 @@ actor UnleashedToolsAdapter: UnleashedTools {
         return try await PackageManagerClient(scan: scan(), gate: gate).authorizedCommand(for: action)
     }
 
-    func permittedRoots() async -> [String] { PermittedLocationBrowser(scan: scan()).roots }
+    private func files() -> HostFileSystem { HostFileSystem(scan: scan(), gate: gate) }
 
-    func logRoots() async -> [String] { PermittedLocationBrowser(scan: scan()).logRoots }
+    func permittedRoots() async -> [String] { files().roots }
+
+    func logRoots() async -> [String] { files().logRoots }
 
     func list(_ path: String) async throws -> [HostFileRow] {
-        try PermittedLocationBrowser(scan: scan()).list(path)
-            .map { HostFileRow(path: $0.path, name: $0.name, isDirectory: $0.isDirectory, size: $0.size) }
+        try files().list(path).map { HostFileRow(path: $0.path, name: $0.name, isDirectory: $0.isDirectory, size: $0.size, writable: $0.writable) }
     }
 
-    func readTail(_ path: String) async throws -> String {
-        try PermittedLocationBrowser(scan: scan()).readTail(path)
+    func readTail(_ path: String) async throws -> String { try files().readTail(path) }
+
+    func canWrite(_ path: String) async -> Bool { files().isWritable(path) }
+
+    func readText(_ path: String) async throws -> String { try files().readText(path) }
+
+    func writeText(_ text: String, to path: String) async throws { try await files().writeText(text, to: path) }
+
+    func createDirectory(named name: String, in directory: String) async throws {
+        try await files().createDirectory(named: name, in: directory)
     }
+
+    func rename(_ path: String, to newName: String) async throws { try await files().rename(path, to: newName) }
+
+    func delete(_ path: String) async throws { try await files().delete(path) }
 }

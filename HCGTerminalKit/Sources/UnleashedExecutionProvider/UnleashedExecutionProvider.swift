@@ -195,11 +195,21 @@ public struct PackageManagerClient: Sendable {
 public enum LocationBrowserError: Error, LocalizedError, Equatable {
     case notPermitted(String)
     case unreadable(String)
+    case notWritable(String, String)
+    case approvalDeclined(String)
+    case alreadyExists(String)
+    case invalidName(String)
+    case failed(String, String)
 
     public var errorDescription: String? {
         switch self {
-        case .notPermitted(let path): "\(path) is not inside a location this device permits."
+        case .notPermitted(let path): "\(path) is not inside a location this device lets HCG Terminal access."
         case .unreadable(let path): "\(path) could not be read."
+        case .notWritable(let path, let reason): "\(path) is not writable for this app (\(reason)). HCG Terminal does not change permissions."
+        case .approvalDeclined(let path): "Not changed: approval for \(path) was declined."
+        case .alreadyExists(let name): "“\(name)” already exists."
+        case .invalidName(let name): "“\(name)” is not a valid name."
+        case .failed(let path, let reason): "\(path): \(reason)"
         }
     }
 }
@@ -210,30 +220,62 @@ public struct HostFileEntry: Hashable, Sendable, Identifiable {
     public var isDirectory: Bool
     public var size: Int64
     public var modified: Date?
+    public var writable: Bool
     public var id: String { path }
 }
 
-/// Read-only browsing of locations outside the sandbox that the scan found readable.
-public struct PermittedLocationBrowser: Sendable {
+/// Filesystem access outside the app sandbox, limited to the locations the read-only scan found
+/// listable. Reads and writes run with the app's actual permissions:
+/// - every path is resolved (symlinks included) and must stay inside a permitted location;
+/// - writes require `access(W_OK)` on the target directory at the moment of writing;
+/// - writes under protected system or jailbreak locations need explicit approval each time;
+/// - nothing ever uses sudo, changes permissions or remounts anything.
+public struct HostFileSystem: Sendable {
     public let roots: [String]
+    private let gate: AuthorizationGate?
 
-    public init(scan: UnleashedEnvironmentScan) {
-        roots = scan.permittedLocations.filter(\.listable).map(\.path)
+    public init(scan: UnleashedEnvironmentScan, gate: AuthorizationGate? = nil) {
+        self.init(roots: scan.permittedLocations.filter(\.listable).map(\.path), gate: gate)
+    }
+
+    public init(roots: [String], gate: AuthorizationGate?) {
+        self.roots = roots.map { Self.resolve($0) }
+        self.gate = gate
     }
 
     public static let logDirectories = ["/var/log", "/private/var/log", "/var/jb/var/log", "/var/mobile/Library/Logs", "/var/mobile/Library/Logs/CrashReporter"]
 
+    static func resolve(_ path: String) -> String {
+        URL(fileURLWithPath: (path as NSString).standardizingPath).resolvingSymlinksInPath().path
+    }
+
+    /// Resolves `path` (and, for a new item, its parent) and checks it stays inside a root.
     func check(_ path: String) throws -> String {
         let standardized = (path as NSString).standardizingPath
-        guard roots.contains(where: { standardized == $0 || standardized.hasPrefix($0 + "/") }) else {
+        let exists = FileManager.default.fileExists(atPath: standardized)
+        let resolved = exists
+            ? Self.resolve(standardized)
+            : (Self.resolve((standardized as NSString).deletingLastPathComponent) as NSString).appendingPathComponent((standardized as NSString).lastPathComponent)
+        guard roots.contains(where: { resolved == $0 || resolved.hasPrefix($0 + "/") }) else {
             throw LocationBrowserError.notPermitted(path)
         }
-        return standardized
+        return resolved
+    }
+
+    /// Whether a change at `path` needs explicit approval (system and jailbreak locations).
+    public static func requiresApproval(_ path: String) -> Bool {
+        PrivilegeClassifier.assess("rm \(path)").requiresAuthorization
+    }
+
+    public func isWritable(_ path: String) -> Bool {
+        guard let resolved = try? check(path) else { return false }
+        return access(resolved, W_OK) == 0
     }
 
     public func list(_ path: String) throws -> [HostFileEntry] {
         let directory = try check(path)
-        guard let names = try? FileManager.default.contentsOfDirectory(atPath: directory) else {
+        let names: [String]
+        do { names = try FileManager.default.contentsOfDirectory(atPath: directory) } catch {
             throw LocationBrowserError.unreadable(directory)
         }
         return names.sorted().map { name in
@@ -243,7 +285,8 @@ public struct PermittedLocationBrowser: Sendable {
                 path: full, name: name,
                 isDirectory: (attributes[.type] as? FileAttributeType) == .typeDirectory,
                 size: (attributes[.size] as? NSNumber)?.int64Value ?? 0,
-                modified: attributes[.modificationDate] as? Date
+                modified: attributes[.modificationDate] as? Date,
+                writable: access(full, W_OK) == 0
             )
         }
     }
@@ -260,8 +303,94 @@ public struct PermittedLocationBrowser: Sendable {
         return String(decoding: data, as: UTF8.self)
     }
 
+    public func readText(_ path: String, limit: Int = 2 * 1024 * 1024) throws -> String {
+        let file = try check(path)
+        guard let handle = FileHandle(forReadingAtPath: file) else { throw LocationBrowserError.unreadable(file) }
+        defer { try? handle.close() }
+        let data = (try? handle.read(upToCount: limit)) ?? Data()
+        guard let text = String(data: data, encoding: .utf8), !data.contains(0) else { throw LocationBrowserError.unreadable("\(file) (not UTF-8 text)") }
+        return text
+    }
+
+    // MARK: Writing
+
+    private func authorizeChange(_ title: String, path: String, command: String) async throws {
+        guard Self.requiresApproval(path) else { return }
+        guard let gate else { throw LocationBrowserError.approvalDeclined(path) }
+        let request = AuthorizationRequest(
+            title: title, commandLine: command, target: .local(.unleashed),
+            reasons: ["\(path) is a system or jailbreak location; changing it can break the device's environment.", "Runs with this app's own permissions; nothing is elevated."]
+        )
+        guard await gate.requestAuthorization(request) else { throw LocationBrowserError.approvalDeclined(path) }
+    }
+
+    private func requireWritableDirectory(_ directory: String) throws {
+        guard access(directory, W_OK) == 0 else {
+            throw LocationBrowserError.notWritable(directory, String(cString: strerror(errno)))
+        }
+    }
+
+    private func validName(_ name: String) throws -> String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != ".", trimmed != "..", !trimmed.contains("/"), !trimmed.contains("\0") else {
+            throw LocationBrowserError.invalidName(name)
+        }
+        return trimmed
+    }
+
+    public func writeText(_ text: String, to path: String) async throws {
+        let file = try check(path)
+        try requireWritableDirectory((file as NSString).deletingLastPathComponent)
+        if FileManager.default.fileExists(atPath: file), access(file, W_OK) != 0 {
+            throw LocationBrowserError.notWritable(file, String(cString: strerror(errno)))
+        }
+        try await authorizeChange("Write a file", path: file, command: "write \(file)")
+        do { try Data(text.utf8).write(to: URL(fileURLWithPath: file), options: [.atomic]) } catch {
+            throw LocationBrowserError.failed(file, error.localizedDescription)
+        }
+    }
+
+    @discardableResult
+    public func createDirectory(named name: String, in directory: String) async throws -> String {
+        let parent = try check(directory)
+        let path = (parent as NSString).appendingPathComponent(try validName(name))
+        guard !FileManager.default.fileExists(atPath: path) else { throw LocationBrowserError.alreadyExists(name) }
+        try requireWritableDirectory(parent)
+        try await authorizeChange("Create a folder", path: path, command: "mkdir \(path)")
+        do { try FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: false) } catch {
+            throw LocationBrowserError.failed(path, error.localizedDescription)
+        }
+        return path
+    }
+
+    @discardableResult
+    public func rename(_ path: String, to newName: String) async throws -> String {
+        let source = try check(path)
+        let destination = ((source as NSString).deletingLastPathComponent as NSString).appendingPathComponent(try validName(newName))
+        guard !FileManager.default.fileExists(atPath: destination) else { throw LocationBrowserError.alreadyExists(newName) }
+        try requireWritableDirectory((source as NSString).deletingLastPathComponent)
+        try await authorizeChange("Rename", path: source, command: "mv \(source) \(destination)")
+        do { try FileManager.default.moveItem(atPath: source, toPath: destination) } catch {
+            throw LocationBrowserError.failed(source, error.localizedDescription)
+        }
+        return destination
+    }
+
+    public func delete(_ path: String) async throws {
+        let target = try check(path)
+        guard !roots.contains(target) else { throw LocationBrowserError.notPermitted("\(target) (a permitted location itself)") }
+        try requireWritableDirectory((target as NSString).deletingLastPathComponent)
+        try await authorizeChange("Delete", path: target, command: "rm -r \(target)")
+        do { try FileManager.default.removeItem(atPath: target) } catch {
+            throw LocationBrowserError.failed(target, error.localizedDescription)
+        }
+    }
+
     /// Log directories among the permitted roots.
     public var logRoots: [String] {
         Self.logDirectories.filter { candidate in roots.contains { candidate == $0 || candidate.hasPrefix($0 + "/") } }
     }
 }
+
+/// Earlier name of the read-only part of `HostFileSystem`.
+public typealias PermittedLocationBrowser = HostFileSystem
