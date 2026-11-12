@@ -64,15 +64,13 @@ final class HostFileSystemTests: XCTestCase {
         XCTAssertTrue(HostFileSystem.requiresApproval("/usr/local/bin/tool"))
         XCTAssertFalse(HostFileSystem.requiresApproval("/var/mobile/Documents/notes.txt"))
 
-        // A permitted root inside a protected prefix (/opt), as /var/jb would be on a device.
-        let protected = "/opt/hcg-hostfs-\(UUID().uuidString.prefix(6))"
-        try FileManager.default.createDirectory(atPath: protected, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(atPath: protected) }
+        // A permitted root treated as protected, as /var/jb is on a device (no root needed).
+        let protected = HostFileSystem.resolve(root.path)
 
         final class Answers: @unchecked Sendable { var asked: [String] = []; var answer = false }
         let answers = Answers()
         let gate = AuthorizationGate(presenter: { request in answers.asked.append(request.commandLine); return answers.answer })
-        let files = HostFileSystem(roots: [protected], gate: gate)
+        let files = HostFileSystem(roots: [protected], gate: gate, needsApproval: { $0.hasPrefix(protected) })
         do { try await files.writeText("x", to: protected + "/config"); XCTFail("declined must not write") } catch {
             XCTAssertEqual(error as? LocationBrowserError, .approvalDeclined(protected + "/config"))
         }
@@ -83,7 +81,7 @@ final class HostFileSystemTests: XCTestCase {
         try await files.delete(protected + "/config")
         XCTAssertEqual(answers.asked.count, 3, "asked for every change, no standing permission")
 
-        let ungated = HostFileSystem(roots: [protected], gate: nil)
+        let ungated = HostFileSystem(roots: [protected], gate: nil, needsApproval: { $0.hasPrefix(protected) })
         do { try await ungated.writeText("x", to: protected + "/other"); XCTFail("no presenter means no approval") } catch {}
     }
 }

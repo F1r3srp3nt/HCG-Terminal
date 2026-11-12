@@ -236,7 +236,7 @@ jobs:
         working-directory: HCGTerminalKit
         run: |
           set -o pipefail
-          xcodebuild test -scheme HCGTerminalKit-Package -destination "id=$UDID" 2>&1 | tee ../simulator-tests.log | grep -E "Test Suite '.*' (passed|failed)|error:|Executed [0-9]+ tests|\*\* TEST" | tail -60
+          xcodebuild test -scheme HCGTerminalKit-Package -destination "id=$UDID" 2>&1 | tee ../simulator-tests.log | grep -E "Test Suite '.*' (passed|failed)|error:|Undefined symbols|ld: |referenced from|Executed [0-9]+ tests|[*][*] TEST" | tail -80
 
       - uses: actions/upload-artifact@v4
         if: always()

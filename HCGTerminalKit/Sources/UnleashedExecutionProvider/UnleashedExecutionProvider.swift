@@ -233,14 +233,17 @@ public struct HostFileEntry: Hashable, Sendable, Identifiable {
 public struct HostFileSystem: Sendable {
     public let roots: [String]
     private let gate: AuthorizationGate?
+    /// Which paths need approval before a change. Defaults to system and jailbreak locations.
+    private let needsApproval: @Sendable (String) -> Bool
 
     public init(scan: UnleashedEnvironmentScan, gate: AuthorizationGate? = nil) {
         self.init(roots: scan.permittedLocations.filter(\.listable).map(\.path), gate: gate)
     }
 
-    public init(roots: [String], gate: AuthorizationGate?) {
+    public init(roots: [String], gate: AuthorizationGate?, needsApproval: @escaping @Sendable (String) -> Bool = HostFileSystem.requiresApproval) {
         self.roots = roots.map { Self.resolve($0) }
         self.gate = gate
+        self.needsApproval = needsApproval
     }
 
     public static let logDirectories = ["/var/log", "/private/var/log", "/var/jb/var/log", "/var/mobile/Library/Logs", "/var/mobile/Library/Logs/CrashReporter"]
@@ -315,7 +318,7 @@ public struct HostFileSystem: Sendable {
     // MARK: Writing
 
     private func authorizeChange(_ title: String, path: String, command: String) async throws {
-        guard Self.requiresApproval(path) else { return }
+        guard needsApproval(path) else { return }
         guard let gate else { throw LocationBrowserError.approvalDeclined(path) }
         let request = AuthorizationRequest(
             title: title, commandLine: command, target: .local(.unleashed),
