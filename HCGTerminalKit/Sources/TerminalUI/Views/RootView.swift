@@ -207,8 +207,8 @@ struct PreferencesView: View {
                 }
             }
 
-            Section("This build") {
-                LabeledContent("Distribution", value: model.dependencies.distribution.label)
+            BuildIdentitySection(identity: model.dependencies.buildIdentity)
+            Section("Distribution") {
                 Text(model.dependencies.distribution == .standard
                     ? "Standard build for ordinary iOS and iPadOS distribution. The Unleashed backend is not included."
                     : "Unleashed build for supported devices. It is distributed separately and is not assumed to be eligible for the App Store.")

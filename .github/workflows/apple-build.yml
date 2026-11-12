@@ -55,6 +55,27 @@ jobs:
             -destination generic/platform=iOS -derivedDataPath "$RUNNER_TEMP/DD-build" \
             COMPILER_INDEX_STORE_ENABLE=NO CODE_SIGNING_ALLOWED=NO build 2>&1 | tee "logs/${{ matrix.scheme }}-release-build.log"
 
+      - name: Build identity (variant, revision, linked backend)
+        if: always()
+        run: |
+          app="$RUNNER_TEMP/DD-build/Build/Products/Release-iphoneos/${{ matrix.scheme }}.app"
+          [ -d "$app" ] || { echo "No Release app"; exit 1; }
+          plist="$app/Info.plist"; bin="$app/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$plist")"
+          variant=$(/usr/libexec/PlistBuddy -c 'Print :HCGBuildVariant' "$plist")
+          echo "CFBundleIdentifier:  $(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$plist")"
+          echo "CFBundleDisplayName: $(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$plist")"
+          echo "Version (build):     $(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist") ($(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$plist"))"
+          echo "HCGBuildVariant:     $variant"
+          echo "HCGSourceRevision:   $(/usr/libexec/PlistBuddy -c 'Print :HCGSourceRevision' "$plist")"
+          backend=$(nm "$bin" | grep -c '26UnleashedExecutionProvider' || true)
+          echo "UnleashedExecutionProvider symbols in binary: $backend"
+          case "${{ matrix.scheme }}" in
+            HCGTerminal) expected=standard; [ "$backend" -eq 0 ] || { echo "FAIL: standard build contains the Unleashed backend"; exit 1; } ;;
+            HCGTerminalUnleashed) expected=unleashed; [ "$backend" -gt 0 ] || { echo "FAIL: Unleashed build lacks the Unleashed backend"; exit 1; } ;;
+          esac
+          [ "$variant" = "$expected" ] || { echo "FAIL: HCGBuildVariant is $variant, expected $expected"; exit 1; }
+          echo "PASS: ${{ matrix.scheme }} is the $expected variant"
+
       - name: Debug build (iphoneos, signing disabled)
         if: always()
         run: |
@@ -126,6 +147,7 @@ jobs:
             lipo -info "$app/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Info.plist")"
             codesign -dv "$app" 2>&1 || echo "(not signed, as expected)"
             python3 Scripts/verify_app_icons.py "$app"
+            echo "HCGBuildVariant=$(/usr/libexec/PlistBuddy -c 'Print :HCGBuildVariant' "$app/Info.plist") HCGSourceRevision=$(/usr/libexec/PlistBuddy -c 'Print :HCGSourceRevision' "$app/Info.plist")"
           done
 
       - name: Diagnostics summary

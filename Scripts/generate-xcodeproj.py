@@ -11,10 +11,10 @@ def oid():
 PROJECT, MAINGROUP, PRODUCTS, SYNC, PKGREF = oid(), oid(), oid(), oid(), oid()
 targets = [
     dict(name="HCGTerminal", display="HCG Terminal", bundle="com.hakmicapitalgroup.hcgterminal",
-         ent="HCGTerminal-Support/HCGTerminal.entitlements", cond="$(inherited)",
+         ent="HCGTerminal-Support/HCGTerminal.entitlements", cond="$(inherited)", variant="standard",
          products=["TerminalUI", "FileWorkspace"]),
     dict(name="HCGTerminalUnleashed", display="HCG Terminal Unleashed", bundle="com.hakmicapitalgroup.hcgterminal.unleashed",
-         ent="HCGTerminal-Support/HCGTerminalUnleashed.entitlements", cond="HCG_UNLEASHED_BUILD $(inherited)",
+         ent="HCGTerminal-Support/HCGTerminalUnleashed.entitlements", cond="HCG_UNLEASHED_BUILD $(inherited)", variant="unleashed",
          products=["TerminalUI", "FileWorkspace", "UnleashedIntegration"]),
 ]
 for t in targets:
@@ -22,6 +22,9 @@ for t in targets:
         t[k] = oid()
     t["deps"] = [(p, oid(), oid()) for p in t["products"]]  # (product, productRef, buildFile)
 PROJ_CFGLIST, PROJ_DEBUG, PROJ_RELEASE = oid(), oid(), oid()
+# Allocated after all earlier objects so their IDs stay stable.
+for t in targets:
+    t["stamp"] = oid()
 
 common = """				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ANALYZER_NONNULL = YES;
@@ -72,6 +75,8 @@ def target_cfg(t, id_, name):
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				HCG_BUILD_VARIANT = {t['variant']};
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "HCGTerminal-Support/Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = "{t['display']}";
@@ -130,6 +135,7 @@ for t in targets:
 				{t['sources']} /* Sources */,
 				{t['frameworks']} /* Frameworks */,
 				{t['resources']} /* Resources */,
+				{t['stamp']} /* Stamp build info */,
 			);
 			buildRules = (
 			);
@@ -181,7 +187,31 @@ w(f"""		{PROJECT} /* Project object */ = {{
 w("/* End PBXProject section */\n\n/* Begin PBXResourcesBuildPhase section */\n")
 for t in targets:
     w(f"\t\t{t['resources']} /* Resources */ = {{\n\t\t\tisa = PBXResourcesBuildPhase;\n\t\t\tbuildActionMask = 2147483647;\n\t\t\tfiles = (\n\t\t\t);\n\t\t\trunOnlyForDeploymentPostprocessing = 0;\n\t\t}};\n")
-w("/* End PBXResourcesBuildPhase section */\n\n/* Begin PBXSourcesBuildPhase section */\n")
+w("/* End PBXResourcesBuildPhase section */\n\n/* Begin PBXShellScriptBuildPhase section */\n")
+for t in targets:
+    w(f"""		{t['stamp']} /* Stamp build info */ = {{
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)",
+			);
+			name = "Stamp build info";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\\"${{SRCROOT}}/Scripts/stamp-build-info.sh\\"\\n";
+			showEnvVarsInLog = 0;
+		}};
+""")
+w("/* End PBXShellScriptBuildPhase section */\n\n/* Begin PBXSourcesBuildPhase section */\n")
 for t in targets:
     w(f"\t\t{t['sources']} /* Sources */ = {{\n\t\t\tisa = PBXSourcesBuildPhase;\n\t\t\tbuildActionMask = 2147483647;\n\t\t\tfiles = (\n\t\t\t);\n\t\t\trunOnlyForDeploymentPostprocessing = 0;\n\t\t}};\n")
 w("/* End PBXSourcesBuildPhase section */\n\n/* Begin XCBuildConfiguration section */\n")

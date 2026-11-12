@@ -9,5 +9,12 @@
 	<true/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
+	<!-- Build identity, shown in Diagnostics. HCG_BUILD_VARIANT is set per target
+	     ("standard" or "unleashed"); HCGSourceRevision is stamped by
+	     Scripts/stamp-build-info.sh during the build. -->
+	<key>HCGBuildVariant</key>
+	<string>$(HCG_BUILD_VARIANT)</string>
+	<key>HCGSourceRevision</key>
+	<string>unknown</string>
 </dict>
 </plist>

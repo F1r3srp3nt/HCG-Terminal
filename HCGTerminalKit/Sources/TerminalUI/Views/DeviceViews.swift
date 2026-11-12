@@ -180,6 +180,31 @@ struct LoopbackServiceSheet: View {
     }
 }
 
+/// The installed build: variant (from the linked code), version, build number, revision.
+struct BuildIdentitySection: View {
+    let identity: BuildIdentity
+
+    var body: some View {
+        Section {
+            LabeledContent("Variant", value: identity.variantLabel)
+            LabeledContent("Version", value: identity.versionLabel)
+            LabeledContent("Source revision", value: identity.sourceRevision)
+            LabeledContent("Bundle ID", value: identity.bundleIdentifier)
+            LabeledContent("Display name", value: identity.displayName)
+            LabeledContent("Declared variant (Info.plist)", value: identity.declaredVariant)
+            ForEach(identity.problems, id: \.self) { problem in
+                Label(problem, systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(HCGPalette.loss)
+                    .font(.footnote)
+            }
+        } header: {
+            Text("Build")
+        } footer: {
+            Text("The variant is determined by the code linked into this binary, not by the app's name. The TestFlight or App Store listing name comes from App Store Connect and can differ.")
+        }
+    }
+}
+
 /// System snapshot, read-only process list and the app's own diagnostic log.
 struct DiagnosticsView: View {
     @Environment(TerminalAppModel.self) private var model
@@ -190,6 +215,7 @@ struct DiagnosticsView: View {
 
     var body: some View {
         List {
+            BuildIdentitySection(identity: model.dependencies.buildIdentity)
             if let snapshot {
                 Section("Device") {
                     ForEach(snapshot.lines, id: \.0) { row in LabeledContent(row.0, value: row.1) }

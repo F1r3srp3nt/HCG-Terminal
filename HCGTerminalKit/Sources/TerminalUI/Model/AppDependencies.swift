@@ -73,6 +73,8 @@ public protocol UnleashedTools: Sendable {
 /// Everything the interface needs, assembled by the app target's composition root.
 public struct AppDependencies: Sendable {
     public var distribution: DistributionBuild
+    /// What the installed bundle declares and what is linked (shown in Diagnostics).
+    public var buildIdentity: BuildIdentity
     public var workspace: FileWorkspace
     public var vanilla: any LocalExecutionProvider
     public var vanillaCapabilities: any TerminalCapabilityProvider
@@ -95,9 +97,11 @@ public struct AppDependencies: Sendable {
         unleashedCapabilities: any TerminalCapabilityProvider, unleashedTools: (any UnleashedTools)?,
         gate: AuthorizationGate, credentials: any CredentialStore, knownHosts: KnownHostsStore,
         keyManager: SSHKeyManager, hostStore: HostProfileStore, orchestrator: BuildOrchestrator,
-        artifactIndex: ArtifactIndex, preferences: ModePreferenceStore
+        artifactIndex: ArtifactIndex, preferences: ModePreferenceStore,
+        buildIdentity: BuildIdentity? = nil
     ) {
         self.distribution = distribution
+        self.buildIdentity = buildIdentity ?? BuildIdentity.current(linkedBackend: distribution)
         self.workspace = workspace
         self.vanilla = vanilla
         self.vanillaCapabilities = vanillaCapabilities

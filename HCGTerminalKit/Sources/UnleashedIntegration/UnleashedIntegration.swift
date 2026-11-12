@@ -21,6 +21,7 @@ public enum UnleashedIntegration {
         let observations = RuntimeObservations()
         let capabilities = UnleashedCapabilityProvider(observations: observations)
         dependencies.distribution = .unleashed
+        dependencies.buildIdentity = BuildIdentity.current(linkedBackend: .unleashed)
         dependencies.unleashedCapabilities = capabilities
         dependencies.unleashed = UnleashedExecutionProvider(capabilities: capabilities, observations: observations, gate: dependencies.gate)
         dependencies.unleashedTools = UnleashedToolsAdapter(capabilities: capabilities, gate: dependencies.gate)
