@@ -35,16 +35,18 @@ docs/                        architecture, distribution, status
 
 Modules (in `HCGTerminalKit/Sources`): TerminalCore, TerminalUI, LocalCommandEngine, VanillaExecutionProvider, UnleashedExecutionProvider, TerminalCapabilityProvider, RemoteSSH, FileWorkspace, DeveloperWorkspace, BuildOrchestrator, ArtifactManager, TerminalSecurity (the requested "Security" module; renamed so it does not shadow Apple's Security framework), Diagnostics, and UnleashedIntegration. Details in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
-## Build
+## Build and install
 
-Requirements: Xcode 16 or later (Swift 6), iOS / iPadOS 17 or later.
+Requirements: Xcode 16 or later (CI uses Xcode 26.6), iOS / iPadOS 17 or later. Set your team under Signing & Capabilities for the target you build.
 
-```bash
-open HCGTerminal.xcodeproj
-# Scheme "HCGTerminal" for the standard build, "HCGTerminalUnleashed" for the Unleashed build.
-```
+| Goal | How |
+|---|---|
+| Standard app on your own iPhone/iPad | Open `HCGTerminal.xcodeproj`, scheme **HCGTerminal**, your device, Run. |
+| Standard app for TestFlight/App Store | Scheme **HCGTerminal** → Product → Archive → Distribute App (you upload; HCG Terminal never does). In HCG Executable Maker choose scheme `HCGTerminal`. |
+| Unleashed app | Scheme **HCGTerminalUnleashed**. Separate app (bundle ID `…hcgterminal.unleashed`); see [`docs/UNLEASHED.md`](docs/UNLEASHED.md) for prerequisites and the separate installation. |
+| Unsigned artifacts, kept apart | `Scripts/package-ios.sh standard dist` → `dist/standard/…`; `Scripts/package-ios.sh unleashed dist` → `dist/unleashed/…` (unsigned archive; Unleashed also an unsigned `.ipa`). |
 
-Set your team under Signing & Capabilities. The app icon is `HCGTerminal/Resources/Assets.xcassets/AppIcon.appiconset` (iPhone, iPad and App Store sizes), shared by both targets.
+Check what is installed in **Diagnostics → Build**: variant (from the linked code), version, build number, source revision and bundle ID. [`docs/BUILD_VARIANTS.md`](docs/BUILD_VARIANTS.md) explains the two variants and why the first TestFlight build was the standard one.
 
 ### Package tests
 
@@ -58,6 +60,8 @@ The core modules use only Foundation and also build and test on Linux. Remote SS
 sudo Scripts/start-test-sshd.sh          # Linux only; creates user hcgtest
 HCG_SSH_TEST=1 swift test --package-path HCGTerminalKit
 ```
+
+CI (`.github/workflows/apple-build.yml`) builds both schemes for devices (Debug, Release, unsigned archive, identity, icons, encryption inventory, separate packaging), launches both apps in the iOS Simulator, and runs the package tests on macOS and on the iOS Simulator.
 
 ## Distribution
 
