@@ -218,7 +218,7 @@ public final class TerminalAppModel {
                 await session.close()
                 throw ExecutionError.targetMismatch(expected: .local(mode), actual: session.target)
             }
-            return await register(session, title: mode == .vanilla ? "Vanilla" : "Unleashed")
+            return await register(session, title: mode == .vanilla ? "Built-in commands" : "Local shell")
         } catch {
             errorMessage = error.localizedDescription
             await refreshCapabilities() // a failed spawn updates the Unleashed report
@@ -345,6 +345,10 @@ public final class TerminalAppModel {
     public func session(_ id: SessionID?) -> SessionModel? {
         guard let id else { return nil }
         return sessions.first { $0.id == id }
+    }
+
+    public func closeEndedSessions() async {
+        for session in sessions where !session.isLive { await closeSession(session.id) }
     }
 
     public func closeSession(_ id: SessionID) async {

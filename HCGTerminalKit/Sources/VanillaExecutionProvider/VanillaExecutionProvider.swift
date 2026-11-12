@@ -94,10 +94,12 @@ public struct VanillaExecutionProvider: LocalExecutionProvider {
     public let mode: ExecutionMode = .vanilla
     private let workspace: FileWorkspace
     private let capabilities: VanillaCapabilityProvider
+    private let persistence: ShellPersistence
 
     public init(workspace: FileWorkspace, capabilities: VanillaCapabilityProvider) {
         self.workspace = workspace
         self.capabilities = capabilities
+        self.persistence = ShellPersistence(workspace: workspace)
     }
 
     public func availableBackend() async -> SessionBackend? { .builtInCommands }
@@ -110,18 +112,20 @@ public struct VanillaExecutionProvider: LocalExecutionProvider {
                 workspace: workspace,
                 environment: ["USER": "mobile", "SHELL": "hcg-builtin", "TERM": "xterm-256color", "LANG": "en_US.UTF-8"],
                 banner: Self.banner,
-                promptLabel: "vanilla",
+                promptLabel: "hcg",
                 promptColor: ANSI.cyan,
                 sessionDescription: [
                     "Target:   Local Vanilla (this device, app sandbox)",
-                    "Backend:  \(SessionBackend.builtInCommands.label)",
+                    "Backend:  \(SessionBackend.builtInCommands.label) — in-app command interpreter, not a system shell",
                     "Mode:     Vanilla",
+                    "Files:    app workspace; history and last folder kept in /home/.hcg_history and /home/.hcg_cwd",
                 ],
-                capabilityDescription: { CapabilityReportFormatter.text(await capabilities.detectCapabilities()) }
+                capabilityDescription: { CapabilityReportFormatter.text(await capabilities.detectCapabilities()) },
+                persistence: persistence
             ),
             external: RefusingExternalCommandHandler(
-                policyDescription: "Vanilla runs built-in commands only. Other programs are not executed on this device and are never sent to a remote host automatically; open a Remote Host session for system tools.",
-                explanation: "Vanilla runs built-in commands only (type `help`). For system tools, open a Remote Host session."
+                policyDescription: "Only HCG built-in commands run here. Other programs are not executed on this device and are never sent to a remote host automatically; open a Remote Host session for system tools.",
+                explanation: "It is not an HCG built-in command."
             )
         )
         await session.refreshCapabilityDescription()
@@ -130,9 +134,10 @@ public struct VanillaExecutionProvider: LocalExecutionProvider {
     }
 
     static let banner = """
-    \(ANSI.cyan)HCG Terminal\(ANSI.reset) · \(ANSI.bold)Local Vanilla\(ANSI.reset)
-    Built-in commands on the app workspace. Type \(ANSI.bold)help\(ANSI.reset) for the list.
-    Remote hosts run in their own sessions; nothing typed here is sent anywhere else.
+    \(ANSI.cyan)HCG Terminal\(ANSI.reset) · \(ANSI.bold)Local Vanilla\(ANSI.reset) · HCG built-in commands
+    An in-app command interpreter for the app workspace — not a system shell.
+    Type \(ANSI.bold)help\(ANSI.reset) for commands. For system tools, open a Remote Host session;
+    nothing typed here is sent anywhere else.
 
     """
 }

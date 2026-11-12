@@ -5,6 +5,7 @@ import TerminalCore
 
 enum SidebarItem: Hashable {
     case session(SessionID)
+    case files
     case hosts
     case builds
     case artifacts
@@ -19,6 +20,8 @@ public struct RootView: View {
     @State private var selection: SidebarItem?
     @State private var showNewRemote = false
     @State private var showLoopback = false
+    @State private var renamingSession: SessionModel?
+    @State private var renameTitle = ""
 
     public init(model: TerminalAppModel) {
         _model = State(initialValue: model)
@@ -60,6 +63,15 @@ public struct RootView: View {
         .sheet(isPresented: $showLoopback) {
             NavigationStack { LoopbackServiceSheet() }.environment(model)
         }
+        .alert("Rename Session", isPresented: Binding(get: { renamingSession != nil }, set: { if !$0 { renamingSession = nil } })) {
+            TextField("Name", text: $renameTitle)
+            Button("Rename") {
+                let trimmed = renameTitle.trimmingCharacters(in: .whitespaces)
+                if let session = renamingSession, !trimmed.isEmpty { session.title = trimmed }
+                renamingSession = nil
+            }
+            Button("Cancel", role: .cancel) { renamingSession = nil }
+        }
         .alert("HCG Terminal", isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) {
             Button("OK", role: .cancel) { model.errorMessage = nil }
         } message: {
@@ -83,7 +95,8 @@ public struct RootView: View {
                         SessionRow(session: session)
                     }
                     .contextMenu {
-                        Button("Close", role: .destructive) { Task { await model.closeSession(session.id) } }
+                        Button { renameTitle = session.title; renamingSession = session } label: { Label("Rename…", systemImage: "pencil") }
+                        Button(role: .destructive) { Task { await model.closeSession(session.id) } } label: { Label("Close", systemImage: "xmark") }
                     }
                 }
                 Menu {
@@ -102,10 +115,20 @@ public struct RootView: View {
                     Button { showNewRemote = true } label: {
                         Label("Remote Host Session", systemImage: "desktopcomputer")
                     }
+                    if model.sessions.contains(where: { !$0.isLive }) {
+                        Divider()
+                        Button(role: .destructive) { Task { await model.closeEndedSessions() } } label: {
+                            Label("Close Ended Sessions", systemImage: "xmark.circle")
+                        }
+                    }
                 } label: {
                     Label("New Session", systemImage: "plus.circle")
                 }
             } header: { Eyebrow("Sessions") }
+
+            Section {
+                NavigationLink(value: SidebarItem.files) { Label("Files", systemImage: "folder") }
+            } header: { Eyebrow("Workspace") }
 
             Section {
                 NavigationLink(value: SidebarItem.hosts) { Label("Hosts & Projects", systemImage: "server.rack") }
@@ -135,6 +158,7 @@ public struct RootView: View {
             } else {
                 emptyState
             }
+        case .files: NavigationStack { WorkspaceBrowserView(directory: .root) }
         case .hosts: NavigationStack { HostsView() }
         case .builds: NavigationStack { BuildsView() }
         case .artifacts: NavigationStack { ArtifactsView() }

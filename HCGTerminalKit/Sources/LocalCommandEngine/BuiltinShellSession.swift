@@ -33,7 +33,7 @@ public struct RefusingExternalCommandHandler: ExternalCommandHandler {
 
     public func run(_ request: ExternalCommandRequest, output: @escaping @Sendable (Data, Bool) -> Void) async -> Int32 {
         let name = request.arguments.first ?? ""
-        output(Data("hcg: \(name): command not found. \(explanation)\n".utf8), true)
+        output(Data("hcg: \(name): \(explanation)\n".utf8), true)
         return 127
     }
 }
@@ -49,12 +49,16 @@ public struct BuiltinShellConfiguration: Sendable {
     public var promptColor: String
     public var sessionDescription: [String]
     public var capabilityDescription: @Sendable () async -> String
+    /// Shared history and last working directory; `nil` keeps the session self-contained.
+    public var persistence: ShellPersistence?
 
     public init(
         target: ExecutionTarget, workspace: FileWorkspace, environment: [String: String], banner: String,
         promptLabel: String, promptColor: String, sessionDescription: [String],
-        capabilityDescription: @escaping @Sendable () async -> String
+        capabilityDescription: @escaping @Sendable () async -> String,
+        persistence: ShellPersistence? = nil
     ) {
+        self.persistence = persistence
         self.target = target
         self.workspace = workspace
         self.environment = environment
@@ -91,9 +95,17 @@ public actor BuiltinShellSession: TerminalSession {
         var environment = configuration.environment
         environment["HOME"] = environment["HOME"] ?? WorkspacePath.home.string
         environment["PWD"] = WorkspacePath.home.string
-        let context = BuiltinContext(workspace: configuration.workspace, cwd: .home, environment: environment, registry: registry)
+        let start = configuration.persistence?.lastDirectory() ?? .home
+        environment["PWD"] = start.string
+        let context = BuiltinContext(workspace: configuration.workspace, cwd: start, environment: environment, registry: registry)
         context.sessionDescription = configuration.sessionDescription
         context.externalCommandPolicy = external.policyDescription
+        if let persistence = configuration.persistence {
+            let history = persistence.loadHistory()
+            context.history = history
+            for entry in history { editor.addHistory(entry) }
+            context.clearPersistentHistory = { persistence.clearHistory() }
+        }
         self.context = context
     }
 
@@ -177,29 +189,36 @@ public actor BuiltinShellSession: TerminalSession {
         }
     }
 
+    /// Tab completion. Completes command names in command position and workspace paths
+    /// elsewhere; inserted text is escaped (or stays inside an open quote) so names with spaces
+    /// and special characters work.
     private func complete(_ prefix: String) {
-        let words = prefix.split(separator: " ", omittingEmptySubsequences: false)
-        let fragment = String(words.last ?? "")
-        var candidates: [String]
-        if words.count <= 1 {
-            candidates = context.registry.sortedNames.filter { $0.hasPrefix(fragment) }
+        let (word, isCommand, quote) = ShellEscaping.currentWord(prefix)
+        let raw = ShellEscaping.unescape(word)
+        var candidates: [(text: String, isDirectory: Bool)]
+        if isCommand && !raw.contains("/") {
+            candidates = context.registry.sortedNames.filter { $0.hasPrefix(raw) }.map { ($0, false) }
         } else {
-            let directoryPart = fragment.contains("/") ? String(fragment[...fragment.lastIndex(of: "/")!]) : ""
-            let namePart = String(fragment.dropFirst(directoryPart.count))
+            let directoryPart = raw.contains("/") ? String(raw[...raw.lastIndex(of: "/")!]) : ""
+            let namePart = String(raw.dropFirst(directoryPart.count))
             let directory = (try? context.resolve(directoryPart.isEmpty ? "." : directoryPart)) ?? context.cwd
             candidates = ((try? context.workspace.list(directory, includeHidden: namePart.hasPrefix("."))) ?? [])
                 .filter { $0.name.hasPrefix(namePart) }
-                .map { directoryPart + $0.name + ($0.isDirectory ? "/" : "") }
+                .map { (directoryPart + $0.name + ($0.isDirectory ? "/" : ""), $0.isDirectory) }
         }
         guard !candidates.isEmpty else { channel.yield(.output([0x07])); return }
-        let common = candidates.dropFirst().reduce(candidates[0]) { partial, next in
-            String(zip(partial, next).prefix(while: { $0 == $1 }).map(\.0))
+        let common = candidates.dropFirst().reduce(candidates[0].text) { partial, next in
+            String(zip(partial, next.text).prefix(while: { $0 == $1 }).map(\.0))
         }
-        if common.count > fragment.count {
-            let insertion = String(common.dropFirst(fragment.count)) + (candidates.count == 1 && !common.hasSuffix("/") ? " " : "")
+        if common.count > raw.count {
+            let remainder = String(common.dropFirst(raw.count))
+            let unique = candidates.count == 1 && !candidates[0].isDirectory
+            var insertion = quote == nil ? ShellEscaping.escape(remainder) : remainder
+            if unique { insertion += (quote.map(String.init) ?? "") + " " }
             channel.yield(.output(editor.insert(insertion)))
         } else if candidates.count > 1 {
-            channel.write("\n" + candidates.joined(separator: "  ") + "\n")
+            let names = candidates.map { ($0.text as NSString).lastPathComponent + ($0.isDirectory ? "/" : "") }
+            channel.write("\n" + names.joined(separator: "  ") + "\n")
             channel.yield(.output(editor.redraw()))
         }
     }
@@ -211,6 +230,7 @@ public actor BuiltinShellSession: TerminalSession {
         guard !trimmed.isEmpty else { showPrompt(); return }
         editor.addHistory(trimmed)
         context.history.append(trimmed)
+        configuration.persistence?.appendHistory(trimmed)
         channel.yield(.stateChanged(.running(command: trimmed)))
         runningTask = Task {
             await self.execute(trimmed)
@@ -294,7 +314,10 @@ public actor BuiltinShellSession: TerminalSession {
                     context.clearRequested = false
                     channel.write(ANSI.clearScreen)
                 }
-                if name == "cd" { channel.yield(.workingDirectory(context.cwd.string)) }
+                if name == "cd" {
+                    channel.yield(.workingDirectory(context.cwd.string))
+                    if status == 0 { configuration.persistence?.saveDirectory(context.cwd) }
+                }
                 if streamDirectly { channel.write(context.stdout) }
             } else {
                 let request = ExternalCommandRequest(
@@ -312,6 +335,10 @@ public actor BuiltinShellSession: TerminalSession {
                     }
                 }
                 stdout = collector.data
+                if status == 127 {
+                    let hints = CommandSuggestions.hints(for: name, registry: context.registry)
+                    channel.write(ANSI.dim + hints.joined(separator: "\n") + ANSI.reset + "\n")
+                }
             }
 
             if let (path, append) = redirectOut {

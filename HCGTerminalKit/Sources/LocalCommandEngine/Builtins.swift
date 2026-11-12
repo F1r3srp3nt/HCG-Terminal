@@ -19,6 +19,8 @@ public final class BuiltinContext {
     public var capabilityDescription: String = "Capability report not loaded yet."
     /// Describes why external commands are or are not available.
     public var externalCommandPolicy: String = ""
+    /// Clears the history shared across sessions (set when persistence is enabled).
+    public var clearPersistentHistory: (() -> Void)?
     public var clearRequested = false
     public var exitRequested = false
     public let registry: BuiltinRegistry
@@ -124,18 +126,64 @@ enum StandardBuiltins {
         whoami, uname, trueCommand, falseCommand, which, session, capabilities, exit,
     ]
 
-    static let help = BuiltinCommand("help", "help [command]", "List built-in commands") { args, ctx in
+    static let categories: [(String, [String])] = [
+        ("Navigate", ["pwd", "cd", "ls", "find", "du"]),
+        ("Files", ["cat", "touch", "mkdir", "rmdir", "cp", "mv", "rm", "tee"]),
+        ("Text", ["echo", "head", "tail", "wc", "grep", "sort", "uniq", "basename", "dirname", "seq"]),
+        ("Environment", ["env", "export", "unset", "history", "date", "whoami", "uname", "which", "true", "false"]),
+        ("Session", ["session", "capabilities", "clear", "help", "exit"]),
+    ]
+
+    static let examples: [String: [String]] = [
+        "cd": ["cd projects", "cd \"My Folder\"", "cd -", "cd ~"],
+        "ls": ["ls -la", "ls *.txt", "ls ~/projects"],
+        "find": ["find . -name \"*.swift\"", "find ~ -type d"],
+        "grep": ["grep -n TODO notes.txt", "cat log.txt | grep -ic error"],
+        "cp": ["cp -r src backup", "cp 'old name.txt' new.txt"],
+        "mv": ["mv draft.txt final.txt", "mv *.log ~/logs"],
+        "rm": ["rm file.txt", "rm -r build"],
+        "echo": ["echo hello > greeting.txt", "echo more >> greeting.txt"],
+        "history": ["history", "history -c"],
+        "head": ["head -n 5 file.txt"],
+        "tee": ["echo note | tee -a log.txt"],
+    ]
+
+    static let help = BuiltinCommand("help", "help [command]", "List built-in commands or explain one") { args, ctx in
         if let name = args.first {
-            guard let command = ctx.registry[name] else { ctx.error("help", "no help for \(name)"); return 1 }
-            ctx.line("\(command.usage)\n  \(command.summary)")
+            guard let command = ctx.registry[name] else {
+                ctx.error("help", "\(name) is not an HCG built-in command")
+                return 1
+            }
+            ctx.line("\(ANSI.bold)\(command.usage)\(ANSI.reset)\n  \(command.summary)")
+            if let examples = examples[name] {
+                ctx.line("Examples:")
+                for example in examples { ctx.line("  \(example)") }
+            }
             return 0
         }
-        ctx.line("\(ANSI.bold)HCG Terminal built-in commands\(ANSI.reset)")
-        for name in ctx.registry.sortedNames {
-            let command = ctx.registry[name]!
-            ctx.line("  \(command.name.padding(toLength: 14, withPad: " ", startingAt: 0))\(command.summary)")
+        ctx.line("\(ANSI.bold)HCG built-in commands\(ANSI.reset) — an in-app command interpreter working on the app's workspace. It is not a system shell: other programs cannot run here.")
+        var listed = Set<String>()
+        for (category, names) in categories {
+            let available = names.filter { ctx.registry[$0] != nil }
+            guard !available.isEmpty else { continue }
+            ctx.line("\n\(ANSI.bold)\(category)\(ANSI.reset)")
+            for name in available {
+                listed.insert(name)
+                ctx.line("  \(name.padding(toLength: 14, withPad: " ", startingAt: 0))\(ctx.registry[name]!.summary)")
+            }
         }
-        ctx.line("\nOperators: ;  &&  ||  |  >  >>  <   Quoting: '…' \"…\" \\   Variables: $NAME ${NAME} $?")
+        let others = ctx.registry.sortedNames.filter { !listed.contains($0) }
+        if !others.isEmpty {
+            ctx.line("\n\(ANSI.bold)Other\(ANSI.reset)")
+            for name in others { ctx.line("  \(name.padding(toLength: 14, withPad: " ", startingAt: 0))\(ctx.registry[name]!.summary)") }
+        }
+        ctx.line("""
+
+        Operators: ;  &&  ||  |  >  >>  <    Variables: $NAME  ${NAME}  $?
+        Quoting:   'single'  "double"  back\\ slash — e.g. cd "My Folder"  or  cd My\\ Folder
+        Keys:      ↑ ↓ history · Tab completes names · Ctrl-C cancels · Ctrl-L clears · Ctrl-A/E line start/end
+        More:      help <command> shows usage and examples. History and the last folder are kept between sessions.
+        """)
         if !ctx.externalCommandPolicy.isEmpty { ctx.line("\n" + ctx.externalCommandPolicy) }
         return 0
     }
@@ -510,7 +558,12 @@ enum StandardBuiltins {
         return 0
     }
 
-    static let history = BuiltinCommand("history", "history", "Show command history") { _, ctx in
+    static let history = BuiltinCommand("history", "history [-c]", "Show command history (-c clears it)") { args, ctx in
+        if args.contains("-c") {
+            ctx.history.removeAll()
+            ctx.clearPersistentHistory?()
+            return 0
+        }
         for (index, entry) in ctx.history.enumerated() { ctx.line("\(String(index + 1).leftPad(5))  \(entry)") }
         return 0
     }
