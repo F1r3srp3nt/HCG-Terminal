@@ -2,6 +2,7 @@
 import BuildOrchestrator
 import DeveloperWorkspace
 import SwiftUI
+import UIKit
 import TerminalCore
 import TerminalSecurity
 
@@ -74,39 +75,98 @@ struct HostEditor: View {
     @State var host: HostProfile
     @State private var password = ""
     @State private var portText = ""
+    @State private var testing = false
+    @State private var testResult: ConnectionTestResult?
+    @State private var showIssues = false
 
-    private enum AuthChoice: String, CaseIterable { case password = "Password", key = "SSH Key", keyThenPassword = "Key, then Password" }
+    private enum AuthChoice: String, CaseIterable { case password = "Password", key = "SSH key", keyThenPassword = "SSH key, then password" }
     @State private var authChoice: AuthChoice = .password
     @State private var keyID: UUID?
 
+    private var passwordSaved: Bool {
+        ((try? model.dependencies.credentials.load(.hostPassword(host.id))) ?? nil) != nil
+    }
+
+    private var draft: HostProfile {
+        var updated = host
+        updated.name = host.name.trimmingCharacters(in: .whitespaces)
+        updated.hostname = host.hostname.trimmingCharacters(in: .whitespaces)
+        updated.username = host.username.trimmingCharacters(in: .whitespaces)
+        updated.port = Int(portText.trimmingCharacters(in: .whitespaces)) ?? 0
+        switch authChoice {
+        case .password: updated.auth = .password
+        case .key: if let keyID { updated.auth = .key(keyID) }
+        case .keyThenPassword: if let keyID { updated.auth = .keyThenPassword(keyID) }
+        }
+        return updated
+    }
+
+    private var issues: [HostProfileValidator.Field: String] {
+        let auth: HostAuthMethod? = switch authChoice {
+        case .password: .password
+        case .key: keyID.map { .key($0) }
+        case .keyThenPassword: keyID.map { .keyThenPassword($0) }
+        }
+        return HostProfileValidator.validate(
+            name: host.name, hostname: host.hostname, port: portText, username: host.username, auth: auth,
+            passwordEntered: !password.isEmpty, passwordSaved: passwordSaved,
+            keyExists: keyID.map { id in model.keys.contains { $0.id == id } } ?? false
+        )
+    }
+
     var body: some View {
         Form {
-            Section("Host") {
-                TextField("Name", text: $host.name)
-                TextField("Hostname or IP", text: $host.hostname)
-                    .textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)
-                TextField("Port", text: $portText).keyboardType(.numberPad)
-                TextField("Username", text: $host.username)
-                    .textInputAutocapitalization(.never).autocorrectionDisabled()
-                TextField("Projects folder (optional)", text: Binding(get: { host.projectsPath ?? "" }, set: { host.projectsPath = $0.isEmpty ? nil : $0 }))
-                    .textInputAutocapitalization(.never).autocorrectionDisabled()
-            }
             Section {
-                Picker("Method", selection: $authChoice) {
+                field("Name", text: $host.name, prompt: "My Mac", issue: .name)
+                field("Hostname or IP", text: $host.hostname, prompt: "ana-mac.local or 192.168.1.20", issue: .hostname, keyboard: .URL)
+                field("Port", text: $portText, prompt: "22", issue: .port, keyboard: .numberPad)
+                field("Username", text: $host.username, prompt: "ana", issue: .username)
+                field("Projects folder", text: Binding(get: { host.projectsPath ?? "" }, set: { host.projectsPath = $0.isEmpty ? nil : $0 }), prompt: "~/Developer (optional)", issue: nil)
+            } header: { Text("Host") } footer: {
+                Text("On a Mac, turn on System Settings → General → Sharing → Remote Login. Its local hostname is shown there too.")
+            }
+
+            Section {
+                Picker("Sign in with", selection: $authChoice) {
                     ForEach(AuthChoice.allCases, id: \.self) { Text($0.rawValue) }
                 }
                 if authChoice != .key {
-                    SecureField("Password (stored in the Keychain)", text: $password)
+                    VStack(alignment: .leading, spacing: 4) {
+                        LabeledContent("Password") {
+                            SecureField(passwordSaved ? "Saved — leave empty to keep" : "Required", text: $password)
+                                .multilineTextAlignment(.trailing)
+                        }
+                        issueText(.password)
+                    }
                 }
                 if authChoice != .password {
-                    Picker("Key", selection: $keyID) {
-                        Text("Choose…").tag(UUID?.none)
-                        ForEach(model.keys) { Text($0.comment.isEmpty ? $0.fingerprint : $0.comment).tag(UUID?.some($0.id)) }
+                    VStack(alignment: .leading, spacing: 4) {
+                        Picker("Key", selection: $keyID) {
+                            Text("Choose…").tag(UUID?.none)
+                            ForEach(model.keys) { Text($0.comment.isEmpty ? $0.fingerprint : $0.comment).tag(UUID?.some($0.id)) }
+                        }
+                        issueText(.key)
                     }
                     NavigationLink("Manage SSH Keys") { KeysView() }
                 }
             } header: { Text("Authentication") } footer: {
-                Text("Passwords and private keys are kept in the Keychain on this device only. Ed25519 keys are supported.")
+                Text("Passwords and private keys stay in this device's Keychain. Ed25519 keys are supported; add the public key to ~/.ssh/authorized_keys on the host.")
+            }
+
+            Section {
+                Button {
+                    Task { await test() }
+                } label: {
+                    HStack {
+                        Text(testing ? "Testing…" : "Test Connection")
+                        Spacer()
+                        if testing { ProgressView() }
+                    }
+                }
+                .disabled(testing || !issues.isEmpty)
+                if let testResult { TestResultView(result: testResult) }
+            } footer: {
+                Text("Connects with these settings, checks the shell and installed tools, and disconnects. Nothing is saved. A new host key is shown for you to verify first.")
             }
         }
         .navigationTitle(host.name.isEmpty ? "New Host" : host.name)
@@ -123,27 +183,74 @@ struct HostEditor: View {
             ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
             ToolbarItem(placement: .confirmationAction) {
                 Button("Save") {
-                    var updated = host
-                    updated.port = Int(portText) ?? 22
-                    switch authChoice {
-                    case .password: updated.auth = .password
-                    case .key: if let keyID { updated.auth = .key(keyID) }
-                    case .keyThenPassword: if let keyID { updated.auth = .keyThenPassword(keyID) }
-                    }
+                    guard issues.isEmpty else { showIssues = true; return }
                     Task {
-                        await model.saveHost(updated, password: authChoice == .key ? nil : password)
+                        await model.saveHost(draft, password: authChoice == .key ? nil : password)
                         dismiss()
                     }
                 }
-                .disabled(!isValid)
             }
+        }
+        .alert("Check these fields", isPresented: $showIssues) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(HostProfileValidator.Field.allCases.compactMap { issues[$0] }.joined(separator: "\n"))
         }
     }
 
-    private var isValid: Bool {
-        var candidate = host
-        candidate.port = Int(portText) ?? 0
-        return candidate.isValid && (authChoice == .password || keyID != nil)
+    private func field(_ label: String, text: Binding<String>, prompt: String, issue: HostProfileValidator.Field?, keyboard: UIKeyboardType = .default) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            LabeledContent(label) {
+                TextField(label, text: text, prompt: Text(prompt))
+                    .multilineTextAlignment(.trailing)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .keyboardType(keyboard)
+            }
+            if let issue { issueText(issue) }
+        }
+    }
+
+    @ViewBuilder
+    private func issueText(_ field: HostProfileValidator.Field) -> some View {
+        if let message = issues[field], fieldTouched(field) {
+            Text(message).font(.caption).foregroundStyle(HCGPalette.warn)
+        }
+    }
+
+    /// Shows a field's issue once the user has typed something anywhere, so a new form is not
+    /// covered in warnings.
+    private func fieldTouched(_ field: HostProfileValidator.Field) -> Bool {
+        !host.name.isEmpty || !host.hostname.isEmpty || !host.username.isEmpty || showIssues
+    }
+
+    private func test() async {
+        testing = true
+        testResult = nil
+        testResult = await model.testConnection(draft, enteredPassword: password.isEmpty ? nil : password)
+        testing = false
+    }
+}
+
+struct TestResultView: View {
+    let result: ConnectionTestResult
+
+    var body: some View {
+        switch result {
+        case .success(let system, let shell, let tools, let elapsed):
+            VStack(alignment: .leading, spacing: 4) {
+                Label("Connected in \(String(format: "%.1f", elapsed)) s", systemImage: "checkmark.circle.fill")
+                    .foregroundStyle(HCGPalette.vanillaGreen)
+                Text("\(system) · login shell \(shell)").font(.caption)
+                Text(ToolchainProbe.tools.map { "\($0) \(tools[$0] == nil ? "✗" : "✓")" }.joined(separator: "  "))
+                    .font(.caption.monospaced()).foregroundStyle(.secondary)
+            }
+        case .failure(let category, let message):
+            VStack(alignment: .leading, spacing: 4) {
+                Label(category, systemImage: "xmark.octagon.fill").foregroundStyle(HCGPalette.loss)
+                Text(message).font(.caption)
+            }
+        }
     }
 }
 

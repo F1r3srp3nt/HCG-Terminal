@@ -16,6 +16,9 @@ struct SessionScreen: View {
             ForEach(session.notices, id: \.self) { notice in
                 NoticeBanner(notice: notice) { session.dismissNotice(notice) }
             }
+            if !session.isLive, !session.target.isLocal {
+                EndedRemoteSessionBanner(session: session)
+            }
             TerminalHostView(session: session, accent: ModeAccent.color(session.target))
                 .id(session.id)
                 .background(HCGPalette.canvas)
@@ -88,6 +91,32 @@ struct SessionHeader: View {
 
     private func availability(_ mode: ExecutionMode) -> Bool? {
         model.report(for: mode).map { _ in model.isAvailable(mode) }
+    }
+}
+
+/// Shown when a remote session has ended. Reconnecting opens a fresh shell; a command
+/// session (e.g. Claude Code) runs again only when the user taps Run Again. Builds are never
+/// rerun from here.
+struct EndedRemoteSessionBanner: View {
+    @Environment(TerminalAppModel.self) private var model
+    let session: SessionModel
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "bolt.horizontal.circle")
+            VStack(alignment: .leading, spacing: 2) {
+                Text(session.state.label).font(.footnote.weight(.semibold))
+                Text("Scrollback is kept. Nothing is re-run automatically.").font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            if case .sshCommand = session.backend {
+                Button("Run Again") { Task { await model.runAgain(session) } }.buttonStyle(.bordered)
+            }
+            Button("Reconnect") { Task { await model.reconnect(session) } }.buttonStyle(.borderedProminent)
+        }
+        .foregroundStyle(HCGPalette.silver)
+        .padding(10)
+        .background(HCGPalette.surface2)
     }
 }
 

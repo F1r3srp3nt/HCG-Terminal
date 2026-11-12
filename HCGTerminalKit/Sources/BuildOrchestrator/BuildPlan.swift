@@ -112,6 +112,18 @@ public enum PublishingGuard {
     }
 }
 
+/// Prefix for remote build commands: prints the process ID first, so a cancelled build can be
+/// stopped on the host. sshd runs each exec session in its own process group, led by this PID.
+public enum RemoteProcessMarker {
+    public static let prefix = "__HCG_PID__"
+    public static let command = "printf '\(prefix)%s\\n' \"$$\"; "
+
+    /// Signals the whole process group, then forces it after a grace period.
+    public static func killCommand(pid: Int32) -> String {
+        "kill -TERM -- -\(pid) 2>/dev/null || kill -TERM \(pid) 2>/dev/null; sleep 2; kill -0 -- -\(pid) 2>/dev/null && kill -KILL -- -\(pid) 2>/dev/null; true"
+    }
+}
+
 public enum BuildPlanner {
     /// Build products for Xcode go to a project-local derived data folder so artifacts can be found.
     public static let derivedDataPath = ".hcg-build/DerivedData"
@@ -155,7 +167,7 @@ public enum BuildPlanner {
         return BuildPlan(
             id: UUID(), hostID: host.id, hostName: host.name, projectPath: projectPath, system: system,
             action: action, configuration: configuration, commandLine: command,
-            remoteCommand: RemoteShell.login(RemoteShell.inDirectory(projectPath, command + " 2>&1"))
+            remoteCommand: RemoteProcessMarker.command + RemoteShell.login(RemoteShell.inDirectory(projectPath, command + " 2>&1"))
         )
     }
 
@@ -165,7 +177,7 @@ public enum BuildPlanner {
         return BuildPlan(
             id: UUID(), hostID: host.id, hostName: host.name, projectPath: projectPath, system: .swiftPackage,
             action: .build, configuration: .debug, commandLine: command,
-            remoteCommand: RemoteShell.login(RemoteShell.inDirectory(projectPath, command + " 2>&1"))
+            remoteCommand: RemoteProcessMarker.command + RemoteShell.login(RemoteShell.inDirectory(projectPath, command + " 2>&1"))
         )
     }
 }

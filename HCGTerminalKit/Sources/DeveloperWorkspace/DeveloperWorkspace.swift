@@ -268,3 +268,52 @@ public enum ClaudeCodeLauncher {
         return RemoteShell.login(RemoteShell.inDirectory(projectPath, "exec \(claude)"))
     }
 }
+
+// MARK: - Host validation
+
+/// Field-level validation for the host editor. Messages say what to fix.
+public enum HostProfileValidator {
+    public enum Field: String, Hashable, Sendable, CaseIterable {
+        case name, hostname, port, username, password, key
+    }
+
+    public static func validate(
+        name: String, hostname: String, port: String, username: String,
+        auth: HostAuthMethod?, passwordEntered: Bool, passwordSaved: Bool, keyExists: Bool
+    ) -> [Field: String] {
+        var issues: [Field: String] = [:]
+        if name.trimmingCharacters(in: .whitespaces).isEmpty { issues[.name] = "Enter a name, for example “My Mac”." }
+        let host = hostname.trimmingCharacters(in: .whitespaces)
+        if host.isEmpty {
+            issues[.hostname] = "Enter a hostname or IP address, for example “ana-mac.local” or “192.168.1.20”."
+        } else if host.contains(" ") || host.contains("/") || host.contains("@") {
+            issues[.hostname] = host.contains("@")
+                ? "Put the user name in Username, not in the hostname."
+                : "A hostname cannot contain spaces or slashes."
+        } else if host.contains("://") {
+            issues[.hostname] = "Enter only the host, without “ssh://”."
+        }
+        if let value = Int(port.trimmingCharacters(in: .whitespaces)) {
+            if !(1...65535).contains(value) { issues[.port] = "The port must be between 1 and 65535 (SSH normally uses 22)." }
+        } else {
+            issues[.port] = "The port must be a number (SSH normally uses 22)."
+        }
+        if username.trimmingCharacters(in: .whitespaces).isEmpty {
+            issues[.username] = "Enter the account name on the host (on a Mac: the short user name, see `whoami`)."
+        } else if username.contains(" ") {
+            issues[.username] = "A user name cannot contain spaces."
+        }
+        switch auth {
+        case .password?:
+            if !passwordEntered && !passwordSaved { issues[.password] = "Enter the password for this account." }
+        case .key?:
+            if !keyExists { issues[.key] = "Choose an SSH key, or generate one under Preferences → SSH Keys." }
+        case .keyThenPassword?:
+            if !keyExists { issues[.key] = "Choose an SSH key, or generate one under Preferences → SSH Keys." }
+            if !passwordEntered && !passwordSaved { issues[.password] = "Enter the password to fall back to." }
+        case nil:
+            issues[.key] = "Choose an SSH key, or generate one under Preferences → SSH Keys."
+        }
+        return issues
+    }
+}

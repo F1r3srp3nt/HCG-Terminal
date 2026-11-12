@@ -21,6 +21,10 @@ public enum SSHAuthentication: Sendable {
 }
 
 public enum SSHConnectionError: Error, LocalizedError, Equatable {
+    case hostNotFound(host: String)
+    case connectionRefused(host: String, port: Int)
+    case hostUnreachable(host: String, detail: String)
+    case connectionFailed(host: String, detail: String)
     case hostKeyNotTrusted(fingerprint: String)
     case hostKeyChanged(expected: String, presented: String)
     case authenticationFailed
@@ -30,14 +34,67 @@ public enum SSHConnectionError: Error, LocalizedError, Equatable {
 
     public var errorDescription: String? {
         switch self {
-        case .hostKeyNotTrusted(let fingerprint): "The host key \(fingerprint) was not trusted."
+        case .hostNotFound(let host):
+            "Could not find “\(host)”. Check the hostname; for a Mac on the same network try its .local name (System Settings → General → Sharing) or its IP address."
+        case .connectionRefused(let host, let port):
+            "\(host) refused the connection on port \(port). Is SSH running there? On a Mac: System Settings → General → Sharing → Remote Login."
+        case .hostUnreachable(let host, let detail):
+            "\(host) cannot be reached from this device (\(detail)). Check that both are on the same network or VPN, and that HCG Terminal is allowed under Settings → Privacy & Security → Local Network."
+        case .connectionFailed(let host, let detail): "Could not connect to \(host): \(detail)."
+        case .hostKeyNotTrusted(let fingerprint): "The host key \(fingerprint) was not trusted, so no connection was made."
         case .hostKeyChanged(let expected, let presented):
-            "The host key changed (expected \(expected), got \(presented)). The connection was refused. If the change is expected, remove the old key in Preferences → Known Hosts."
-        case .authenticationFailed: "Authentication failed."
-        case .timedOut: "The connection timed out."
-        case .disconnected: "The connection was closed."
+            "The host key changed (expected \(expected), got \(presented)). The connection was refused. If the change is expected, remove the old key and verify the new one."
+        case .authenticationFailed: "The server rejected the sign-in. Check the username, the password, or that this device's public key is in ~/.ssh/authorized_keys on the host."
+        case .timedOut: "The server did not answer in time. Check the address and port, and that the host is awake."
+        case .disconnected: "The connection was closed before the command finished."
         case .channelRejected(let what): "The server refused to open \(what)."
         }
+    }
+
+    /// Short category for the interface.
+    public var category: String {
+        switch self {
+        case .hostNotFound: "Host not found (DNS)"
+        case .connectionRefused: "Connection refused"
+        case .hostUnreachable: "Host unreachable"
+        case .connectionFailed: "Connection failed"
+        case .hostKeyNotTrusted: "Host key not trusted"
+        case .hostKeyChanged: "Host key changed"
+        case .authenticationFailed: "Authentication failed"
+        case .timedOut: "Timed out"
+        case .disconnected: "Disconnected"
+        case .channelRejected: "Request refused"
+        }
+    }
+
+    /// Maps transport errors (DNS, TCP) to a specific case.
+    public static func classify(_ error: Error, host: String, port: Int) -> SSHConnectionError {
+        if let known = error as? SSHConnectionError { return known }
+        if let connection = error as? NIOConnectionError {
+            if connection.connectionErrors.isEmpty, connection.dnsAError != nil || connection.dnsAAAAError != nil {
+                return .hostNotFound(host: host)
+            }
+            let codes = connection.connectionErrors.compactMap { ($0.error as? IOError)?.errnoCode }
+            if codes.contains(ECONNREFUSED) { return .connectionRefused(host: host, port: port) }
+            if let code = codes.first(where: { [EHOSTUNREACH, ENETUNREACH, ENETDOWN, EHOSTDOWN].contains($0) }) {
+                return .hostUnreachable(host: host, detail: String(cString: strerror(code)))
+            }
+            if codes.contains(ETIMEDOUT) { return .timedOut }
+            if connection.connectionErrors.contains(where: { if case ChannelError.connectTimeout = $0.error { true } else { false } }) {
+                return .timedOut
+            }
+            return .connectionFailed(host: host, detail: connection.connectionErrors.first.map { "\($0.error)" } ?? "\(connection)")
+        }
+        if case ChannelError.connectTimeout = error { return .timedOut }
+        if let io = error as? IOError {
+            switch io.errnoCode {
+            case ECONNREFUSED: return .connectionRefused(host: host, port: port)
+            case EHOSTUNREACH, ENETUNREACH, ENETDOWN, EHOSTDOWN: return .hostUnreachable(host: host, detail: String(cString: strerror(io.errnoCode)))
+            case ETIMEDOUT: return .timedOut
+            default: break
+            }
+        }
+        return .connectionFailed(host: host, detail: "\(error)")
     }
 }
 
@@ -238,8 +295,10 @@ public final class SSHConnection: RemoteCommandExecuting, @unchecked Sendable {
         do {
             channel = try await bootstrap.connect(host: endpoint.hostname, port: endpoint.port).get()
         } catch {
-            authenticated.fail(error)
-            throw error
+            let classified = SSHConnectionError.classify(error, host: endpoint.hostname, port: endpoint.port)
+            authenticated.fail(classified)
+            await DiagnosticLog.shared.record(.warning, "ssh", "Connection failed", metadata: ["host": endpoint.address, "category": classified.category])
+            throw classified
         }
         let timeoutTask = eventLoop.scheduleTask(in: timeout) {
             authenticated.fail(SSHConnectionError.timedOut)
@@ -250,8 +309,9 @@ public final class SSHConnection: RemoteCommandExecuting, @unchecked Sendable {
         } catch {
             timeoutTask.cancel()
             channel.close(promise: nil)
-            await DiagnosticLog.shared.record(.warning, "ssh", "Connection failed", metadata: ["host": endpoint.address, "error": "\(error)"])
-            throw error
+            let classified = SSHConnectionError.classify(error, host: endpoint.hostname, port: endpoint.port)
+            await DiagnosticLog.shared.record(.warning, "ssh", "Connection failed", metadata: ["host": endpoint.address, "category": classified.category])
+            throw classified
         }
         await DiagnosticLog.shared.record(.info, "ssh", "Connected", metadata: ["host": endpoint.address])
         return SSHConnection(endpoint: endpoint, channel: channel)
@@ -392,9 +452,13 @@ final class ExecChannelHandler: ChannelDuplexHandler {
         finished = true
         if let error {
             continuation.finish(throwing: error)
-        } else {
-            continuation.yield(.exit(status: exitStatus ?? -1))
+        } else if let exitStatus {
+            continuation.yield(.exit(status: exitStatus))
             continuation.finish()
+        } else {
+            // The channel closed without an exit status: the connection was lost (or the
+            // server killed the session). Never report an invented status.
+            continuation.finish(throwing: SSHConnectionError.disconnected)
         }
     }
 }

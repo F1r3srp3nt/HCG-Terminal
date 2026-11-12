@@ -193,4 +193,48 @@ struct ModeUnavailableSheet: View {
         }
     }
 }
+/// The host presented a different key than before. Nothing was connected. Removing the old
+/// key is a separate, explicit step; the next connection then shows the new fingerprint for
+/// verification like a first connection.
+struct HostKeyChangedSheet: View {
+    @Environment(TerminalAppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    let notice: HostKeyChangeNotice
+    @State private var confirmRemoval = false
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    Label("HCG Terminal refused to connect to \(notice.host.endpoint.address).", systemImage: "exclamationmark.shield.fill")
+                        .foregroundStyle(HCGPalette.loss)
+                    Text("Its host key is different from the one you trusted before. This happens after the host's system was reinstalled or its SSH keys were regenerated — or if someone is intercepting the connection.")
+                        .font(.footnote)
+                }
+                Section("Trusted before") {
+                    Text(notice.expectedFingerprint).font(.system(.footnote, design: .monospaced)).textSelection(.enabled)
+                }
+                Section("Presented now") {
+                    Text(notice.presentedFingerprint).font(.system(.footnote, design: .monospaced)).textSelection(.enabled)
+                }
+                Section {
+                    Button("Remove Old Key…", role: .destructive) { confirmRemoval = true }
+                } footer: {
+                    Text("Only if you know why the key changed. On the host, `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` shows the current fingerprint. After removal, the next connection asks you to verify it.")
+                }
+            }
+            .navigationTitle("Host Key Changed")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Don't Connect") { model.hostKeyChange = nil } }
+            }
+            .confirmationDialog("Remove the old key for \(notice.host.name)?", isPresented: $confirmRemoval, titleVisibility: .visible) {
+                Button("Remove Old Key", role: .destructive) { Task { await model.forgetHostKey(notice) } }
+            } message: {
+                Text("Nothing connects now. The next connection shows the new fingerprint for you to verify.")
+            }
+        }
+        .interactiveDismissDisabled()
+    }
+}
 #endif

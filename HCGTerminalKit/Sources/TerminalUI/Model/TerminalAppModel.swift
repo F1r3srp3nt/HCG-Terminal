@@ -32,6 +32,21 @@ public struct ModeUnavailableExplanation: Identifiable {
     public let distribution: DistributionBuild
 }
 
+/// A host presented a different key than the one trusted before. The connection was refused;
+/// the user decides explicitly whether to remove the old key and verify the new one.
+public struct HostKeyChangeNotice: Identifiable {
+    public let id = UUID()
+    public let host: HostProfile
+    public let expectedFingerprint: String
+    public let presentedFingerprint: String
+}
+
+/// Result of "Test Connection" in the host editor.
+public enum ConnectionTestResult: Equatable {
+    case success(system: String, shell: String, tools: [String: String], elapsed: TimeInterval)
+    case failure(category: String, message: String)
+}
+
 /// The mode-switch confirmation shown when existing local sessions could be moved.
 public struct ModeSwitchConfirmation: Identifiable {
     public let id = UUID()
@@ -60,6 +75,7 @@ public final class TerminalAppModel {
     public var selectedSessionID: SessionID?
 
     // MARK: Prompts
+    public var hostKeyChange: HostKeyChangeNotice?
     public var authorizationPrompt: PendingDecision<AuthorizationRequest>?
     public var hostKeyPrompt: PendingDecision<HostKeyPrompt>?
     public var errorMessage: String?
@@ -256,8 +272,9 @@ public final class TerminalAppModel {
         }
     }
 
-    func authentication(for host: HostProfile) throws -> SSHAuthentication {
+    func authentication(for host: HostProfile, enteredPassword: String? = nil) throws -> SSHAuthentication {
         func password() throws -> String {
+            if let enteredPassword, !enteredPassword.isEmpty { return enteredPassword }
             guard let data = try dependencies.credentials.load(.hostPassword(host.id)) else {
                 throw RemoteSessionError.missingPassword(host.name)
             }
@@ -274,10 +291,83 @@ public final class TerminalAppModel {
     /// Returns the open connection for `host`, connecting if needed.
     public func connection(for host: HostProfile) async throws -> SSHConnection {
         if let existing = connections[host.id], existing.isActive { return existing }
-        let connection = try await SSHConnection.connect(endpoint: host.endpoint, authentication: authentication(for: host), hostKeyPolicy: hostKeyPolicy)
+        connections[host.id] = nil
+        let connection: SSHConnection
+        do {
+            connection = try await SSHConnection.connect(endpoint: host.endpoint, authentication: authentication(for: host), hostKeyPolicy: hostKeyPolicy)
+        } catch let error as SSHConnectionError {
+            noteHostKeyChange(error, host: host)
+            throw error
+        }
         connections[host.id] = connection
         recordVerification(.remoteSSH, observation: "Connected to \(host.endpoint.address).")
         return connection
+    }
+
+    private func noteHostKeyChange(_ error: SSHConnectionError, host: HostProfile) {
+        if case .hostKeyChanged(let expected, let presented) = error {
+            hostKeyChange = HostKeyChangeNotice(host: host, expectedFingerprint: expected, presentedFingerprint: presented)
+        }
+    }
+
+    /// After the user explicitly chose to: removes the stored key for this host. The next
+    /// connection asks them to verify the new fingerprint before anything is trusted.
+    public func forgetHostKey(_ notice: HostKeyChangeNotice) async {
+        try? await dependencies.knownHosts.forget(host: notice.host.hostname, port: notice.host.port)
+        hostKeyChange = nil
+        await DiagnosticLog.shared.record(.notice, "ssh", "Old host key removed by the user", metadata: ["host": notice.host.endpoint.address])
+    }
+
+    /// Connects with the given (possibly unsaved) settings, runs read-only checks and
+    /// disconnects. Nothing is saved; an unknown host key still needs explicit approval.
+    public func testConnection(_ host: HostProfile, enteredPassword: String?) async -> ConnectionTestResult {
+        let started = Date()
+        do {
+            let connection = try await SSHConnection.connect(
+                endpoint: host.endpoint, authentication: authentication(for: host, enteredPassword: enteredPassword), hostKeyPolicy: hostKeyPolicy
+            )
+            defer { Task { await connection.close() } }
+            let shell = try await connection.run("printf '%s' \"${SHELL:-unknown}\"").stdoutText
+            let toolchains = try await ToolchainProbe.probe(connection)
+            recordVerification(.remoteSSH, observation: "Connection test to \(host.endpoint.address) succeeded.")
+            return .success(system: toolchains.operatingSystem, shell: shell, tools: toolchains.tools, elapsed: Date().timeIntervalSince(started))
+        } catch let error as SSHConnectionError {
+            noteHostKeyChange(error, host: host)
+            return .failure(category: error.category, message: error.localizedDescription)
+        } catch {
+            return .failure(category: "Error", message: error.localizedDescription)
+        }
+    }
+
+    /// The saved host a remote session belongs to.
+    public func host(for session: SessionModel) -> HostProfile? {
+        guard let id = session.target.remoteEndpoint?.hostID else { return nil }
+        return hosts.first { $0.id == id }
+    }
+
+    /// Opens a fresh shell to the same host after a session ended. Nothing from the old session
+    /// (and no build) is re-run.
+    @discardableResult
+    public func reconnect(_ session: SessionModel) async -> SessionModel? {
+        guard let host = host(for: session) else {
+            errorMessage = "The host for this session is no longer saved."
+            return nil
+        }
+        if let connection = connections[host.id], !connection.isActive { connections[host.id] = nil }
+        return await openRemoteShell(host)
+    }
+
+    /// Explicitly runs an ended PTY command session again (for example Claude Code).
+    @discardableResult
+    public func runAgain(_ session: SessionModel) async -> SessionModel? {
+        guard case .sshCommand(let command) = session.backend, let host = host(for: session) else { return nil }
+        do {
+            let fresh = try await connection(for: host).openSession(size: .standard, command: command)
+            return await register(fresh, title: session.title)
+        } catch {
+            errorMessage = error.localizedDescription
+            return nil
+        }
     }
 
     @discardableResult

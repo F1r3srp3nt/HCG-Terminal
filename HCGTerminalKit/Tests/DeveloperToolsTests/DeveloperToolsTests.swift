@@ -155,3 +155,26 @@ final class ArtifactDownloaderTests: XCTestCase {
         XCTAssertTrue(try day.allSatisfy { try workspace.list($0.path).isEmpty })
     }
 }
+
+final class HostProfileValidatorTests: XCTestCase {
+    func testMessagesSayWhatToFix() {
+        let empty = HostProfileValidator.validate(name: "", hostname: "", port: "22", username: "", auth: .password, passwordEntered: false, passwordSaved: false, keyExists: false)
+        XCTAssertEqual(Set(empty.keys), [.name, .hostname, .username, .password])
+        let userInHost = HostProfileValidator.validate(name: "Mac", hostname: "ana@mac.local", port: "22", username: "ana", auth: .password, passwordEntered: true, passwordSaved: false, keyExists: false)
+        XCTAssertEqual(userInHost[.hostname], "Put the user name in Username, not in the hostname.")
+        let badPort = HostProfileValidator.validate(name: "Mac", hostname: "mac.local", port: "70000", username: "ana", auth: .password, passwordEntered: true, passwordSaved: false, keyExists: false)
+        XCTAssertNotNil(badPort[.port])
+        let savedPassword = HostProfileValidator.validate(name: "Mac", hostname: "mac.local", port: "22", username: "ana", auth: .password, passwordEntered: false, passwordSaved: true, keyExists: false)
+        XCTAssertTrue(savedPassword.isEmpty, "an already saved password counts")
+        let noKey = HostProfileValidator.validate(name: "Mac", hostname: "mac.local", port: "22", username: "ana", auth: nil, passwordEntered: false, passwordSaved: false, keyExists: false)
+        XCTAssertNotNil(noKey[.key])
+    }
+
+    func testPlansCarryTheProcessMarker() throws {
+        let host = HostProfile(name: "Mac", hostname: "mac", username: "a", auth: .password)
+        let plan = try BuildPlanner.plan(host: host, projectPath: "~/My App", system: .swiftPackage, action: .build)
+        XCTAssertTrue(plan.remoteCommand.hasPrefix(RemoteProcessMarker.command))
+        XCTAssertTrue(plan.remoteCommand.contains("My App"))
+        XCTAssertEqual(plan.commandLine, "swift build -c debug", "the shown command is the user's command only")
+    }
+}

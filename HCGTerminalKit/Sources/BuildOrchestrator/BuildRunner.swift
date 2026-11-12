@@ -35,14 +35,26 @@ public enum BuildRunStatus: Codable, Hashable, Sendable {
     case failed(exitStatus: Int32)
     case cancelled
     case couldNotStart(String)
+    /// The connection was lost after the command started. It is never rerun automatically.
+    case interrupted(String)
 
     public var label: String {
         switch self {
         case .running: "Running"
-        case .succeeded: "Succeeded"
+        case .succeeded: "Succeeded (exit 0)"
         case .failed(let status): "Failed (exit \(status))"
         case .cancelled: "Cancelled"
         case .couldNotStart(let reason): "Could not start: \(reason)"
+        case .interrupted(let reason): "Interrupted: \(reason) It was not rerun."
+        }
+    }
+
+    /// The remote command's real exit status, when it reported one.
+    public var exitStatus: Int32? {
+        switch self {
+        case .succeeded: 0
+        case .failed(let status): status
+        default: nil
         }
     }
 }
@@ -167,11 +179,29 @@ public actor BuildOrchestrator {
 
         var pendingLine = ""
         var fullLog = ""
-        var status: Int32 = -1
+        var status: Int32?
+        var remotePID: Int32?
+        var markerBuffer: Data? = Data() // collects the first line until the PID marker is parsed
+        var receivedOutput = false
         do {
             for try await event in executor.stream(plan.remoteCommand) {
                 switch event {
-                case .stdout(let data), .stderr(let data):
+                case .stdout(var data), .stderr(var data):
+                    if var buffer = markerBuffer {
+                        // Strip the "__HCG_PID__<pid>" line the command prints first.
+                        buffer.append(data)
+                        guard let newline = buffer.firstIndex(of: 0x0A) else { markerBuffer = buffer; continue }
+                        let first = String(decoding: buffer[buffer.startIndex..<newline], as: UTF8.self)
+                        if first.hasPrefix(RemoteProcessMarker.prefix) {
+                            remotePID = Int32(first.dropFirst(RemoteProcessMarker.prefix.count))
+                            data = Data(buffer[buffer.index(after: newline)...])
+                        } else {
+                            data = buffer
+                        }
+                        markerBuffer = nil
+                        if data.isEmpty { continue }
+                    }
+                    receivedOutput = true
                     try? handle?.write(contentsOf: data)
                     let text = String(decoding: data, as: UTF8.self)
                     fullLog += text
@@ -188,9 +218,28 @@ public actor BuildOrchestrator {
                     status = code
                 }
             }
-            run.status = Task.isCancelled ? .cancelled : (status == 0 ? .succeeded : .failed(exitStatus: status))
+            if Task.isCancelled {
+                run.status = .cancelled
+            } else if let status {
+                run.status = status == 0 ? .succeeded : .failed(exitStatus: status)
+            } else {
+                run.status = .interrupted("The command ended without reporting an exit status.")
+            }
         } catch {
-            run.status = Task.isCancelled ? .cancelled : .couldNotStart(error.localizedDescription)
+            if Task.isCancelled {
+                run.status = .cancelled
+            } else if receivedOutput || remotePID != nil {
+                run.status = .interrupted(error.localizedDescription)
+            } else {
+                run.status = .couldNotStart(error.localizedDescription)
+            }
+        }
+        if run.status == .cancelled, let remotePID {
+            // Stop the build on the host too. Runs outside the cancelled task.
+            let kill = RemoteProcessMarker.killCommand(pid: remotePID)
+            _ = await Task.detached { try? await executor.run(kill) }.value
+            try? handle?.write(contentsOf: Data("\n[cancelled: sent TERM to remote process group \(remotePID)]\n".utf8))
+            await DiagnosticLog.shared.record(.notice, "build", "Cancelled build stopped on host", metadata: ["host": plan.hostName, "pid": "\(remotePID)"])
         }
         try? handle?.close()
         if plan.action == .test { run.testSummary = BuildLogParser.testSummary(in: fullLog) }
