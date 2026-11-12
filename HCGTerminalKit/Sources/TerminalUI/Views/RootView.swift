@@ -20,6 +20,10 @@ enum SidebarItem: Hashable {
 public struct RootView: View {
     @State private var model: TerminalAppModel
     @State private var selection: SidebarItem? = .dashboard
+    /// iPhone (compact width) opens on the sidebar: header, mode selector and New Session first.
+    @State private var compactColumn: NavigationSplitViewColumn = .sidebar
+    /// Read outside the split view: inside it, the sidebar column always reports compact.
+    @Environment(\.horizontalSizeClass) private var windowSizeClass
     @State private var showNewRemote = false
     @State private var showLoopback = false
     @State private var renamingSession: SessionModel?
@@ -31,7 +35,7 @@ public struct RootView: View {
 
     public var body: some View {
         @Bindable var model = model
-        NavigationSplitView {
+        NavigationSplitView(preferredCompactColumn: $compactColumn) {
             sidebar
         } detail: {
             detail
@@ -47,7 +51,10 @@ public struct RootView: View {
             #endif
         }
         .onChange(of: model.selectedSessionID) { _, id in
-            if let id { selection = .session(id) }
+            if let id {
+                selection = .session(id)
+                compactColumn = .detail
+            }
         }
         .sheet(item: $model.authorizationPrompt) { prompt in
             AuthorizationSheet(request: prompt.request).environment(model)
@@ -93,8 +100,19 @@ public struct RootView: View {
         }
     }
 
+    /// On iPhone the header sits at the top of the sidebar (the home screen there); on wider
+    /// layouts it is centred on the dashboard instead, so it never appears twice.
+    private var headerInSidebar: Bool { windowSizeClass != .regular }
+
     private var sidebar: some View {
         List(selection: $selection) {
+            if headerInSidebar {
+                Section {
+                    TerminalHeroHeader()
+                        .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
+                        .listRowBackground(Color.clear)
+                }
+            }
             Section {
                 NavigationLink(value: SidebarItem.dashboard) {
                     HStack(spacing: 10) {
@@ -167,7 +185,16 @@ public struct RootView: View {
                 NavigationLink(value: SidebarItem.preferences) { Label("Settings", systemImage: "gearshape") }
             } header: { Eyebrow("Device") }
         }
+        .listSectionSpacing(.compact)
+        // The title stays for back buttons and the app switcher, but is not drawn: the header
+        // artwork is the visible title (and is exposed to VoiceOver once, as a heading).
         .navigationTitle("HCG Terminal")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                Color.clear.frame(width: 1, height: 1).accessibilityHidden(true)
+            }
+        }
         .hcgScreenBackground()
     }
 
@@ -177,6 +204,7 @@ public struct RootView: View {
         case .dashboard, nil:
             NavigationStack {
                 DashboardView(
+                    showHeader: !headerInSidebar,
                     openSession: { selection = .session($0) },
                     openItem: { selection = $0 },
                     newRemote: { showNewRemote = true }
@@ -351,6 +379,14 @@ struct AppearanceSection: View {
                 }
             }
             Toggle("Reduce visual effects", isOn: Binding(get: { model.appearance.reducedEffects }, set: { value in model.updateAppearance { $0.reducedEffects = value } }))
+            if TerminalHeroAnimation.isBundled {
+                VStack(alignment: .leading, spacing: 4) {
+                    Toggle("Animated header", isOn: Binding(get: { model.appearance.animatedHeader }, set: { value in model.updateAppearance { $0.animatedHeader = value } }))
+                    Text("Animate the HCG logo on the home screen. Turn off for a still image and lower power use.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            }
             Stepper(value: Binding(get: { model.appearance.terminalFontSize }, set: { value in model.updateAppearance { $0.terminalFontSize = value } }), in: AppearanceSettings.terminalFontRange, step: 1) {
                 LabeledContent("Terminal text", value: "\(Int(model.appearance.terminalFontSize)) pt")
             }

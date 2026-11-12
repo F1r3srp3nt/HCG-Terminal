@@ -11,6 +11,8 @@ struct DashboardView: View {
     @Environment(TerminalAppModel.self) private var model
     @Environment(\.hcgAppearance) private var appearance
     @Environment(\.dynamicTypeSize) private var typeSize
+    /// False on iPhone, where the header is at the top of the sidebar instead.
+    var showHeader: Bool = true
     var openSession: (SessionID) -> Void
     var openItem: (SidebarItem) -> Void
     var newRemote: () -> Void
@@ -38,6 +40,7 @@ struct DashboardView: View {
         }
         .background(HCGPalette.canvas.ignoresSafeArea())
         .navigationTitle("Dashboard")
+        .navigationBarTitleDisplayMode(showHeader ? .inline : .automatic)
         .task { workspace = await WorkspaceSummary.load(model.dependencies.workspace) }
         .refreshable {
             await model.refreshCapabilities()
@@ -48,23 +51,20 @@ struct DashboardView: View {
     // MARK: Header
 
     private var header: some View {
-        HStack(alignment: .center, spacing: 14) {
-            HCGMark(size: 52)
-            VStack(alignment: .leading, spacing: 4) {
-                Text("HCG Terminal").font(.title2.weight(.bold)).foregroundStyle(HCGPalette.ivory)
-                HStack(spacing: 8) {
-                    Label("\(model.preferredMode.displayName) mode", systemImage: model.preferredMode == .vanilla ? "iphone" : "bolt.shield")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(ModeAccent.color(model.preferredMode, accent: appearance.accent))
-                    Text("·").foregroundStyle(HCGPalette.muted)
-                    Text(model.dependencies.distribution == .standard ? "Standard build" : "Unleashed build")
-                        .font(.subheadline)
-                        .foregroundStyle(HCGPalette.muted)
-                }
+        VStack(spacing: 10) {
+            if showHeader { TerminalHeroHeader() }
+            HStack(spacing: 8) {
+                Label("\(model.preferredMode.displayName) mode", systemImage: model.preferredMode == .vanilla ? "iphone" : "bolt.shield")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(ModeAccent.color(model.preferredMode, accent: appearance.accent))
+                Text("·").foregroundStyle(HCGPalette.muted).accessibilityHidden(true)
+                Text(model.dependencies.distribution == .standard ? "Standard build" : "Unleashed build")
+                    .font(.subheadline)
+                    .foregroundStyle(HCGPalette.muted)
+                Spacer(minLength: 0)
             }
-            Spacer(minLength: 0)
+            .accessibilityElement(children: .combine)
         }
-        .accessibilityElement(children: .combine)
     }
 
     // MARK: Panels

@@ -103,6 +103,22 @@ jobs:
           done
           exit $status
 
+      - name: Header artwork in the compiled asset catalog (Release)
+        run: |
+          app="$RUNNER_TEMP/DD-build/Build/Products/Release-iphoneos/${{ matrix.scheme }}.app"
+          xcrun --sdk iphoneos assetutil --info "$app/Assets.car" > assets.json
+          python3 - "$app" <<'PY'
+          import json, sys
+          entries = json.load(open("assets.json"))
+          hero = [e for e in entries if e.get("Name") == "TerminalHero"]
+          assert hero, "TerminalHero is missing from Assets.car"
+          for e in hero:
+              print("TerminalHero:", e.get("PixelWidth"), "x", e.get("PixelHeight"), e.get("Encoding"), "scale", e.get("Scale"))
+          assert any(e.get("PixelWidth") == 2000 and e.get("PixelHeight") == 667 for e in hero), "unexpected size"
+          print("PASS: TerminalHero (2000x667) in", sys.argv[1].split("/")[-1])
+          PY
+          if ls "$app"/TerminalHero.mp4 "$app"/TerminalHero.mov >/dev/null 2>&1; then echo "Header animation bundled"; else echo "No header animation bundled (static header; the Animated header setting is hidden)"; fi
+
       - name: Encryption inventory (read-only)
         if: always()
         # Evidence for export compliance: which crypto the shipped binary links or contains.
@@ -253,6 +269,37 @@ jobs:
         with:
           name: simulator-screenshots
           path: shots/
+
+      - name: Small iPhone and iPad launch (header layout, both variants)
+        run: |
+          mkdir -p shots; status=0
+          pick() { xcrun simctl list devices available -j | python3 -c "
+          import json,sys,re
+          d=json.load(sys.stdin)['devices']
+          devs=[x for k,v in sorted(d.items()) if 'iOS' in k for x in v]
+          want=sys.argv[1]
+          prefs={'small':['iPhone SE','iPhone 13 mini','iPhone 12 mini','iPhone 16e','iPhone 17e'],'ipad':['iPad mini','iPad (','iPad Air','iPad Pro']}[want]
+          for p in prefs:
+              m=[x for x in devs if x['name'].startswith(p)]
+              if m: print(m[-1]['udid'], m[-1]['name'].replace(' ','_')); break
+          " "$1"; }
+          for kind in small ipad; do
+            read -r udid name < <(pick $kind) || true
+            [ -n "${udid:-}" ] || { echo "No $kind simulator available"; continue; }
+            echo "== $kind: $name"
+            xcrun simctl boot "$udid" || true; xcrun simctl bootstatus "$udid" -b >/dev/null
+            for scheme in HCGTerminal HCGTerminalUnleashed; do
+              app="$RUNNER_TEMP/DDsim/Build/Products/Debug-iphonesimulator/$scheme.app"
+              bundle=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Info.plist")
+              xcrun simctl install "$udid" "$app"
+              xcrun simctl launch "$udid" "$bundle" -HCGSmokeScenario launch >/dev/null; sleep 7
+              xcrun simctl io "$udid" screenshot "shots/$name-$scheme-home.png" >/dev/null
+              if xcrun simctl spawn "$udid" launchctl list | grep -q "UIKitApplication:$bundle"; then echo "PASS: $scheme running on $name"; else echo "FAIL: $scheme not running on $name"; status=1; fi
+              xcrun simctl terminate "$udid" "$bundle" || true
+            done
+            xcrun simctl shutdown "$udid" || true
+          done
+          exit $status
 
       - name: Package tests on the iOS Simulator runtime
         if: always()

@@ -30,11 +30,17 @@ Legend: ✅ done and covered by automated checks · 🧪 done, verified only in 
 - ✅ Fixed a PTY descriptor-reuse race that intermittently caused empty process output.
 - 🧪 HCG design: obsidian/metal/cyan theme, violet Unleashed, dashboard, compact capability cards, appearance settings (theme, accent, reduced effects, terminal text size), Dynamic Type text styles, 44 pt targets. Compiled and launched in the Simulator in CI; not reviewed on a device.
 
+### Home-screen header
+- ✅ `TerminalHero` artwork in the asset catalog (both targets, checked in Release builds by CI). Shown as `TerminalHeroHeader`: in the iPhone home list, centred on the iPad dashboard, smaller in landscape. A single VoiceOver heading.
+- ✅ Looping-video support with a static fallback, playback rules and the Animated header setting. The setting is hidden until a `TerminalHero.mp4`/`.mov` is bundled.
+- ⬜ Animation file: not supplied yet (see `HEADER.md`).
+
 ## Remaining milestones
 
 ### Device verification 📱
 - [ ] Ordinary iPhone, small screen (SE / mini): dashboard, Capabilities & Access, VoiceOver labels, largest Dynamic Type sizes, Reduce Motion / Reduce Transparency, System theme in light mode.
 - [ ] iPad (split view and full screen): dashboard grid, keyboard shortcuts and key row with a hardware keyboard.
+- [ ] Header: look at it on a small iPhone, an iPad and an iPhone in landscape; with an animation bundled, check pause on navigation, background and Low Power Mode.
 - [ ] Standard build from Xcode and from TestFlight: Diagnostics → Build shows "Standard", Unleashed switches show "Not in this build".
 - [ ] Unleashed build, sandboxed install on a jailbroken device: Permission denied / not observable shown correctly; loopback service works.
 - [ ] Unleashed `.deb` install (**needs your jailbreak, iOS version and bootstrap**): shell test, PTY, programs, packages, write test, approval prompts, switches turned off while a shell runs.
