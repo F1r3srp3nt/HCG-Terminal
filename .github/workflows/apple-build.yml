@@ -250,7 +250,7 @@ jobs:
             echo "== $scheme ($bundle, variant $(/usr/libexec/PlistBuddy -c 'Print :HCGBuildVariant' "$app/Info.plist"))"
             Scripts/verify-build-variant.sh "$app"
             xcrun simctl install "$UDID" "$app"
-            for scenario in launch dashboard unleashed-tap session capabilities settings files diagnostics; do
+            for scenario in launch dashboard unleashed-tap unleashed-checks session capabilities settings files diagnostics; do
               xcrun simctl terminate "$UDID" "$bundle" 2>/dev/null || true
               xcrun simctl launch "$UDID" "$bundle" -HCGSmokeScenario "$scenario" >/dev/null
               sleep 7

@@ -263,6 +263,11 @@ public struct RootView: View {
                 try? await Task.sleep(nanoseconds: 700_000_000)
                 session.send(Array("help\r".utf8))
             }
+        case "unleashed-checks":
+            // Opens the Unleashed checks sheet with the current report, whatever the result.
+            if let report = model.report(for: .unleashed) {
+                model.modeUnavailable = ModeUnavailableExplanation(mode: .unleashed, report: report, distribution: model.dependencies.distribution)
+            }
         case "capabilities": selection = .access
         case "settings": selection = .preferences
         case "dashboard": selection = .dashboard
