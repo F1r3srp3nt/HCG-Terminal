@@ -90,7 +90,31 @@ Afterwards, open **Settings → Unleashed Environment** and tap **Run Shell Test
 
 "Jailbreak indicators found" is shown separately from "this app can run a shell". When nothing is visible from a sandboxed process, the result is *Unknown — not observable*, never "not jailbroken".
 
-Statuses: **Not included · Disabled by you · Environment unknown · Tool missing · Permission denied · Available, untested · Verified working**.
+Statuses: **Not included · Disabled by you · Environment unknown · Tool missing · Permission denied · Available, untested · Verified working**, with **partial** added when a capability works only in part of its scope.
+
+### How each result is decided
+
+Each capability is decided on its own, so one failure never hides another that works.
+
+- **Every system call is recorded:** the operation, path, return value, errno and time.
+  - Each shell, package and helper path is resolved in turn: `lstat`, then `readlink` for symlinks, `realpath`, `stat`, and finally `access(X_OK)`.
+  - All of these paths are listed under "All checks". Nothing is summarised as "N candidates".
+- **Tool missing** only when ENOENT shows absence in roots that could be inspected. **Permission denied** whenever EPERM or EACCES was returned; that never means "missing", and the remedy never suggests reinstalling tools.
+- **Existence, execute permission and a launch are three separate facts.** `access(X_OK)` passing gives at most "Available, untested". Only a launch that completes gives "Verified working": either Test local shell (a fixed `printf HCG_SHELL_OK; id -u` with a 5 s limit) or a session.
+- **Files are reported as three capabilities:** directory listing, reading files and writing files, each with its exact scope.
+  - Listing a folder says nothing about whether its files can be read.
+  - Writing is verified only by the write test (a uniquely named temporary file in a folder you pick, removed afterwards) or a saved edit.
+- **Packages are two capabilities:**
+  - The inventory is read from the dpkg status database when readable, without running apt. It is marked partial if entries are skipped.
+  - Package changes need a working local shell and your approval for each command.
+- **Localhost SSH fallback:** an open port gives "Available, untested". Only a successful sign-in plus a terminal gives "Verified working". A refused connection on 22/2222 is reported as nothing listening, and you can enter another port.
+- **Stale results:** a launch result for a file that is no longer found is shown as "no longer applies". Recheck rescans; test results keep their own times.
+- **Banner:**
+  - "Unleashed partially available" when some local capabilities work but a session cannot start, naming what works and what blocks the rest.
+  - Actions: Recheck, Test local shell, Configure connection, View setup requirements.
+- **Bootstrap markers** (such as `/var/jb/.installed_dopamine`) are reported as indicators only. They never imply an active jailbreak, a working launch or root privileges.
+
+The scanner also looks for a prefix that a jailbreak resolver (libroot) reports, but only if that resolver is already loaded in this process; it loads nothing from disk. It also checks relocated roots under `/private/preboot`, roothide roots, and a root you enter. All of this lives in the Unleashed module, which the standard build does not contain.
 
 ## What the backend does
 
@@ -114,7 +138,11 @@ Settings → Capabilities & Access (see `CAPABILITIES_AND_ACCESS.md`):
 - Turning a switch off is enforced in the services themselves.
 - A switch never changes iOS permissions, never removes the jailbreak and never undoes earlier changes.
 
-## Device tests still needed
+## Device tests
+
+The step-by-step checklist for both phones is in `DEVICE_TESTS.md`.
+
+## Device tests still needed (summary)
 
 None of these has run on hardware yet:
 

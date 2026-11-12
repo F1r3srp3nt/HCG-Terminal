@@ -128,3 +128,79 @@ final class AccessTransitionTests: XCTestCase {
         XCTAssertEqual(reloaded.terminalFontSize, AppearanceSettings.terminalFontRange.upperBound, "clamped")
     }
 }
+
+/// A session on this device's SSH service (localhost fallback).
+actor FakeLoopbackSession: TerminalSession {
+    nonisolated let id = SessionID()
+    nonisolated let target: ExecutionTarget = .local(.unleashed)
+    nonisolated let backend: SessionBackend = .loopbackService(host: "127.0.0.1", port: 22)
+    nonisolated let createdAt = Date()
+    nonisolated var events: AsyncStream<TerminalEvent> { channel.stream }
+    private let channel = EventChannel<TerminalEvent>()
+    private(set) var closeCount = 0
+    func start(size: TerminalSize) async throws { channel.yield(.stateChanged(.ready)) }
+    func send(_ bytes: [UInt8]) async throws {}
+    func resize(_ size: TerminalSize) async {}
+    func interrupt() async {}
+    func close() async { closeCount += 1; channel.finish() }
+}
+
+@MainActor
+final class UnleashedSwitchTransitionTests: XCTestCase {
+    func makeModel(_ access: AccessPolicy) throws -> TerminalAppModel {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("hcg-switch-\(UUID().uuidString)")
+        let defaults = UserDefaults(suiteName: "hcg-switch-\(UUID().uuidString)")!
+        return TerminalAppModel(dependencies: AppDependencies.standard(
+            workspace: try FileWorkspace(rootURL: root.appendingPathComponent("ws")), supportDirectory: root.appendingPathComponent("support"),
+            credentials: InMemoryCredentialStore(), preferences: ModePreferenceStore(defaults: defaults),
+            access: access, appearance: AppearanceStore(defaults: defaults)
+        ))
+    }
+
+    func testTurningOffLocalhostSSHAsksBeforeDisconnectingAndLeavesRemoteSSHAlone() async throws {
+        let access = AccessPolicy.inMemory()
+        let model = try makeModel(access)
+        let fake = FakeLoopbackSession()
+        let loopback = SessionModel(session: fake, title: "Unleashed · 127.0.0.1:22", modeAtCreation: .unleashed)
+        loopback.attach()
+        try await fake.start(size: .standard)
+        try await Task.sleep(nanoseconds: 50_000_000)
+        model.sessionsForTesting.append(loopback)
+
+        await model.requestAccessChange(.localhostSSH, enabled: false)
+        let request = try XCTUnwrap(model.pendingAccessChange, "an open localhost session needs confirmation first")
+        XCTAssertEqual(request.sessions.map(\.id), [loopback.id])
+        XCTAssertTrue(request.sessions[0].consequence.contains("not verified"))
+        XCTAssertFalse(request.newlyDisabled.contains(.remoteSSH), "remote SSH is controlled separately")
+        await model.confirmAccessChange()
+        XCTAssertFalse(loopback.isLive)
+        XCTAssertTrue(access.isOn(.remoteSSH))
+    }
+
+    func testMasterSwitchStopsLocalSessionsOnlyAfterConfirmation() async throws {
+        let access = AccessPolicy.inMemory()
+        let model = try makeModel(access)
+        let fake = FakeLoopbackSession()
+        let loopback = SessionModel(session: fake, title: "localhost", modeAtCreation: .unleashed)
+        loopback.attach()
+        try await fake.start(size: .standard)
+        try await Task.sleep(nanoseconds: 50_000_000)
+        model.sessionsForTesting.append(loopback)
+        await model.requestAccessChange(.unleashedFeatures, enabled: false)
+        let request = try XCTUnwrap(model.pendingAccessChange)
+        XCTAssertTrue(request.newlyDisabled.contains(.localShell))
+        XCTAssertTrue(request.newlyDisabled.contains(.localhostSSH))
+        model.cancelAccessChange()
+        XCTAssertTrue(loopback.isLive, "cancel leaves the session running and the switch on")
+        XCTAssertTrue(access.isOn(.unleashedFeatures))
+    }
+
+    func testLocalhostFallbackOnlyConnectsToThisDevice() async throws {
+        let model = try makeModel(.inMemory())
+        // Standard build: no Unleashed backend at all.
+        let none = await model.openLoopbackService(host: "127.0.0.1", port: 22, username: "mobile", password: "x")
+        XCTAssertNil(none)
+        XCTAssertEqual(model.errorMessage, UnleashedNotIncludedCapabilityProvider.reason)
+        XCTAssertEqual(TerminalAppModel.loopbackHosts, ["127.0.0.1", "localhost", "::1"])
+    }
+}

@@ -35,6 +35,20 @@ Legend: ✅ done and covered by automated checks · 🧪 done, verified only in 
 - ✅ Looping-video support with a static fallback, playback rules and the Animated header setting. The setting is hidden until a `TerminalHero.mp4`/`.mov` is bundled.
 - ⬜ Animation file: not supplied yet (see `HEADER.md`).
 
+### Unleashed diagnostics and local terminal path (from the iPhone 11 Pro Max screenshots)
+- ✅ Every probe recorded with operation, path, return value, errno and time. Every shell, package and helper path is resolved and listed.
+- ✅ EPERM/EACCES reported as denied, never missing. ENOENT is absence only where the roots could be inspected. Broken symlinks and missing execute bits are reported separately.
+- ✅ Independent results:
+  - listing, reading and writing are separate;
+  - package inventory (from the dpkg status file, no apt) is separate from package changes;
+  - the localhost SSH fallback is its own capability.
+- ✅ "Unleashed partially available" banner, with the actions Recheck, Test local shell, Configure connection and View setup requirements.
+- ✅ Test local shell tries existing shell files even when `access(X_OK)` was refused; only a launch can verify. Sessions use the shell that launched.
+- ✅ Localhost SSH with an explicit host and port (this device only) and host-key verification. Verified only after sign-in plus a PTY.
+- ✅ Switches: Unleashed features (master), Localhost SSH fallback, plus the existing shell, browsing and modification switches, with confirmation for open sessions.
+- 📱 Device checklist for both phones: `DEVICE_TESTS.md`.
+- ⬜ **Needed from you:** jailbreak name and version, bootstrap, and whether TrollStore is installed. These decide the `.deb` entitlements for an unsandboxed install, the only route to a working local shell on Phone A.
+
 ## Remaining milestones
 
 ### Device verification 📱

@@ -188,17 +188,17 @@ struct SessionDetailsView: View {
     }
 }
 
-/// Capability status for one mode: headline plus one row per capability. Each row shows its
-/// summary once, the reason for its state only when it adds something, the checks that ran,
-/// and what would change the state.
+/// Capability status for one mode: banner plus one row per capability. Each row shows its
+/// summary once, the reason for its state only when it adds something, exactly where it
+/// applies, every check with its return value, errno and time, and what would change the state.
 struct CapabilityReportView: View {
     let report: CapabilityReport
 
     var body: some View {
         Section {
-            Text(report.headline)
+            Text(report.bannerText)
                 .font(.subheadline)
-                .foregroundStyle(report.localFeaturesAvailable ? ModeAccent.color(report.mode) : HCGPalette.warn)
+                .foregroundStyle(report.level == .available ? ModeAccent.color(report.mode) : report.level == .partial ? HCGPalette.cyan : HCGPalette.warn)
             ForEach(report.results) { result in
                 CapabilityRow(result: result)
             }
@@ -208,7 +208,7 @@ struct CapabilityReportView: View {
         } header: {
             Text("\(report.mode.displayName) capabilities")
         } footer: {
-            Text("Checked \(report.generatedAt.formatted(date: .omitted, time: .standard)). Checks are read-only and never request privileges. “Verified working” means it was actually used successfully on this device.")
+            Text("Checked \(report.generatedAt.formatted(date: .omitted, time: .standard)). Checks are read-only and never request privileges. “Verified working” means it was actually used successfully on this device; “partial” means only where listed.")
         }
     }
 }
@@ -223,6 +223,9 @@ struct CapabilityRow: View {
                 if let detail = result.detail {
                     Text(detail).font(.footnote).foregroundStyle(.secondary)
                 }
+                if !result.scope.isEmpty {
+                    Text("\(result.partial ? "Only in" : "Applies to"): \(result.scope.joined(separator: ", "))").font(.caption).foregroundStyle(.secondary)
+                }
                 if result.requiresAuthorization {
                     Label("Each use needs your explicit approval.", systemImage: "hand.raised").font(.caption).foregroundStyle(HCGPalette.warn)
                 }
@@ -234,12 +237,17 @@ struct CapabilityRow: View {
                     ForEach(Array(result.evidence.enumerated()), id: \.offset) { _, check in
                         HStack(alignment: .top, spacing: 6) {
                             Image(systemName: check.positive ? "checkmark.circle" : "minus.circle")
-                                .foregroundStyle(check.positive ? HCGPalette.vanillaGreen : HCGPalette.muted)
-                            VStack(alignment: .leading) {
-                                Text(check.probe).font(.caption.monospaced())
+                                .foregroundStyle(check.positive ? HCGPalette.ok : HCGPalette.muted)
+                                .accessibilityHidden(true)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(check.probe).font(.caption.monospaced()).textSelection(.enabled)
                                 Text(check.observation).font(.caption).foregroundStyle(.secondary)
+                                if let time = check.timestamp {
+                                    Text(time.formatted(date: .omitted, time: .standard)).font(.caption2).foregroundStyle(.tertiary)
+                                }
                             }
                         }
+                        .accessibilityElement(children: .combine)
                     }
                 }
             }
@@ -247,7 +255,12 @@ struct CapabilityRow: View {
             HStack {
                 Label(result.kind.title, systemImage: result.kind.symbolName)
                 Spacer()
-                AvailabilityPill(availability: result.availability)
+                VStack(alignment: .trailing, spacing: 2) {
+                    StatusChip(availability: result.availability)
+                    if result.partial && result.availability.isUsable {
+                        Text("partial").font(.caption2.weight(.semibold)).foregroundStyle(HCGPalette.warn)
+                    }
+                }
             }
         }
     }

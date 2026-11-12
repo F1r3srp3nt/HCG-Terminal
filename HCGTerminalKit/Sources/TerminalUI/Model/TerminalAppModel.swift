@@ -122,6 +122,9 @@ public final class TerminalAppModel {
 
     // MARK: Environment
     public private(set) var assessment: EnvironmentAssessment?
+    /// The last explicit "Test local shell" result (Unleashed).
+    public private(set) var lastShellTest: EnvironmentAssessment.Operation?
+    public private(set) var isTestingShell = false
     public private(set) var appearance: AppearanceSettings
 
     public init(dependencies: AppDependencies) {
@@ -184,6 +187,24 @@ public final class TerminalAppModel {
         }
     }
 
+    /// Recheck: a fresh read-only scan (earlier test results keep their own times).
+    public func recheckUnleashed() async {
+        await dependencies.unleashedTools?.invalidateScan()
+        await refreshCapabilities()
+        await refreshAssessment()
+    }
+
+    /// Runs the detected shell once with a fixed, harmless command (5-second limit) and records
+    /// the real result. Only "Verified working" after this (or a session) succeeded.
+    public func testLocalShell() async {
+        guard let tools = dependencies.unleashedTools else { return }
+        isTestingShell = true
+        defer { isTestingShell = false }
+        lastShellTest = await tools.verifyShell()
+        await refreshCapabilities()
+        await refreshAssessment()
+    }
+
     /// Re-reads the layered environment assessment (read-only).
     public func refreshAssessment() async {
         assessment = await dependencies.environmentAssessment()
@@ -209,13 +230,9 @@ public final class TerminalAppModel {
         let mode: ExecutionMode = (control.requiresUnleashedBackend || (control == .processInspection && dependencies.distribution == .unleashed)) ? .unleashed : .vanilla
         guard let kind = control.capability(in: mode) ?? control.capability(in: .vanilla),
               let report = detectedReports[mode] ?? detectedReports[.vanilla] else { return nil }
-        var availability = report.applying(verifications: verifications[mode] ?? [:])[kind].availability
-        if control == .expandedFileWrite, availability.isUsable {
-            // Listing proves reading only. Writing is "available" only where access(W_OK)
-            // allowed it and "verified" only after a real write.
-            availability = writeVerified ? .verified("A file was written in a location outside the sandbox.") : .availableUntested("Some locations report write access; nothing has been written yet.")
-        }
-        return availability
+        // Writing is its own capability in the report: available only where access(W_OK)
+        // allowed it, verified only after a real write.
+        return report.applying(verifications: verifications[mode] ?? [:])[kind].availability
     }
 
     @ObservationIgnored private var writeVerified = false
@@ -249,8 +266,8 @@ public final class TerminalAppModel {
                 consequence = "Ended (in-app session; nothing runs outside the app)."
             case .localProcess where disabled.contains(.localShell):
                 consequence = "The shell and the programs it started are sent SIGHUP (then SIGKILL); the exit is confirmed before reporting."
-            case .loopbackService where disabled.contains(.localShell):
-                consequence = "Disconnected from the device's terminal service. Programs started through it may keep running; not verified."
+            case .loopbackService where disabled.contains(.localhostSSH):
+                consequence = "Disconnected from the device's SSH service. Programs started through it may keep running; not verified."
             case .sshShell, .sshCommand:
                 consequence = disabled.contains(.remoteSSH)
                     ? "Disconnected. Programs started on the host may keep running there; HCG Terminal cannot confirm they stopped."
@@ -423,7 +440,7 @@ public final class TerminalAppModel {
             return nil
         }
         if mode == .unleashed, case .loopbackService? = await provider.availableBackend() {
-            errorMessage = "No shell can be started directly. Use “Connect to Local Terminal Service” and sign in with that service's account."
+            errorMessage = "No shell can be started directly. Use “Localhost SSH (this device)” if an SSH service runs here, and sign in with that service's account."
             return nil
         }
         do {
@@ -442,23 +459,38 @@ public final class TerminalAppModel {
 
     /// Connects to an existing terminal service on this device (Unleashed). The session's
     /// target is Local Unleashed, because the commands execute on this device.
+    /// Hosts accepted for the localhost fallback (this device only; other hosts are Remote SSH).
+    public static let loopbackHosts: Set<String> = ["127.0.0.1", "localhost", "::1"]
+
+    /// Signs in to an SSH service already running on this device, with that service's own
+    /// account. The host key is verified like any host. Recorded as working only after the
+    /// sign-in succeeded and a terminal (PTY) was opened.
     @discardableResult
-    public func openLoopbackService(port: Int, username: String, password: String) async -> SessionModel? {
-        guard dependencies.distribution == .unleashed, isAvailable(.unleashed) else {
-            errorMessage = CapabilityReport.unleashedUnavailableMessage
+    public func openLoopbackService(host: String = "127.0.0.1", port: Int, username: String, password: String) async -> SessionModel? {
+        guard dependencies.distribution == .unleashed else {
+            errorMessage = UnleashedNotIncludedCapabilityProvider.reason
             return nil
         }
-        let endpoint = RemoteEndpoint(hostID: UUID(), displayName: "This device", hostname: "127.0.0.1", port: port, username: username)
+        let host = host.trimmingCharacters(in: .whitespaces).lowercased()
+        guard Self.loopbackHosts.contains(host), (1...65535).contains(port) else {
+            errorMessage = "The localhost fallback connects only to this device (127.0.0.1, localhost or ::1) on ports 1–65535. Use Remote SSH for other hosts."
+            return nil
+        }
+        let endpoint = RemoteEndpoint(hostID: UUID(), displayName: "This device", hostname: host, port: port, username: username)
         do {
             let connection = try await SSHConnection.connect(
                 endpoint: endpoint, authentication: .password(password), hostKeyPolicy: hostKeyPolicy,
-                requiredAccess: [.localShell], access: dependencies.access
+                requiredAccess: [.localhostSSH], access: dependencies.access
             )
             let session = try await connection.openSession(
-                size: .standard, target: .local(.unleashed), backend: .loopbackService(host: "127.0.0.1", port: port)
+                size: .standard, target: .local(.unleashed), backend: .loopbackService(host: host, port: port)
             )
-            recordVerification(.localShell, mode: .unleashed, observation: "Signed in to the terminal service on 127.0.0.1:\(port).")
-            return await register(session, title: "Unleashed · service")
+            await dependencies.unleashedTools?.recordLoopbackSignIn("\(username)@\(host):\(port)")
+            await refreshCapabilities()
+            return await register(session, title: "Unleashed · \(host):\(port)")
+        } catch let error as SSHConnectionError {
+            errorMessage = "\(error.category): \(error.localizedDescription)"
+            return nil
         } catch {
             errorMessage = error.localizedDescription
             return nil

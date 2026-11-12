@@ -9,6 +9,8 @@ import TerminalCore
 struct UnleashedToolsView: View {
     @Environment(TerminalAppModel.self) private var model
     @State private var packages: [PackageRow] = []
+    @State private var inventorySource: String?
+    @State private var inventoryNote: String?
     @State private var packageFilter = ""
     @State private var packageName = ""
     @State private var roots: [String] = []
@@ -31,13 +33,21 @@ struct UnleashedToolsView: View {
             Section {
                 if let refusal = model.dependencies.access.denial(.packageManagement) {
                     Text(refusal).foregroundStyle(.secondary)
-                } else if packagesAvailable {
-                    HStack {
-                        TextField("Package name", text: $packageName)
-                            .textInputAutocapitalization(.never).autocorrectionDisabled()
-                        Button("Install") { request(.install(packageName)) }.disabled(packageName.isEmpty)
+                } else if packagesAvailable || inventorySource != nil {
+                    if let inventorySource {
+                        Text("\(packages.count) installed · from \(inventorySource)").font(.footnote).foregroundStyle(.secondary)
                     }
-                    Button("Refresh Package Lists") { request(.refreshIndexes) }
+                    if let inventoryNote { Text(inventoryNote).font(.footnote).foregroundStyle(HCGPalette.warn) }
+                    if changesUsable {
+                        HStack {
+                            TextField("Package name", text: $packageName)
+                                .textInputAutocapitalization(.never).autocorrectionDisabled()
+                            Button("Install") { request(.install(packageName)) }.disabled(packageName.isEmpty)
+                        }
+                        Button("Refresh Package Lists") { request(.refreshIndexes) }
+                    } else if let changes = model.report(for: .unleashed)?[.packageChanges].availability {
+                        Text("Package changes: \(changes.label). \(changes.reason)").font(.footnote).foregroundStyle(.secondary)
+                    }
                     TextField("Filter installed packages", text: $packageFilter)
                     ForEach(packages.filter { packageFilter.isEmpty || $0.name.localizedCaseInsensitiveContains(packageFilter) }.prefix(300)) { package in
                         HStack {
@@ -45,10 +55,11 @@ struct UnleashedToolsView: View {
                             Spacer()
                             Text(package.version).font(.caption).foregroundStyle(.secondary)
                         }
-                        .swipeActions { Button("Remove", role: .destructive) { request(.remove(package.name)) } }
+                        .swipeActions { if changesUsable { Button("Remove", role: .destructive) { request(.remove(package.name)) } } }
                     }
-                } else {
-                    Text("No supported package manager was found.").foregroundStyle(.secondary)
+                } else if let inventory = model.report(for: .unleashed)?[.packageManager].availability {
+                    Text("\(inventory.label): \(inventory.reason)").font(.footnote).foregroundStyle(.secondary)
+                    if let inventoryNote { Text(inventoryNote).font(.footnote).foregroundStyle(HCGPalette.warn) }
                 }
             } header: { Text("Packages") } footer: {
                 Text("Listing is read-only. Install, remove and refresh need your approval each time, then run visibly in a new Local Unleashed session with the permissions the device grants. HCG Terminal never adds sudo.")
@@ -75,6 +86,9 @@ struct UnleashedToolsView: View {
         .refreshable { await load() }
     }
 
+    /// Install/remove/refresh are offered only when a local shell works (they run apt in it).
+    private var changesUsable: Bool { model.report(for: .unleashed)?[.packageChanges].availability.isUsable ?? false }
+
     private func load() async {
         guard let tools = model.dependencies.unleashedTools else { return }
         loading = true
@@ -87,12 +101,16 @@ struct UnleashedToolsView: View {
             roots = []
             logRoots = []
         }
-        if packagesAvailable, model.dependencies.access.isEnabled(.packageManagement) {
+        if model.dependencies.access.isEnabled(.packageManagement) {
             do {
-                packages = try await tools.installedPackages()
-                model.recordVerification(.packageManager, mode: .unleashed, observation: "Listed \(packages.count) installed packages.")
+                let inventory = try await tools.packageInventory()
+                packages = inventory.packages
+                inventorySource = inventory.source
+                inventoryNote = inventory.complete ? nil : "Partial: \(inventory.skippedEntries) entr\(inventory.skippedEntries == 1 ? "y" : "ies") could not be read\(inventory.skippedEntries == 0 ? " (the file looked truncated)" : "")."
+                model.recordVerification(.packageManager, mode: .unleashed, observation: "Read \(packages.count) installed packages from \(inventory.source)\(inventory.complete ? "" : " (partial)").")
             } catch {
-                model.errorMessage = error.localizedDescription
+                inventorySource = nil
+                inventoryNote = error.localizedDescription
             }
         }
     }
@@ -281,46 +299,73 @@ struct HostFileView: View {
     }
 }
 
-/// Sign-in to an existing terminal service on this device (loopback SSH).
+/// Localhost SSH fallback: sign in to an SSH service already running on this device. Host and
+/// port can be entered (only this device: 127.0.0.1, localhost, ::1). The host key is verified;
+/// it counts as working only after the sign-in succeeded and a terminal opened.
 struct LoopbackServiceSheet: View {
     @Environment(TerminalAppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
-    @State private var ports: [Int] = []
-    @State private var port = 22
+    @State private var detectedPorts: [Int] = []
+    @State private var host = "127.0.0.1"
+    @State private var portText = "22"
     @State private var username = "mobile"
     @State private var password = ""
+    @State private var connecting = false
+
+    private var port: Int? { Int(portText.trimmingCharacters(in: .whitespaces)).flatMap { (1...65535).contains($0) ? $0 : nil } }
+    private var hostValid: Bool { TerminalAppModel.loopbackHosts.contains(host.trimmingCharacters(in: .whitespaces).lowercased()) }
 
     var body: some View {
         Form {
+            if let refusal = model.dependencies.access.denial(.localhostSSH) {
+                Section { Text(refusal).foregroundStyle(HCGPalette.warn) }
+            }
             Section {
-                if ports.isEmpty {
-                    Text("No terminal service is accepting connections on 127.0.0.1.").foregroundStyle(.secondary)
-                } else {
-                    Picker("Port", selection: $port) { ForEach(ports, id: \.self) { Text("127.0.0.1:\($0)") } }
+                TextField("Host", text: $host)
+                    .textInputAutocapitalization(.never).autocorrectionDisabled()
+                if !hostValid {
+                    Text("Only this device: 127.0.0.1, localhost or ::1. Use Remote SSH for other hosts.").font(.caption).foregroundStyle(HCGPalette.warn)
                 }
+                TextField("Port", text: $portText).keyboardType(.numberPad)
+                if port == nil { Text("Enter a port from 1 to 65535.").font(.caption).foregroundStyle(HCGPalette.warn) }
+                if !detectedPorts.isEmpty {
+                    HStack {
+                        Text("Answering now:").font(.caption).foregroundStyle(.secondary)
+                        ForEach(detectedPorts, id: \.self) { detected in
+                            Button("\(detected)") { portText = "\(detected)" }.buttonStyle(.bordered).controlSize(.small)
+                        }
+                    }
+                } else {
+                    Text("Nothing answered on 127.0.0.1:22 or :2222 during the last check. If your SSH service uses another port, enter it.").font(.caption).foregroundStyle(.secondary)
+                }
+            } header: { Text("Service") }
+            Section {
                 TextField("Username", text: $username).textInputAutocapitalization(.never).autocorrectionDisabled()
                 SecureField("Password", text: $password)
-            } footer: {
-                Text("Uses the service's own account. The password is used for this connection only and is not stored. Commands run on this device (Local Unleashed).")
+            } header: { Text("Account") } footer: {
+                Text("Uses the service's own account. The password is used for this connection only and is not stored. The host key is shown for approval the first time and verified afterwards; a changed key is refused. Commands run on this device (Local Unleashed).")
             }
         }
-        .navigationTitle("Local Terminal Service")
+        .navigationTitle("Localhost SSH")
         .navigationBarTitleDisplayMode(.inline)
         .task {
-            ports = await model.dependencies.unleashedTools?.loopbackServicePorts() ?? []
-            if let first = ports.first { port = first }
+            detectedPorts = await model.dependencies.unleashedTools?.loopbackServicePorts() ?? []
+            if let first = detectedPorts.first { portText = "\(first)" }
         }
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
             ToolbarItem(placement: .confirmationAction) {
-                Button("Connect") {
+                Button(connecting ? "Connecting…" : "Connect") {
+                    guard let port else { return }
+                    connecting = true
                     Task {
-                        await model.openLoopbackService(port: port, username: username, password: password)
+                        let session = await model.openLoopbackService(host: host, port: port, username: username, password: password)
                         password = ""
-                        dismiss()
+                        connecting = false
+                        if session != nil { dismiss() }
                     }
                 }
-                .disabled(ports.isEmpty || username.isEmpty || password.isEmpty)
+                .disabled(connecting || port == nil || !hostValid || username.isEmpty || password.isEmpty || !model.dependencies.access.isEnabled(.localhostSSH))
             }
         }
     }

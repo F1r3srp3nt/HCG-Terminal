@@ -21,10 +21,12 @@ The switches restrict HCG Terminal only:
 |---|---|---|---|
 | Local workspace commands | On | — | `VanillaExecutionProvider.makeSession`; `BuiltinShellSession`, checked before every command line (`exit` always works) |
 | Files you choose (import/export) | On | — | `FileWorkspace.importItem`, `exportURL` |
-| Unleashed shell and programs | On | Unleashed build | `UnleashedExecutionProvider.makeSession`; `LocalProcessSession.start` and every `send` (input is dropped with a notice); `UnleashedOperations` |
-| Expanded filesystem: read | On | Unleashed build | `HostFileSystem.list`, `readTail`, `readText` |
-| Expanded filesystem: write | **Off** | read | All `HostFileSystem` changes; listings report nothing writable while off |
-| Package management | On | shell | `PackageManagerClient.listInstalled`, `authorizedCommand`; package changes typed into a shell |
+| Unleashed features (master) | On | Unleashed build | Prerequisite of every Unleashed switch below |
+| Local shell execution | On | Unleashed features | `UnleashedExecutionProvider.makeSession`; `LocalProcessSession.start` and every `send` (input is dropped with a notice); `UnleashedOperations` (programs, shell test) |
+| Localhost SSH fallback | On | Unleashed features | `SSHConnection.connect` with `requiredAccess: [.localhostSSH]` (before any network activity); only 127.0.0.1, localhost or ::1 |
+| Expanded filesystem browsing | On | Unleashed features | `HostFileSystem.list`, `readTail`, `readText` |
+| Filesystem modifications | **Off** | browsing | All `HostFileSystem` changes and the write test; listings report nothing writable while off |
+| Package management | On | Unleashed features | Inventory: `PackageManagerClient.inventory` (reads the dpkg status file, no shell needed). Changes: `authorizedCommand` also requires Local shell execution. |
 | Process inspection | On | — | `ProcessInspector.listProcesses` (returns *disabled* without reading the table) |
 | Privileged operations | **Off** | shell | `AuthorizationGate.decide`: requests are refused without asking while off. Covers commands typed in a shell and programs launched from Unleashed Tools. |
 | Remote SSH | On | — | `SSHConnection.connect` (before any network activity), `stream`, `openSession` |

@@ -93,7 +93,10 @@ actor UnleashedToolsAdapter: UnleashedTools {
 
     func readText(_ path: String) async throws -> String { try files().readText(path) }
 
-    func writeText(_ text: String, to path: String) async throws { try await files().writeText(text, to: path) }
+    func writeText(_ text: String, to path: String) async throws {
+        try await files().writeText(text, to: path)
+        await observations.recordWrite(in: (path as NSString).deletingLastPathComponent)
+    }
 
     func createDirectory(named name: String, in directory: String) async throws {
         try await files().createDirectory(named: name, in: directory)
@@ -147,8 +150,28 @@ actor UnleashedToolsAdapter: UnleashedTools {
 
     func verifyWrite(in directory: String) async -> EnvironmentAssessment.Operation {
         let result = await files().verifyWriteAccess(in: directory)
+        if result.succeeded { await observations.recordWrite(in: directory) }
         remember(result)
         return result
+    }
+
+    func packageInventory() async throws -> PackageInventoryRows {
+        let inventory = try await PackageManagerClient(scan: scan(), gate: gate, access: access).inventory()
+        return PackageInventoryRows(
+            packages: inventory.packages.map { PackageRow(name: $0.name, version: $0.version, status: $0.status) },
+            source: inventory.source, skippedEntries: inventory.skippedEntries, complete: inventory.complete
+        )
+    }
+
+    func recordLoopbackSignIn(_ endpoint: String) async {
+        await observations.recordLoopbackSignIn(endpoint)
+    }
+
+    func invalidateScan() async { cachedScan = nil }
+
+    func clearTestResults() async {
+        await observations.reset()
+        cachedScan = nil
     }
 
     func customBootstrapRoots() async -> [String] { BootstrapRootPreference.load() }

@@ -139,19 +139,29 @@ struct ModeSwitchConfirmationSheet: View {
         }
     }
 }
-/// Shown instead of switching when a mode cannot run. The current mode and sessions are kept.
+/// Shown instead of switching when a mode cannot open a local session. The current mode and
+/// sessions are kept. Says what works, what blocks the rest, and offers the relevant actions.
 struct ModeUnavailableSheet: View {
     @Environment(TerminalAppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     let explanation: ModeUnavailableExplanation
+    @State private var showConnection = false
+
+    /// The live report (it changes after Recheck or a test), falling back to the snapshot.
+    private var report: CapabilityReport { model.report(for: explanation.mode) ?? explanation.report }
+    private var local: [CapabilityResult] { report.results.filter(\.kind.isLocal) }
 
     var body: some View {
         NavigationStack {
             List {
                 Section {
-                    Text(CapabilityReport.unleashedUnavailableMessage)
+                    Label(report.bannerText, systemImage: report.level == .partial ? "circle.lefthalf.filled" : "exclamationmark.triangle")
+                        .foregroundStyle(report.level == .partial ? HCGPalette.cyan : HCGPalette.warn)
                     Text("You are still in \(model.preferredMode.displayName). Your open sessions are unchanged.")
                         .font(.footnote).foregroundStyle(.secondary)
+                    if model.isAvailable(explanation.mode) {
+                        Button("Switch to \(explanation.mode.displayName)") { dismiss(); model.selectMode(explanation.mode) }
+                    }
                 }
                 if explanation.distribution == .standard {
                     Section("Why") {
@@ -160,39 +170,96 @@ struct ModeUnavailableSheet: View {
                             .font(.footnote).foregroundStyle(.secondary)
                     }
                 } else {
-                    Section("What is missing") {
-                        ForEach(explanation.report.blockers.filter { $0.kind != .remoteSSH && $0.kind != .buildOrchestration }) { result in
-                            VStack(alignment: .leading, spacing: 4) {
-                                HStack {
-                                    Text(result.kind.title).font(.subheadline.weight(.semibold))
-                                    Spacer()
-                                    AvailabilityPill(availability: result.availability)
-                                }
-                                Text(result.availability.reason).font(.footnote)
-                                if let remedy = result.availability.remedy {
-                                    Text(remedy).font(.caption).foregroundStyle(.secondary)
-                                }
-                            }
+                    actions
+                    let working = local.filter(\.availability.isUsable)
+                    if !working.isEmpty {
+                        Section("Working") {
+                            ForEach(working) { result in resultRow(result) }
                         }
+                    }
+                    Section("Not working") {
+                        ForEach(local.filter { !$0.availability.isUsable }) { result in resultRow(result) }
                     }
                 }
                 Section {
                     NavigationLink("All checks and results") {
-                        List { CapabilityReportView(report: explanation.report) }
+                        List { CapabilityReportView(report: report) }
+                            .hcgScreenBackground()
                             .navigationTitle("\(explanation.mode.displayName) checks")
                     }
                 }
             }
-            .navigationTitle("\(explanation.mode.displayName) is not available")
+            .hcgScreenBackground()
+            .navigationTitle(report.level == .partial ? "\(explanation.mode.displayName) partially available" : "\(explanation.mode.displayName) is not available")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Keep \(model.preferredMode.displayName)") { dismiss() }
                 }
             }
+            .sheet(isPresented: $showConnection) {
+                NavigationStack { LoopbackServiceSheet() }.environment(model)
+            }
         }
     }
+
+    private var actions: some View {
+        Section {
+            Button {
+                Task { await model.recheckUnleashed() }
+            } label: { Label("Recheck", systemImage: "arrow.clockwise") }
+            .disabled(model.isDetecting)
+
+            Button {
+                Task { await model.testLocalShell() }
+            } label: {
+                HStack {
+                    Label("Test local shell", systemImage: "terminal")
+                    if model.isTestingShell { Spacer(); ProgressView() }
+                }
+            }
+            .disabled(model.isTestingShell || !model.dependencies.access.isEnabled(.localShell))
+            if let test = model.lastShellTest {
+                Label(test.outcome, systemImage: test.succeeded ? "checkmark.seal" : "xmark.octagon")
+                    .font(.footnote)
+                    .foregroundStyle(test.succeeded ? HCGPalette.ok : HCGPalette.warn)
+            }
+
+            Button { showConnection = true } label: {
+                Label("Configure connection (localhost SSH)", systemImage: "point.3.connected.trianglepath.dotted")
+            }
+            .disabled(!model.dependencies.access.isEnabled(.localhostSSH))
+
+            NavigationLink { SetupRequirementsView() } label: {
+                Label("View setup requirements", systemImage: "list.bullet.clipboard")
+            }
+            if report.level == .partial {
+                NavigationLink { UnleashedToolsView() } label: {
+                    Label("Use what works (files, packages)", systemImage: "folder")
+                }
+            }
+        } header: { Text("Actions") } footer: {
+            Text("Recheck runs the read-only checks again. Test local shell runs `printf HCG_SHELL_OK; id -u` once, limited to 5 seconds. Nothing else is executed, installed or changed.")
+        }
+    }
+
+    private func resultRow(_ result: CapabilityResult) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline) {
+                Label(result.kind.title, systemImage: result.kind.symbolName).font(.subheadline.weight(.semibold))
+                Spacer()
+                StatusChip(availability: result.availability)
+            }
+            if result.partial { Text("Partial: \(result.scope.joined(separator: ", "))").font(.caption).foregroundStyle(.secondary) }
+            Text(result.availability.reason).font(.footnote).fixedSize(horizontal: false, vertical: true)
+            if let remedy = result.availability.remedy, !result.availability.isUsable {
+                Text(remedy).font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 2)
+    }
 }
+
 /// The host presented a different key than before. Nothing was connected. Removing the old
 /// key is a separate, explicit step; the next connection then shows the new fingerprint for
 /// verification like a first connection.

@@ -150,9 +150,9 @@ public struct RootView: View {
                     .disabled(!model.isAvailable(model.preferredMode))
                     if model.dependencies.distribution == .unleashed {
                         Button { showLoopback = true } label: {
-                            Label("Connect to Local Terminal Service", systemImage: "network.badge.shield.half.filled")
+                            Label("Localhost SSH (this device)", systemImage: "point.3.connected.trianglepath.dotted")
                         }
-                        .disabled(!model.isAvailable(.unleashed))
+                        .disabled(!model.dependencies.access.isEnabled(.localhostSSH))
                     }
                     Button { showNewRemote = true } label: {
                         Label("Remote Host Session", systemImage: "desktopcomputer")

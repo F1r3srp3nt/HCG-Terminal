@@ -12,7 +12,7 @@ struct CapabilitiesAccessView: View {
 
     private let groups: [(String, [AccessControl])] = [
         ("On this device · built in", [.workspaceCommands, .externalFiles]),
-        ("On this device · Unleashed", [.localShell, .expandedFileRead, .expandedFileWrite, .packageManagement, .privilegedOperations]),
+        ("On this device · Unleashed", [.unleashedFeatures, .localShell, .localhostSSH, .expandedFileRead, .expandedFileWrite, .packageManagement, .privilegedOperations]),
         ("On this device · system", [.processInspection]),
         ("Remote development", [.remoteSSH, .remoteBuilds]),
     ]
@@ -109,7 +109,11 @@ struct AccessControlRow: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         } else {
-            if let availability = model.detectedAvailability(for: control) {
+            if control == .unleashedFeatures, let report = model.report(for: .unleashed) {
+                Text(report.level == .available ? "Local terminal possible" : report.level == .partial ? "Partially available on this device" : "Not available on this device")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(report.level == .unavailable ? HCGPalette.muted : HCGPalette.cyan)
+            } else if let availability = model.detectedAvailability(for: control) {
                 StatusChip(availability: availability)
                     .accessibilityLabel("On this device: \(availability.label)")
             } else {

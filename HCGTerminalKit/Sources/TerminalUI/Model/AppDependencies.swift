@@ -81,6 +81,22 @@ public struct ToolRunOutput: Hashable, Sendable {
     }
 }
 
+/// The installed-package list as read (Unleashed).
+public struct PackageInventoryRows: Hashable, Sendable {
+    public var packages: [PackageRow]
+    /// Where it came from: the dpkg status database path, or `dpkg-query`.
+    public var source: String
+    /// Entries that could not be parsed.
+    public var skippedEntries: Int
+    public var complete: Bool
+    public init(packages: [PackageRow], source: String, skippedEntries: Int, complete: Bool) {
+        self.packages = packages
+        self.source = source
+        self.skippedEntries = skippedEntries
+        self.complete = complete
+    }
+}
+
 public enum PackageRequest: Hashable, Sendable {
     case install(String)
     case remove(String)
@@ -121,6 +137,15 @@ public protocol UnleashedTools: Sendable {
     /// Bootstrap roots the user entered (relocated installs). Probed read-only.
     func customBootstrapRoots() async -> [String]
     func setCustomBootstrapRoots(_ roots: [String]) async
+    /// Installed packages from the dpkg status database (or dpkg-query), marked partial when
+    /// entries were skipped.
+    func packageInventory() async throws -> PackageInventoryRows
+    /// Records a successful sign-in with a terminal on this device's SSH service.
+    func recordLoopbackSignIn(_ endpoint: String) async
+    /// Forgets the cached scan so the next read is fresh (Recheck).
+    func invalidateScan() async
+    /// Forgets earlier test results (launches, sign-ins and writes keep their own times otherwise).
+    func clearTestResults() async
 }
 
 /// Everything the interface needs, assembled by the app target's composition root.

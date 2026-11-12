@@ -110,9 +110,14 @@ struct UnleashedEnvironmentView: View {
         List {
             Section {
                 Button {
-                    run { _ = await $0.verifyShell() }
-                } label: { Label("Run Shell Test", systemImage: "terminal") }
-                .disabled(running || !model.dependencies.access.isEnabled(.localShell))
+                    Task { await model.testLocalShell() }
+                } label: { Label("Test local shell", systemImage: "terminal") }
+                .disabled(running || model.isTestingShell || !model.dependencies.access.isEnabled(.localShell))
+                if let test = model.lastShellTest {
+                    Label(test.outcome, systemImage: test.succeeded ? "checkmark.seal" : "xmark.octagon")
+                        .font(.footnote).foregroundStyle(test.succeeded ? HCGPalette.ok : HCGPalette.warn)
+                }
+                NavigationLink { SetupRequirementsView() } label: { Label("View setup requirements", systemImage: "list.bullet.clipboard") }
                 Text("Starts the detected shell once with `printf HCG_SHELL_OK; id -u`, limited to 5 seconds. Nothing else is run.")
                     .font(.footnote).foregroundStyle(.secondary)
 
@@ -178,6 +183,68 @@ struct UnleashedEnvironmentView: View {
                 model.noteWriteVerified()
             }
             running = false
+        }
+    }
+}
+
+/// What the local terminal needs, explained from this device's own evidence.
+struct SetupRequirementsView: View {
+    @Environment(TerminalAppModel.self) private var model
+
+    var body: some View {
+        List {
+            if let assessment = model.assessment {
+                Section {
+                    LabeledContent("This app", value: assessment.process.containerized ? "Runs in the iOS sandbox" : "Not in an app container")
+                    LabeledContent("Installed via", value: assessment.process.installRoute.label)
+                    LabeledContent("Device", value: "\(assessment.device.model) · \(assessment.device.operatingSystem)")
+                    LabeledContent("Bootstrap", value: assessment.bootstrap.verdict.label)
+                    LabeledContent("Shell", value: assessment.shell.label)
+                } header: { Text("This device now") }
+            }
+
+            Section {
+                Text("A local shell needs the app to be allowed to start programs. Apps installed from Xcode, TestFlight, the App Store or an ad hoc profile run in the iOS sandbox, which refuses this (EPERM) even on a jailbroken device. That is what the checks show here when access(X_OK) or a launch is refused.")
+                Text("What changes it: installing the Unleashed build so that it runs without the app sandbox, using the installation method your jailbreak provides.")
+                Text("What does not change it: reinstalling the shell or other tools, rebooting, or turning switches on in HCG Terminal. Switches never grant permissions.")
+                    .foregroundStyle(.secondary)
+            } header: { Text("Why the local shell is blocked") }
+            .font(.callout)
+
+            Section {
+                step(1, "On a Mac with Xcode, build the package (written to disk only):", code: "Scripts/package-ios.sh unleashed dist --deb rootless \\\n  --ldid-entitlements <entitlements.plist>")
+                step(2, "The entitlements file is your decision. Start from HCGTerminal-Support/Unleashed-optional-entitlements.example.plist; which keys your jailbreak accepts is not verified yet.", code: nil)
+                step(3, "Copy the .deb to the device and install it with Sileo, Zebra or `dpkg -i` (rootless installs to /var/jb/Applications). HCG Terminal does not install anything.", code: nil)
+                step(4, "Open the newly installed HCG Terminal Unleashed, then Unleashed checks → Test local shell. Only a successful test shows “Verified working”.", code: nil)
+            } header: { Text("Route to a working local terminal") } footer: {
+                Text("Details: docs/UNLEASHED.md in the repository. Not yet verified on a device.")
+            }
+
+            Section {
+                Text("If an SSH server package (for example OpenSSH) is installed and running on this device, Localhost SSH works even from this sandboxed install: sign in with that service's account in Configure connection. It is marked working only after the sign-in and a terminal succeed.")
+            } header: { Text("Alternative that works in the sandbox") }
+            .font(.callout)
+
+            Section {
+                Text("Directory listing, reading files and the package inventory can work in the sandbox where the jailbreak lets apps read its files; they are reported separately and with their exact scope.")
+            } header: { Text("What already works without a shell") }
+            .font(.callout)
+        }
+        .hcgScreenBackground()
+        .navigationTitle("Setup requirements")
+        .navigationBarTitleDisplayMode(.inline)
+        .task { if model.assessment == nil { await model.refreshAssessment() } }
+    }
+
+    private func step(_ number: Int, _ text: String, code: String?) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("\(number). \(text)").font(.callout)
+            if let code {
+                Text(code).font(.caption.monospaced()).textSelection(.enabled)
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(HCGPalette.canvas, in: RoundedRectangle(cornerRadius: 8))
+            }
         }
     }
 }
