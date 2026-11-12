@@ -21,6 +21,8 @@ struct ScriptedProbe: SystemProbing {
     var processCount: Int? = 1
     /// Paths the "sandbox" refuses with EPERM.
     var denied: Set<String> = []
+    /// Symlink targets (`realpath`).
+    var resolved: [String: String] = [:]
 
     func probe(_ path: String) -> PathProbe {
         if denied.contains(path) { return .denied(EPERM) }
@@ -43,6 +45,7 @@ struct ScriptedProbe: SystemProbing {
     func loopbackPortAccepts(_ port: Int, timeout: TimeInterval) -> Bool { ports.contains(port) }
     func visibleProcessCount() -> Int? { processCount }
     func osDescription() -> String { "Scripted" }
+    func resolvedPath(_ path: String) -> String? { resolved[path] ?? (exists(path) || path == "/" ? path : nil) }
 
     static let stockDevice = ScriptedProbe()
 

@@ -21,6 +21,7 @@ public struct ModeSelector: View {
 
     @Namespace private var thumbNamespace
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.hcgAppearance) private var appearance
 
     public init(selection: ExecutionMode, compact: Bool = false, availability: @escaping (ExecutionMode) -> Bool?, onSelect: @escaping (ExecutionMode) -> Void) {
         self.selection = selection
@@ -47,32 +48,32 @@ public struct ModeSelector: View {
         let selected = selection == mode
         let available = availability(mode)
         return Button {
-            withAnimation(reduceMotion ? .easeInOut(duration: 0.15) : .snappy(duration: 0.28, extraBounce: 0.04)) {
+            withAnimation(reduceMotion || appearance.reducedEffects ? nil : .snappy(duration: 0.28, extraBounce: 0.04)) {
                 onSelect(mode)
             }
         } label: {
             HStack(spacing: 5) {
                 if !compact {
                     Image(systemName: mode.symbolName)
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.caption.weight(.semibold))
                 }
                 Text(mode.displayName)
-                    .font(.system(size: compact ? 12 : 13, weight: .semibold))
+                    .font((compact ? Font.footnote : Font.subheadline).weight(.semibold))
                 if available == false {
                     Image(systemName: "lock.fill")
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(.caption2.weight(.semibold))
                         .foregroundStyle(HCGPalette.muted)
                         .accessibilityHidden(true)
                 }
             }
-            .foregroundStyle(selected ? Color.white : HCGPalette.ivory.opacity(0.7))
+            .foregroundStyle(selected ? Color.black.opacity(0.85) : HCGPalette.ivory.opacity(0.8))
             .padding(.horizontal, compact ? 12 : 14)
-            .frame(minHeight: compact ? 30 : 34)
+            .frame(minHeight: 44)
             .background {
                 if selected {
                     Capsule()
-                        .fill(ModeAccent.gradient(mode))
-                        .shadow(color: ModeAccent.color(mode).opacity(0.35), radius: 6, y: 1)
+                        .fill(ModeAccent.gradient(mode, accent: appearance.accent))
+                        .shadow(color: appearance.reducedEffects ? .clear : ModeAccent.color(mode, accent: appearance.accent).opacity(0.3), radius: 6, y: 1)
                         .matchedGeometryEffect(id: "mode-thumb", in: thumbNamespace)
                 }
             }
@@ -89,11 +90,12 @@ public struct ModeSelector: View {
 struct ModeStatusLine: View {
     let mode: ExecutionMode
     let available: Bool?
+    @Environment(\.hcgAppearance) private var appearance
 
     var body: some View {
         HStack(spacing: 6) {
             Circle()
-                .fill(available == true ? ModeAccent.color(mode) : available == false ? HCGPalette.warn : HCGPalette.muted)
+                .fill(available == true ? ModeAccent.color(mode, accent: appearance.accent) : available == false ? HCGPalette.warn : HCGPalette.muted)
                 .frame(width: 6, height: 6)
             Text(text)
                 .font(.footnote)
@@ -108,7 +110,7 @@ struct ModeStatusLine: View {
         case (_, nil): "Checking capabilities…"
         case (.vanilla, _): "Vanilla: HCG built-in commands on the app workspace (not a system shell). Remote development available."
         case (.unleashed, true?): "Unleashed: local capabilities available as reported. Nothing is elevated automatically."
-        case (.unleashed, false?): "Unleashed features are not available in this environment. Vanilla terminal and remote development remain available."
+        case (.unleashed, false?): "Unleashed is not available here (see Capabilities & Access). Vanilla and remote development remain available."
         }
     }
 }

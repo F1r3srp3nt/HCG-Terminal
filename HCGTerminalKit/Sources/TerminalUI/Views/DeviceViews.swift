@@ -24,7 +24,14 @@ struct UnleashedToolsView: View {
                 }
             }
             Section {
-                if packagesAvailable {
+                NavigationLink { ProgramsView() } label: { Label("Programs", systemImage: "apple.terminal") }
+                NavigationLink { ProcessListView() } label: { Label("Processes", systemImage: "list.bullet.rectangle") }
+                NavigationLink { UnleashedEnvironmentView() } label: { Label("Environment and Tests", systemImage: "cpu") }
+            }
+            Section {
+                if let refusal = model.dependencies.access.denial(.packageManagement) {
+                    Text(refusal).foregroundStyle(.secondary)
+                } else if packagesAvailable {
                     HStack {
                         TextField("Package name", text: $packageName)
                             .textInputAutocapitalization(.never).autocorrectionDisabled()
@@ -47,7 +54,9 @@ struct UnleashedToolsView: View {
                 Text("Listing is read-only. Install, remove and refresh need your approval each time, then run visibly in a new Local Unleashed session with the permissions the device grants. HCG Terminal never adds sudo.")
             }
             Section("Permitted locations") {
-                if roots.isEmpty { Text("No location outside the app sandbox is readable.").foregroundStyle(.secondary) }
+                if let refusal = model.dependencies.access.denial(.expandedFileRead) {
+                    Text(refusal).foregroundStyle(.secondary)
+                } else if roots.isEmpty { Text("No location outside the app sandbox is readable.").foregroundStyle(.secondary) }
                 ForEach(roots, id: \.self) { root in
                     NavigationLink(root) { HostDirectoryView(path: root) }
                 }
@@ -60,6 +69,7 @@ struct UnleashedToolsView: View {
             }
         }
         .navigationTitle("Unleashed Tools")
+        .hcgScreenBackground()
         .overlay { if loading { ProgressView() } }
         .task { await load() }
         .refreshable { await load() }
@@ -70,9 +80,10 @@ struct UnleashedToolsView: View {
         loading = true
         defer { loading = false }
         packagesAvailable = await tools.packageManagerAvailable()
-        roots = await tools.permittedRoots()
-        logRoots = await tools.logRoots()
-        if packagesAvailable {
+        let readable = model.dependencies.access.isEnabled(.expandedFileRead)
+        roots = readable ? await tools.permittedRoots() : []
+        logRoots = readable ? await tools.logRoots() : []
+        if packagesAvailable, model.dependencies.access.isEnabled(.packageManagement) {
             do {
                 packages = try await tools.installedPackages()
                 model.recordVerification(.packageManager, mode: .unleashed, observation: "Listed \(packages.count) installed packages.")
@@ -259,6 +270,7 @@ struct HostFileView: View {
             original = text
             status = "Saved."
             model.recordVerification(.filesystemPermissions, mode: .unleashed, observation: "Wrote \(path).")
+            model.noteWriteVerified()
         } catch {
             status = error.localizedDescription
         }
@@ -346,6 +358,9 @@ struct DiagnosticsView: View {
     var body: some View {
         List {
             BuildIdentitySection(identity: model.dependencies.buildIdentity)
+            if let assessment = model.assessment {
+                EnvironmentAssessmentSections(assessment: assessment)
+            }
             if let snapshot {
                 Section("Device") {
                     ForEach(snapshot.lines, id: \.0) { row in LabeledContent(row.0, value: row.1) }
@@ -384,11 +399,13 @@ struct DiagnosticsView: View {
             }
         }
         .navigationTitle("Diagnostics")
+        .hcgScreenBackground()
         .task { await load() }
         .refreshable { await load() }
     }
 
     private func load() async {
+        await model.refreshAssessment()
         snapshot = SystemSnapshot.capture(sandboxURL: model.dependencies.workspace.rootURL)
         processes = await Task.detached { ProcessInspector.listProcesses() }.value
         entries = await DiagnosticLog.shared.recent()

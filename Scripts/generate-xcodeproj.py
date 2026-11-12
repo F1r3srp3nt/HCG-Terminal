@@ -11,10 +11,10 @@ def oid():
 PROJECT, MAINGROUP, PRODUCTS, SYNC, PKGREF = oid(), oid(), oid(), oid(), oid()
 targets = [
     dict(name="HCGTerminal", display="HCG Terminal", bundle="com.hakmicapitalgroup.hcgterminal",
-         ent="HCGTerminal-Support/HCGTerminal.entitlements", cond="$(inherited)", variant="standard",
+         ent="HCGTerminal-Support/HCGTerminal.entitlements", cond="$(inherited)", variant="standard", folder="Variants/Standard",
          products=["TerminalUI", "FileWorkspace"]),
     dict(name="HCGTerminalUnleashed", display="HCG Terminal Unleashed", bundle="com.hakmicapitalgroup.hcgterminal.unleashed",
-         ent="HCGTerminal-Support/HCGTerminalUnleashed.entitlements", cond="HCG_UNLEASHED_BUILD $(inherited)", variant="unleashed",
+         ent="HCGTerminal-Support/HCGTerminalUnleashed.entitlements", cond="HCG_UNLEASHED_BUILD $(inherited)", variant="unleashed", folder="Variants/Unleashed",
          products=["TerminalUI", "FileWorkspace", "UnleashedIntegration"]),
 ]
 for t in targets:
@@ -25,6 +25,10 @@ PROJ_CFGLIST, PROJ_DEBUG, PROJ_RELEASE = oid(), oid(), oid()
 # Allocated after all earlier objects so their IDs stay stable.
 for t in targets:
     t["stamp"] = oid()
+# Added later; allocated last for the same reason.
+for t in targets:
+    t["variantgroup"] = oid()
+    t["verify"] = oid()
 
 common = """				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ANALYZER_NONNULL = YES;
@@ -117,12 +121,15 @@ for t in targets:
     w(f"\t\t{t['app']} /* {t['name']}.app */ = {{isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = {t['name']}.app; sourceTree = BUILT_PRODUCTS_DIR; }};\n")
 w("/* End PBXFileReference section */\n\n/* Begin PBXFileSystemSynchronizedRootGroup section */\n")
 w(f"\t\t{SYNC} /* HCGTerminal */ = {{\n\t\t\tisa = PBXFileSystemSynchronizedRootGroup;\n\t\t\tpath = HCGTerminal;\n\t\t\tsourceTree = \"<group>\";\n\t\t}};\n")
+for t in targets:
+    w(f"\t\t{t['variantgroup']} /* {t['folder']} */ = {{\n\t\t\tisa = PBXFileSystemSynchronizedRootGroup;\n\t\t\tpath = {t['folder']};\n\t\t\tsourceTree = \"<group>\";\n\t\t}};\n")
 w("/* End PBXFileSystemSynchronizedRootGroup section */\n\n/* Begin PBXFrameworksBuildPhase section */\n")
 for t in targets:
     files = "".join(f"\t\t\t\t{bf} /* {p} in Frameworks */,\n" for p, ref, bf in t["deps"])
     w(f"\t\t{t['frameworks']} /* Frameworks */ = {{\n\t\t\tisa = PBXFrameworksBuildPhase;\n\t\t\tbuildActionMask = 2147483647;\n\t\t\tfiles = (\n{files}\t\t\t);\n\t\t\trunOnlyForDeploymentPostprocessing = 0;\n\t\t}};\n")
 w("/* End PBXFrameworksBuildPhase section */\n\n/* Begin PBXGroup section */\n")
-w(f"\t\t{MAINGROUP} = {{\n\t\t\tisa = PBXGroup;\n\t\t\tchildren = (\n\t\t\t\t{SYNC} /* HCGTerminal */,\n\t\t\t\t{PRODUCTS} /* Products */,\n\t\t\t);\n\t\t\tsourceTree = \"<group>\";\n\t\t}};\n")
+vgroups = "".join(f"\t\t\t\t{t['variantgroup']} /* {t['folder']} */,\n" for t in targets)
+w(f"\t\t{MAINGROUP} = {{\n\t\t\tisa = PBXGroup;\n\t\t\tchildren = (\n\t\t\t\t{SYNC} /* HCGTerminal */,\n{vgroups}\t\t\t\t{PRODUCTS} /* Products */,\n\t\t\t);\n\t\t\tsourceTree = \"<group>\";\n\t\t}};\n")
 apps = "".join(f"\t\t\t\t{t['app']} /* {t['name']}.app */,\n" for t in targets)
 w(f"\t\t{PRODUCTS} /* Products */ = {{\n\t\t\tisa = PBXGroup;\n\t\t\tchildren = (\n{apps}\t\t\t);\n\t\t\tname = Products;\n\t\t\tsourceTree = \"<group>\";\n\t\t}};\n")
 w("/* End PBXGroup section */\n\n/* Begin PBXNativeTarget section */\n")
@@ -136,6 +143,7 @@ for t in targets:
 				{t['frameworks']} /* Frameworks */,
 				{t['resources']} /* Resources */,
 				{t['stamp']} /* Stamp build info */,
+				{t['verify']} /* Verify build variant */,
 			);
 			buildRules = (
 			);
@@ -143,6 +151,7 @@ for t in targets:
 			);
 			fileSystemSynchronizedGroups = (
 				{SYNC} /* HCGTerminal */,
+				{t['variantgroup']} /* {t['folder']} */,
 			);
 			name = {t['name']};
 			packageProductDependencies = (
@@ -208,6 +217,28 @@ for t in targets:
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "\\"${{SRCROOT}}/Scripts/stamp-build-info.sh\\"\\n";
+			showEnvVarsInLog = 0;
+		}};
+		{t['verify']} /* Verify build variant */ = {{
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(TARGET_BUILD_DIR)/$(EXECUTABLE_PATH)",
+				"$(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)",
+			);
+			name = "Verify build variant";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\\"${{SRCROOT}}/Scripts/verify-build-variant.sh\\"\\n";
 			showEnvVarsInLog = 0;
 		}};
 """)

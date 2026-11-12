@@ -19,9 +19,9 @@ struct SessionScreen: View {
             if !session.isLive, !session.target.isLocal {
                 EndedRemoteSessionBanner(session: session)
             }
-            TerminalHostView(session: session, accent: ModeAccent.color(session.target))
+            TerminalHostView(session: session, accent: ModeAccent.color(session.target), fontSize: CGFloat(model.appearance.terminalFontSize))
                 .id(session.id)
-                .background(HCGPalette.canvas)
+                .background(Color(hcgHex: 0x05080B))
         }
         .background(HCGPalette.canvas)
         .sheet(isPresented: $showDetails) {
@@ -51,13 +51,13 @@ struct SessionHeader: View {
             HStack(spacing: 10) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(session.title)
-                        .font(.system(size: 15, weight: .semibold))
+                        .font(.headline)
                         .foregroundStyle(HCGPalette.ivory)
                         .lineLimit(1)
                     HStack(spacing: 6) {
                         TargetBadge(target: session.target)
                         Text(session.target.detail)
-                            .font(.system(size: 11))
+                            .font(.caption)
                             .foregroundStyle(HCGPalette.muted)
                             .lineLimit(1)
                     }
@@ -72,8 +72,9 @@ struct SessionHeader: View {
                 Button { confirmClose = true } label: { Image(systemName: "xmark.circle") }
                     .accessibilityLabel("Close session")
             }
-            .font(.system(size: 18))
+            .font(.title3)
             .foregroundStyle(HCGPalette.silver)
+            .buttonStyle(.borderless)
             if sizeClass != .regular { selector }
             ModeStatusLine(mode: model.preferredMode, available: availability(model.preferredMode))
         }
@@ -254,25 +255,6 @@ struct CapabilityRow: View {
 
 struct AvailabilityPill: View {
     let availability: CapabilityAvailability
-
-    var body: some View {
-        Label(availability.label, systemImage: availability.symbolName)
-            .labelStyle(.titleAndIcon)
-            .font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(color)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 3)
-            .background(color.opacity(0.14), in: Capsule())
-            .accessibilityLabel(availability.label)
-    }
-
-    private var color: Color {
-        switch availability {
-        case .verified: HCGPalette.vanillaGreen
-        case .availableUntested: HCGPalette.vanillaBlue
-        case .permissionDenied, .toolMissing: HCGPalette.warn
-        case .notIncluded, .environmentUnknown, .disabledByUser: HCGPalette.muted
-        }
-    }
+    var body: some View { StatusChip(availability: availability) }
 }
 #endif

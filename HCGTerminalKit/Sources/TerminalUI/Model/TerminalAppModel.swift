@@ -605,6 +605,18 @@ public final class TerminalAppModel {
         model.send(Array((command + "\r").utf8))
     }
 
+    /// Registers and starts a session prepared elsewhere (e.g. a program from Unleashed Tools).
+    /// Local Unleashed sessions are refused while the shell switch is off.
+    @discardableResult
+    public func openPreparedSession(_ session: any TerminalSession, title: String) async -> SessionModel? {
+        if session.target == .local(.unleashed), let refusal = dependencies.access.denial(.localShell) {
+            await session.close()
+            errorMessage = refusal
+            return nil
+        }
+        return await register(session, title: title)
+    }
+
     public func disconnect(_ host: HostProfile) async {
         for session in sessions where session.target.remoteEndpoint?.hostID == host.id {
             await closeSession(session.id)

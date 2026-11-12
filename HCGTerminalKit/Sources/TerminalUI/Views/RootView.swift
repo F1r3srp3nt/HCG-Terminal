@@ -4,7 +4,9 @@ import TerminalCapabilityProvider
 import TerminalCore
 
 enum SidebarItem: Hashable {
+    case dashboard
     case session(SessionID)
+    case access
     case files
     case hosts
     case builds
@@ -17,7 +19,7 @@ enum SidebarItem: Hashable {
 /// Root of HCG Terminal. Split view on iPad, stack on iPhone (NavigationSplitView adapts).
 public struct RootView: View {
     @State private var model: TerminalAppModel
-    @State private var selection: SidebarItem?
+    @State private var selection: SidebarItem? = .dashboard
     @State private var showNewRemote = false
     @State private var showLoopback = false
     @State private var renamingSession: SessionModel?
@@ -35,8 +37,9 @@ public struct RootView: View {
             detail
         }
         .environment(model)
-        .tint(ModeAccent.color(model.preferredMode))
-        .preferredColorScheme(.dark)
+        .environment(\.hcgAppearance, model.appearance)
+        .tint(ModeAccent.color(model.preferredMode, accent: model.appearance.accent))
+        .preferredColorScheme(model.appearance.theme == .dark ? .dark : nil)
         .task {
             await model.bootstrap()
             #if DEBUG
@@ -57,6 +60,9 @@ public struct RootView: View {
         }
         .sheet(item: $model.modeUnavailable) { explanation in
             ModeUnavailableSheet(explanation: explanation).environment(model)
+        }
+        .sheet(item: $model.pendingAccessChange) { request in
+            AccessChangeSheet(request: request).environment(model).environment(\.hcgAppearance, model.appearance)
         }
         .sheet(item: $model.modeSwitchConfirmation) { confirmation in
             ModeSwitchConfirmationSheet(confirmation: confirmation).environment(model)
@@ -89,6 +95,14 @@ public struct RootView: View {
 
     private var sidebar: some View {
         List(selection: $selection) {
+            Section {
+                NavigationLink(value: SidebarItem.dashboard) {
+                    HStack(spacing: 10) {
+                        HCGMark(size: 28)
+                        Text("Dashboard")
+                    }
+                }
+            }
             Section {
                 VStack(alignment: .leading, spacing: 8) {
                     ModeSelector(selection: model.preferredMode, availability: availability) { model.selectMode($0) }
@@ -148,18 +162,27 @@ public struct RootView: View {
                 if model.dependencies.distribution == .unleashed {
                     NavigationLink(value: SidebarItem.unleashedTools) { Label("Unleashed Tools", systemImage: "wrench.and.screwdriver") }
                 }
+                NavigationLink(value: SidebarItem.access) { Label("Capabilities & Access", systemImage: "switch.2") }
                 NavigationLink(value: SidebarItem.diagnostics) { Label("Diagnostics", systemImage: "stethoscope") }
-                NavigationLink(value: SidebarItem.preferences) { Label("Preferences", systemImage: "gearshape") }
+                NavigationLink(value: SidebarItem.preferences) { Label("Settings", systemImage: "gearshape") }
             } header: { Eyebrow("Device") }
         }
         .navigationTitle("HCG Terminal")
-        .scrollContentBackground(.hidden)
-        .background(HCGPalette.canvas)
+        .hcgScreenBackground()
     }
 
     @ViewBuilder
     private var detail: some View {
         switch selection {
+        case .dashboard, nil:
+            NavigationStack {
+                DashboardView(
+                    openSession: { selection = .session($0) },
+                    openItem: { selection = $0 },
+                    newRemote: { showNewRemote = true }
+                )
+            }
+        case .access: NavigationStack { CapabilitiesAccessView() }
         case .session(let id):
             if let session = model.session(id) {
                 SessionScreen(session: session)
@@ -173,7 +196,6 @@ public struct RootView: View {
         case .unleashedTools: NavigationStack { UnleashedToolsView() }
         case .preferences: NavigationStack { PreferencesView() }
         case .diagnostics: NavigationStack { DiagnosticsView() }
-        case nil: emptyState
         }
     }
 
@@ -208,7 +230,9 @@ public struct RootView: View {
                 try? await Task.sleep(nanoseconds: 700_000_000)
                 session.send(Array("help\r".utf8))
             }
-        case "capabilities": selection = .preferences
+        case "capabilities": selection = .access
+        case "settings": selection = .preferences
+        case "dashboard": selection = .dashboard
         case "files": selection = .files
         case "diagnostics": selection = .diagnostics
         case "hosts": selection = .hosts
@@ -238,7 +262,8 @@ struct SessionRow: View {
     }
 }
 
-/// Preferences: mode setting, capability status for both modes, build information.
+/// Settings: mode, Capabilities & Access, appearance, Unleashed environment, build and
+/// security. Capability status lives in Capabilities & Access only (no duplicate lists).
 struct PreferencesView: View {
     @Environment(TerminalAppModel.self) private var model
 
@@ -251,41 +276,93 @@ struct PreferencesView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 ForEach(ExecutionMode.allCases) { mode in
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(mode.displayName).font(.subheadline.weight(.semibold)).foregroundStyle(ModeAccent.color(mode))
+                        Text(mode.displayName).font(.subheadline.weight(.semibold)).foregroundStyle(ModeAccent.color(mode, accent: model.appearance.accent))
                         Text(mode.summary).font(.footnote).foregroundStyle(.secondary)
                     }
                 }
-            } header: { Text("Preferred local mode") } footer: {
-                Text("Saved on this device. Applies to new local sessions. Remote sessions are never affected.")
+            } header: { Text("Local mode") } footer: {
+                Text("Applies to new local sessions. Switching modes never disconnects SSH sessions or stops builds.")
             }
 
-            ForEach(ExecutionMode.allCases) { mode in
-                if let report = model.report(for: mode) {
-                    CapabilityReportView(report: report)
+            Section {
+                NavigationLink {
+                    CapabilitiesAccessView()
+                } label: {
+                    Label("Capabilities & Access", systemImage: "switch.2")
+                }
+                let off = AccessControl.allCases.filter { !model.accessSettings.isOn($0) }
+                Text(off.isEmpty ? "Everything is allowed that this build and device support." : "Off: " + off.map(\.title).joined(separator: ", "))
+                    .font(.footnote).foregroundStyle(.secondary)
+            } header: { Text("Access") }
+
+            AppearanceSection()
+
+            if model.dependencies.distribution == .unleashed {
+                Section {
+                    NavigationLink {
+                        UnleashedEnvironmentView()
+                    } label: {
+                        Label("Unleashed Environment", systemImage: "cpu")
+                    }
+                } footer: {
+                    Text("What was detected in each layer, explicit tests, and a custom bootstrap location.")
                 }
             }
 
             BuildIdentitySection(identity: model.dependencies.buildIdentity)
-            Section("Distribution") {
-                Text(model.dependencies.distribution == .standard
-                    ? "Standard build for ordinary iOS and iPadOS distribution. The Unleashed backend is not included."
-                    : "Unleashed build for supported devices. It is distributed separately and is not assumed to be eligible for the App Store.")
-                    .font(.footnote).foregroundStyle(.secondary)
-                Text("HCG Terminal never publishes to TestFlight, App Store Connect or any other channel.")
-                    .font(.footnote).foregroundStyle(.secondary)
-            }
 
             Section("Security") {
                 NavigationLink("SSH Keys") { KeysView() }
                 NavigationLink("Known Hosts") { KnownHostsView() }
             }
+
+            Section {
+                Text(model.dependencies.distribution == .standard
+                    ? "Standard build for ordinary iOS and iPadOS distribution. It does not contain the Unleashed backend."
+                    : "Unleashed build. Distributed separately; not assumed to be eligible for the App Store.")
+                Text("HCG Terminal never publishes to TestFlight, App Store Connect or any other channel.")
+            } header: { Text("Distribution") }
+            .font(.footnote)
+            .foregroundStyle(.secondary)
         }
-        .navigationTitle("Preferences")
+        .navigationTitle("Settings")
+        .hcgScreenBackground()
         .refreshable { await model.refreshCapabilities() }
         .toolbar {
-            Button { Task { await model.refreshCapabilities() } } label: {
+            Button { Task { await model.refreshCapabilities(); await model.refreshAssessment() } } label: {
                 if model.isDetecting { ProgressView() } else { Label("Re-check", systemImage: "arrow.clockwise") }
             }
+        }
+    }
+}
+
+/// Theme, accent, effects and terminal text size.
+struct AppearanceSection: View {
+    @Environment(TerminalAppModel.self) private var model
+
+    var body: some View {
+        Section {
+            Picker("Theme", selection: Binding(get: { model.appearance.theme }, set: { value in model.updateAppearance { $0.theme = value } })) {
+                ForEach(AppearanceSettings.Theme.allCases) { Text($0.label).tag($0) }
+            }
+            Picker("Accent", selection: Binding(get: { model.appearance.accent }, set: { value in model.updateAppearance { $0.accent = value } })) {
+                ForEach(AppearanceSettings.Accent.allCases) { accent in
+                    Label(accent.label, systemImage: "circle.fill").foregroundStyle(HCGPalette.accent(accent)).tag(accent)
+                }
+            }
+            Toggle("Reduce visual effects", isOn: Binding(get: { model.appearance.reducedEffects }, set: { value in model.updateAppearance { $0.reducedEffects = value } }))
+            Stepper(value: Binding(get: { model.appearance.terminalFontSize }, set: { value in model.updateAppearance { $0.terminalFontSize = value } }), in: AppearanceSettings.terminalFontRange, step: 1) {
+                LabeledContent("Terminal text", value: "\(Int(model.appearance.terminalFontSize)) pt")
+            }
+            Text("The quick brown fox · ls -la ~/projects")
+                .font(.system(size: model.appearance.terminalFontSize, design: .monospaced))
+                .foregroundStyle(HCGPalette.ivory)
+                .padding(8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(HCGPalette.canvas, in: RoundedRectangle(cornerRadius: 8))
+                .accessibilityLabel("Terminal text preview")
+        } header: { Text("Appearance") } footer: {
+            Text("Unleashed always uses violet so the modes stay distinct. Reduce visual effects removes glow, gradients and animation; the system's Reduce Motion and Reduce Transparency are always honored.")
         }
     }
 }

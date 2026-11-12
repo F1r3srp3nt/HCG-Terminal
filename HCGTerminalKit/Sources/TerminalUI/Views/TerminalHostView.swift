@@ -18,8 +18,9 @@ struct TerminalHostView: UIViewRepresentable {
     func makeUIView(context: Context) -> SwiftTerm.TerminalView {
         let view = SwiftTerm.TerminalView(frame: .zero, font: UIFont.monospacedSystemFont(ofSize: fontSize, weight: .regular))
         view.terminalDelegate = context.coordinator
-        view.nativeBackgroundColor = UIColor(HCGPalette.canvas)
-        view.nativeForegroundColor = UIColor(HCGPalette.ivory)
+        // The terminal stays dark in both themes: ANSI colors are designed for a dark background.
+        view.nativeBackgroundColor = UIColor(red: 0x05 / 255, green: 0x08 / 255, blue: 0x0B / 255, alpha: 1)
+        view.nativeForegroundColor = UIColor(red: 0xEE / 255, green: 0xF3 / 255, blue: 0xF6 / 255, alpha: 1)
         view.caretColor = UIColor(accent)
         view.keyboardAppearance = .dark
         // Our own key row (Esc, Tab, sticky Ctrl, arrows, common symbols) replaces SwiftTerm's default.
@@ -33,6 +34,9 @@ struct TerminalHostView: UIViewRepresentable {
 
     func updateUIView(_ view: SwiftTerm.TerminalView, context: Context) {
         view.caretColor = UIColor(accent)
+        if abs(view.font.pointSize - fontSize) > 0.1 {
+            view.font = UIFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+        }
     }
 
     static func dismantleUIView(_ view: SwiftTerm.TerminalView, coordinator: Coordinator) {

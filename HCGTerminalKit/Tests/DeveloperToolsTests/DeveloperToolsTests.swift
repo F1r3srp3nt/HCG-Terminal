@@ -178,3 +178,34 @@ final class HostProfileValidatorTests: XCTestCase {
         XCTAssertEqual(plan.commandLine, "swift build -c debug", "the shown command is the user's command only")
     }
 }
+
+final class BuildAccessTests: XCTestCase {
+    func testBuildsAreNotStartedWhileOffOrWhileSSHIsOff() async throws {
+        let host = HostProfile(name: "Mac", hostname: "mac", username: "a", auth: .password)
+        let executor = ScriptedExecutor(endpoint: host.endpoint)
+        executor.responses = [("swift build", [.exit(status: 0)])]
+        let logs = FileManager.default.temporaryDirectory.appendingPathComponent("logs-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: logs) }
+        let access = AccessPolicy.inMemory()
+        let orchestrator = BuildOrchestrator(logDirectory: logs, access: access)
+        let plan = try BuildPlanner.plan(host: host, projectPath: "~/k", system: .swiftPackage, action: .build)
+
+        access.set(.remoteBuilds, enabled: false)
+        let off = await orchestrator.run(plan, on: executor)
+        guard case .couldNotStart(let reason) = off.status else { return XCTFail("\(off.status)") }
+        XCTAssertTrue(reason.contains("Remote builds"))
+
+        access.set(.remoteBuilds, enabled: true)
+        access.set(.remoteSSH, enabled: false)
+        let sshOff = await orchestrator.run(plan, on: executor)
+        guard case .couldNotStart(let sshReason) = sshOff.status else { return XCTFail() }
+        XCTAssertTrue(sshReason.contains("Remote SSH"), sshReason)
+        XCTAssertTrue(executor.commands.isEmpty, "nothing was sent to the host")
+
+        access.set(.remoteSSH, enabled: true)
+        let ran = await orchestrator.run(plan, on: executor)
+        XCTAssertEqual(ran.status, .succeeded)
+        let history = await orchestrator.runs()
+        XCTAssertEqual(history.count, 3, "refused runs are recorded, history is kept")
+    }
+}

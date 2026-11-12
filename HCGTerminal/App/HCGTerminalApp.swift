@@ -2,9 +2,6 @@ import FileWorkspace
 import Foundation
 import SwiftUI
 import TerminalUI
-#if HCG_UNLEASHED_BUILD
-import UnleashedIntegration
-#endif
 
 @main
 struct HCGTerminalApp: App {
@@ -17,8 +14,8 @@ struct HCGTerminalApp: App {
     }
 }
 
-/// Composition root. The standard target never compiles the Unleashed branch and does not
-/// link the Unleashed modules (see docs/DISTRIBUTION.md).
+/// Composition root. `VariantComposition` comes from the target's own Variants/<name> folder:
+/// the standard target neither compiles nor links any Unleashed code (docs/BUILD_VARIANTS.md).
 @MainActor
 enum AppComposition {
     static func makeModel() -> TerminalAppModel {
@@ -33,11 +30,7 @@ enum AppComposition {
             // Fall back to a temporary workspace rather than failing to launch.
             workspace = try! FileWorkspace(rootURL: fileManager.temporaryDirectory.appendingPathComponent("Workspace", isDirectory: true))
         }
-        #if HCG_UNLEASHED_BUILD
-        let dependencies = UnleashedIntegration.dependencies(workspace: workspace, supportDirectory: supportDirectory)
-        #else
-        let dependencies = AppDependencies.standard(workspace: workspace, supportDirectory: supportDirectory)
-        #endif
+        let dependencies = VariantComposition.dependencies(workspace: workspace, supportDirectory: supportDirectory)
         return TerminalAppModel(dependencies: dependencies)
     }
 }

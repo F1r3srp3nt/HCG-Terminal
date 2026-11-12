@@ -39,11 +39,12 @@ final class TerminalAppModelTests: XCTestCase {
 
     override func tearDown() async throws { try? FileManager.default.removeItem(at: root) }
 
-    func makeModel() throws -> TerminalAppModel {
+    func makeModel(access: AccessPolicy = .inMemory()) throws -> TerminalAppModel {
         let workspace = try FileWorkspace(rootURL: root.appendingPathComponent("ws"))
         let deps = AppDependencies.standard(
             workspace: workspace, supportDirectory: root.appendingPathComponent("support"),
-            credentials: InMemoryCredentialStore(), preferences: ModePreferenceStore(defaults: defaults)
+            credentials: InMemoryCredentialStore(), preferences: ModePreferenceStore(defaults: defaults),
+            access: access, appearance: AppearanceStore(defaults: defaults)
         )
         return TerminalAppModel(dependencies: deps)
     }

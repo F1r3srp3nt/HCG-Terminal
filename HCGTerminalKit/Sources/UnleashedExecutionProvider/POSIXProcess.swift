@@ -165,6 +165,10 @@ public final class PTYProcess: @unchecked Sendable {
     private let masterFD: Int32
     private let lock = NSLock()
     private var closed = false
+    /// Once the reader thread runs, only it may close `masterFD`: closing a descriptor another
+    /// thread is reading lets the number be reused (for example by a pipe of another process),
+    /// and the stale reader would then consume that pipe's data.
+    private var readerStarted = false
 
     private init(pid: pid_t, masterFD: Int32, executable: String) {
         self.pid = pid
@@ -301,6 +305,7 @@ public final class PTYProcess: @unchecked Sendable {
     public func startReading(onData: @escaping @Sendable ([UInt8]) -> Void, onExit: @escaping @Sendable (Int32) -> Void) {
         let fd = masterFD
         let pid = self.pid
+        lock.lock(); readerStarted = true; lock.unlock()
         let thread = Thread { [weak self] in
             var buffer = [UInt8](repeating: 0, count: 65_536)
             while true {
@@ -315,17 +320,30 @@ public final class PTYProcess: @unchecked Sendable {
             }
             var status: Int32 = 0
             while waitpid(pid, &status, 0) < 0 && errno == EINTR {}
-            self?.closeMaster()
+            if let self { self.closeMaster() } else { close(fd) }
             onExit(POSIX.exitCode(fromWaitStatus: status))
         }
         thread.name = "hcg.pty.\(pid)"
         thread.start()
     }
 
-    /// Hangs up the terminal (SIGHUP to the group) and closes the primary side.
+    /// Hangs up the terminal (SIGHUP to the group) and releases the primary side. While the
+    /// reader thread runs, the descriptor is replaced by /dev/null (so the reader sees end of
+    /// file and closes it itself) instead of being closed under it.
     public func terminate() {
         signal(SIGHUP)
-        closeMaster()
+        lock.lock(); defer { lock.unlock() }
+        guard !closed else { return }
+        if readerStarted {
+            let null = open("/dev/null", O_RDONLY | O_CLOEXEC)
+            if null >= 0 {
+                _ = dup2(null, masterFD)
+                close(null)
+                return
+            }
+        }
+        closed = true
+        close(masterFD)
     }
 
     private func closeMaster() {

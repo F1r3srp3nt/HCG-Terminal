@@ -76,7 +76,12 @@ jobs:
             HCGTerminalUnleashed) expected=unleashed; [ "$backend" -gt 0 ] || { echo "FAIL: Unleashed build lacks the Unleashed backend"; exit 1; } ;;
           esac
           [ "$variant" = "$expected" ] || { echo "FAIL: HCGBuildVariant is $variant, expected $expected"; exit 1; }
+          # The same check the "Verify build variant" build phase runs: backend marker in the code.
+          Scripts/verify-build-variant.sh "$app" "$expected"
           echo "PASS: ${{ matrix.scheme }} is the $expected variant"
+
+      - name: Variant check self-test (fake bundles)
+        run: Scripts/tests/verify-build-variant-test.sh
 
       - name: Debug build (iphoneos, signing disabled)
         if: always()
@@ -163,6 +168,23 @@ jobs:
             unzip -l "$ipa" | grep -E "Payload/HCGTerminalUnleashed.app/(Info.plist|HCGTerminalUnleashed)$"
           fi
           [ ! -d "$RUNNER_TEMP/dist/$([ "$variant" = standard ] && echo unleashed || echo standard)" ] || { echo "FAIL: artifacts mixed"; exit 1; }
+
+      - name: Jailbreak package (.deb, Unleashed only; written to disk, never installed)
+        if: matrix.scheme == 'HCGTerminalUnleashed'
+        run: |
+          brew install ldid dpkg >/dev/null
+          for layout in rootless rootful; do
+            Scripts/package-ios.sh unleashed "$RUNNER_TEMP/dist-$layout" --archive "$RUNNER_TEMP/${{ matrix.scheme }}.xcarchive" \
+              --deb "$layout" --ldid-entitlements HCGTerminal-Support/Unleashed-optional-entitlements.example.plist
+            deb=$(ls "$RUNNER_TEMP"/dist-$layout/unleashed/*.deb)
+            echo "== $deb"
+            dpkg-deb -I "$deb"
+            dpkg-deb -c "$deb" | grep -E "Applications/HCGTerminalUnleashed.app/(HCGTerminalUnleashed|Info.plist)$"
+            mkdir -p "$RUNNER_TEMP/x-$layout" && dpkg-deb -x "$deb" "$RUNNER_TEMP/x-$layout"
+            app=$(find "$RUNNER_TEMP/x-$layout" -name HCGTerminalUnleashed.app -maxdepth 4 -type d)
+            Scripts/verify-build-variant.sh "$app" unleashed
+            ldid -e "$app/HCGTerminalUnleashed"
+          done
 
       - name: Diagnostics summary
         if: always()

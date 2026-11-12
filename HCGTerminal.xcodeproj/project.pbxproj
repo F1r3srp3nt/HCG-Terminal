@@ -25,6 +25,16 @@
 			path = HCGTerminal;
 			sourceTree = "<group>";
 		};
+		4C4800000000000000000025 /* Variants/Standard */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Variants/Standard;
+			sourceTree = "<group>";
+		};
+		4C4800000000000000000027 /* Variants/Unleashed */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Variants/Unleashed;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -54,6 +64,8 @@
 			isa = PBXGroup;
 			children = (
 				4C4800000000000000000004 /* HCGTerminal */,
+				4C4800000000000000000025 /* Variants/Standard */,
+				4C4800000000000000000027 /* Variants/Unleashed */,
 				4C4800000000000000000003 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -78,6 +90,7 @@
 				4C4800000000000000000009 /* Frameworks */,
 				4C480000000000000000000A /* Resources */,
 				4C4800000000000000000023 /* Stamp build info */,
+				4C4800000000000000000026 /* Verify build variant */,
 			);
 			buildRules = (
 			);
@@ -85,6 +98,7 @@
 			);
 			fileSystemSynchronizedGroups = (
 				4C4800000000000000000004 /* HCGTerminal */,
+				4C4800000000000000000025 /* Variants/Standard */,
 			);
 			name = HCGTerminal;
 			packageProductDependencies = (
@@ -103,6 +117,7 @@
 				4C4800000000000000000015 /* Frameworks */,
 				4C4800000000000000000016 /* Resources */,
 				4C4800000000000000000024 /* Stamp build info */,
+				4C4800000000000000000028 /* Verify build variant */,
 			);
 			buildRules = (
 			);
@@ -110,6 +125,7 @@
 			);
 			fileSystemSynchronizedGroups = (
 				4C4800000000000000000004 /* HCGTerminal */,
+				4C4800000000000000000027 /* Variants/Unleashed */,
 			);
 			name = HCGTerminalUnleashed;
 			packageProductDependencies = (
@@ -201,6 +217,28 @@
 			shellScript = "\"${SRCROOT}/Scripts/stamp-build-info.sh\"\n";
 			showEnvVarsInLog = 0;
 		};
+		4C4800000000000000000026 /* Verify build variant */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(TARGET_BUILD_DIR)/$(EXECUTABLE_PATH)",
+				"$(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)",
+			);
+			name = "Verify build variant";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"${SRCROOT}/Scripts/verify-build-variant.sh\"\n";
+			showEnvVarsInLog = 0;
+		};
 		4C4800000000000000000024 /* Stamp build info */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
@@ -220,6 +258,28 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "\"${SRCROOT}/Scripts/stamp-build-info.sh\"\n";
+			showEnvVarsInLog = 0;
+		};
+		4C4800000000000000000028 /* Verify build variant */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(TARGET_BUILD_DIR)/$(EXECUTABLE_PATH)",
+				"$(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)",
+			);
+			name = "Verify build variant";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"${SRCROOT}/Scripts/verify-build-variant.sh\"\n";
 			showEnvVarsInLog = 0;
 		};
 /* End PBXShellScriptBuildPhase section */
