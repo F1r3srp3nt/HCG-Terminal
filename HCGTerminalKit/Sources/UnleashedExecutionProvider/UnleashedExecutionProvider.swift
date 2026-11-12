@@ -3,6 +3,11 @@ import Foundation
 import TerminalCapabilityProvider
 import TerminalCore
 import TerminalSecurity
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 
 /// Creates Local Unleashed sessions. This module is linked only by the Unleashed app target;
 /// the standard (Vanilla) build uses `UnleashedNotIncludedCapabilityProvider` instead.
@@ -11,11 +16,13 @@ public struct UnleashedExecutionProvider: LocalExecutionProvider {
     public let capabilities: UnleashedCapabilityProvider
     public let observations: RuntimeObservations
     public let gate: AuthorizationGate
+    public let access: AccessPolicy
 
-    public init(capabilities: UnleashedCapabilityProvider, observations: RuntimeObservations, gate: AuthorizationGate) {
+    public init(capabilities: UnleashedCapabilityProvider, observations: RuntimeObservations, gate: AuthorizationGate, access: AccessPolicy = .shared) {
         self.capabilities = capabilities
         self.observations = observations
         self.gate = gate
+        self.access = access
     }
 
     public func availableBackend() async -> SessionBackend? {
@@ -33,6 +40,7 @@ public struct UnleashedExecutionProvider: LocalExecutionProvider {
     /// RemoteSSH by the interface layer (with target Local Unleashed), because they need
     /// the service's own credentials.
     public func makeSession() async throws -> any TerminalSession {
+        try access.require(.localShell)
         let scan = capabilities.scan()
         guard let shell = scan.shells.first else {
             throw ExecutionError.modeUnavailable(.unleashed, reason: "No local shell can be started in this environment.")
@@ -45,7 +53,8 @@ public struct UnleashedExecutionProvider: LocalExecutionProvider {
             environment: Self.environment(for: scan, shell: shell),
             workingDirectory: Self.homeDirectory(scan: scan),
             observations: observations,
-            gate: gate
+            gate: gate,
+            access: access
         )
     }
 
@@ -59,7 +68,7 @@ public struct UnleashedExecutionProvider: LocalExecutionProvider {
     }
 
     /// A minimal, explicit environment for spawned shells. Nothing secret is passed.
-    static func environment(for scan: UnleashedEnvironmentScan, shell: String) -> [String: String] {
+    public static func environment(for scan: UnleashedEnvironmentScan, shell: String) -> [String: String] {
         let inherited = ProcessInfo.processInfo.environment
         var environment: [String: String] = [
             "TERM": "xterm-256color",
@@ -122,10 +131,12 @@ public enum PackageManagerError: Error, LocalizedError, Equatable {
 public struct PackageManagerClient: Sendable {
     public let scan: UnleashedEnvironmentScan
     private let gate: AuthorizationGate
+    private let access: AccessPolicy
 
-    public init(scan: UnleashedEnvironmentScan, gate: AuthorizationGate) {
+    public init(scan: UnleashedEnvironmentScan, gate: AuthorizationGate, access: AccessPolicy = .shared) {
         self.scan = scan
         self.gate = gate
+        self.access = access
     }
 
     public var isAvailable: Bool { !scan.packageManagers.isEmpty }
@@ -133,6 +144,7 @@ public struct PackageManagerClient: Sendable {
     private func tool(_ name: String) -> DetectedTool? { scan.packageManagers.first { $0.name == name } }
 
     public func listInstalled() async throws -> [InstalledPackage] {
+        try access.require(.packageManagement)
         guard let query = tool("dpkg-query") ?? tool("dpkg") else { throw PackageManagerError.notAvailable }
         let arguments = query.name == "dpkg-query"
             ? ["-W", "-f", "${Package}\\t${Version}\\t${db:Status-Abbrev}\\n"]
@@ -177,14 +189,20 @@ public struct PackageManagerClient: Sendable {
 
     /// Asks the user. Returns the command line only if they explicitly approved it.
     public func authorizedCommand(for action: PackageAction) async throws -> String {
+        try access.require(.packageManagement)
         let command = try commandLine(for: action)
         let request = AuthorizationRequest(
             title: action.title,
             commandLine: command,
             target: .local(.unleashed),
-            reasons: ["Changes installed packages on this device.", "Runs with the permissions the device grants to this app; apt may refuse without root."]
+            reasons: ["Changes installed packages on this device.", "Runs with the permissions the device grants to this app; apt may refuse without root."],
+            requiredAccess: [.packageManagement]
         )
-        guard await gate.requestAuthorization(request) else { throw PackageManagerError.declined }
+        switch await gate.decide(request) {
+        case .approved: break
+        case .declined: throw PackageManagerError.declined
+        case .refused(let denied): throw denied
+        }
         await DiagnosticLog.shared.record(.notice, "packages", "Package action authorized", metadata: ["action": action.title])
         return command
     }
@@ -235,16 +253,26 @@ public struct HostFileSystem: Sendable {
     private let gate: AuthorizationGate?
     /// Which paths need approval before a change. Defaults to system and jailbreak locations.
     private let needsApproval: @Sendable (String) -> Bool
+    private let access: AccessPolicy
 
-    public init(scan: UnleashedEnvironmentScan, gate: AuthorizationGate? = nil) {
-        self.init(roots: scan.permittedLocations.filter(\.listable).map(\.path), gate: gate)
+    public init(scan: UnleashedEnvironmentScan, gate: AuthorizationGate? = nil, access: AccessPolicy = .shared) {
+        self.init(roots: scan.permittedLocations.filter(\.listable).map(\.path), gate: gate, access: access)
     }
 
-    public init(roots: [String], gate: AuthorizationGate?, needsApproval: @escaping @Sendable (String) -> Bool = HostFileSystem.requiresApproval) {
+    public init(
+        roots: [String], gate: AuthorizationGate?,
+        needsApproval: @escaping @Sendable (String) -> Bool = HostFileSystem.requiresApproval,
+        access: AccessPolicy = .shared
+    ) {
         self.roots = roots.map { Self.resolve($0) }
         self.gate = gate
         self.needsApproval = needsApproval
+        self.access = access
     }
+
+    /// Whether reading / writing is allowed by the user's switches (not by the device).
+    public var readEnabled: Bool { access.isEnabled(.expandedFileRead) }
+    public var writeEnabled: Bool { access.isEnabled(.expandedFileWrite) }
 
     public static let logDirectories = ["/var/log", "/private/var/log", "/var/jb/var/log", "/var/mobile/Library/Logs", "/var/mobile/Library/Logs/CrashReporter"]
 
@@ -270,13 +298,16 @@ public struct HostFileSystem: Sendable {
         PrivilegeClassifier.assess("rm \(path)").requiresAuthorization
     }
 
+    /// Writable for this app right now: the write switch is on and `access(W_OK)` succeeds.
     public func isWritable(_ path: String) -> Bool {
-        guard let resolved = try? check(path) else { return false }
-        return access(resolved, W_OK) == 0
+        guard writeEnabled, let resolved = try? check(path) else { return false }
+        return posixAccess(resolved, W_OK) == 0
     }
 
     public func list(_ path: String) throws -> [HostFileEntry] {
+        try access.require(.expandedFileRead)
         let directory = try check(path)
+        let canWrite = writeEnabled
         let names: [String]
         do { names = try FileManager.default.contentsOfDirectory(atPath: directory) } catch {
             throw LocationBrowserError.unreadable(directory)
@@ -289,13 +320,14 @@ public struct HostFileSystem: Sendable {
                 isDirectory: (attributes[.type] as? FileAttributeType) == .typeDirectory,
                 size: (attributes[.size] as? NSNumber)?.int64Value ?? 0,
                 modified: attributes[.modificationDate] as? Date,
-                writable: access(full, W_OK) == 0
+                writable: canWrite && posixAccess(full, W_OK) == 0
             )
         }
     }
 
     /// Reads at most `maxBytes` from the end of a file (log inspection).
     public func readTail(_ path: String, maxBytes: Int = 256 * 1024) throws -> String {
+        try access.require(.expandedFileRead)
         let file = try check(path)
         guard let handle = FileHandle(forReadingAtPath: file) else { throw LocationBrowserError.unreadable(file) }
         defer { try? handle.close() }
@@ -307,6 +339,7 @@ public struct HostFileSystem: Sendable {
     }
 
     public func readText(_ path: String, limit: Int = 2 * 1024 * 1024) throws -> String {
+        try access.require(.expandedFileRead)
         let file = try check(path)
         guard let handle = FileHandle(forReadingAtPath: file) else { throw LocationBrowserError.unreadable(file) }
         defer { try? handle.close() }
@@ -317,18 +350,24 @@ public struct HostFileSystem: Sendable {
 
     // MARK: Writing
 
-    private func authorizeChange(_ title: String, path: String, command: String) async throws {
+    func authorizeChange(_ title: String, path: String, command: String) async throws {
         guard needsApproval(path) else { return }
         guard let gate else { throw LocationBrowserError.approvalDeclined(path) }
         let request = AuthorizationRequest(
             title: title, commandLine: command, target: .local(.unleashed),
-            reasons: ["\(path) is a system or jailbreak location; changing it can break the device's environment.", "Runs with this app's own permissions; nothing is elevated."]
+            reasons: ["\(path) is a system or jailbreak location; changing it can break the device's environment.", "Runs with this app's own permissions; nothing is elevated."],
+            requiredAccess: [.expandedFileWrite]
         )
-        guard await gate.requestAuthorization(request) else { throw LocationBrowserError.approvalDeclined(path) }
+        switch await gate.decide(request) {
+        case .approved: return
+        case .declined: throw LocationBrowserError.approvalDeclined(path)
+        case .refused(let denied): throw denied
+        }
     }
 
-    private func requireWritableDirectory(_ directory: String) throws {
-        guard access(directory, W_OK) == 0 else {
+    func requireWritableDirectory(_ directory: String) throws {
+        try access.require(.expandedFileWrite)
+        guard posixAccess(directory, W_OK) == 0 else {
             throw LocationBrowserError.notWritable(directory, String(cString: strerror(errno)))
         }
     }
@@ -344,7 +383,7 @@ public struct HostFileSystem: Sendable {
     public func writeText(_ text: String, to path: String) async throws {
         let file = try check(path)
         try requireWritableDirectory((file as NSString).deletingLastPathComponent)
-        if FileManager.default.fileExists(atPath: file), access(file, W_OK) != 0 {
+        if FileManager.default.fileExists(atPath: file), posixAccess(file, W_OK) != 0 {
             throw LocationBrowserError.notWritable(file, String(cString: strerror(errno)))
         }
         try await authorizeChange("Write a file", path: file, command: "write \(file)")
@@ -397,3 +436,13 @@ public struct HostFileSystem: Sendable {
 
 /// Earlier name of the read-only part of `HostFileSystem`.
 public typealias PermittedLocationBrowser = HostFileSystem
+
+/// `access(2)`, named so it is not shadowed by the `access` policy property.
+@inline(__always)
+func posixAccess(_ path: String, _ mode: Int32) -> Int32 {
+    #if canImport(Darwin)
+    return Darwin.access(path, mode)
+    #else
+    return Glibc.access(path, mode)
+    #endif
+}

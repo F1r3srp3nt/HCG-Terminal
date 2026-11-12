@@ -1,4 +1,5 @@
 import Foundation
+import TerminalCore
 
 /// What to do when an imported or saved item already exists.
 public enum ConflictPolicy: String, Sendable, CaseIterable {
@@ -66,7 +67,9 @@ public extension FileWorkspace {
     }
 
     /// Copies a file or folder from outside the workspace (e.g. the Files app) into `directory`.
-    func importItem(from source: URL, into directory: WorkspacePath, policy: ConflictPolicy) throws -> ImportOutcome {
+    /// Refused while “Files you choose” is turned off.
+    func importItem(from source: URL, into directory: WorkspacePath, policy: ConflictPolicy, access: AccessPolicy = .shared) throws -> ImportOutcome {
+        try access.require(.externalFiles)
         guard isDirectory(directory) else { throw WorkspaceError.notADirectory(directory.string) }
         let name = source.lastPathComponent
         guard !name.isEmpty, name != ".", name != "..", !name.contains("/") else { throw WorkspaceError.invalidName(name) }
@@ -90,6 +93,12 @@ public extension FileWorkspace {
         }
         try FileManager.default.copyItem(at: source, to: url(for: destination))
         return outcome
+    }
+
+    /// The file URL handed to the system export sheet. Refused while “Files you choose” is off.
+    func exportURL(for path: WorkspacePath, access: AccessPolicy = .shared) throws -> URL {
+        try access.require(.externalFiles)
+        return try url(for: path)
     }
 
     func rename(_ path: WorkspacePath, to newName: String) throws -> WorkspacePath {

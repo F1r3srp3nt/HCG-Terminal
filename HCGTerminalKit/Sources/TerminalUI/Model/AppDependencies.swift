@@ -54,6 +54,33 @@ public struct HostFileRow: Hashable, Sendable, Identifiable {
     }
 }
 
+/// An installed program (Unleashed).
+public struct ToolRow: Hashable, Sendable, Identifiable {
+    public var name: String
+    public var path: String
+    public var id: String { path }
+    public init(name: String, path: String) {
+        self.name = name
+        self.path = path
+    }
+}
+
+/// Output of a bounded program run (Unleashed).
+public struct ToolRunOutput: Hashable, Sendable {
+    public var commandLine: String
+    public var summary: String
+    public var stdout: String
+    public var stderr: String
+    public var succeeded: Bool
+    public init(commandLine: String, summary: String, stdout: String, stderr: String, succeeded: Bool) {
+        self.commandLine = commandLine
+        self.summary = summary
+        self.stdout = stdout
+        self.stderr = stderr
+        self.succeeded = succeeded
+    }
+}
+
 public enum PackageRequest: Hashable, Sendable {
     case install(String)
     case remove(String)
@@ -79,6 +106,21 @@ public protocol UnleashedTools: Sendable {
     func createDirectory(named name: String, in directory: String) async throws
     func rename(_ path: String, to newName: String) async throws
     func delete(_ path: String) async throws
+
+    /// Layered, read-only environment assessment.
+    func assessment() async -> EnvironmentAssessment
+    /// Programs in the scanned program folders.
+    func installedTools() async -> [ToolRow]
+    /// Runs a program to completion with a time limit.
+    func runTool(_ path: String, arguments: [String]) async throws -> ToolRunOutput
+    /// Starts a program interactively in its own pseudo-terminal session (not started yet).
+    func toolSession(_ path: String, arguments: [String]) async throws -> any TerminalSession
+    /// Explicit, bounded checks. Only run when the user asks.
+    func verifyShell() async -> EnvironmentAssessment.Operation
+    func verifyWrite(in directory: String) async -> EnvironmentAssessment.Operation
+    /// Bootstrap roots the user entered (relocated installs). Probed read-only.
+    func customBootstrapRoots() async -> [String]
+    func setCustomBootstrapRoots(_ roots: [String]) async
 }
 
 /// Everything the interface needs, assembled by the app target's composition root.
@@ -101,6 +143,13 @@ public struct AppDependencies: Sendable {
     public var orchestrator: BuildOrchestrator
     public var artifactIndex: ArtifactIndex
     public var preferences: ModePreferenceStore
+    /// Capabilities & Access switches. Every service checks the same policy.
+    public var access: AccessPolicy
+    /// Look and feel (theme, accent, effects, terminal text size).
+    public var appearance: AppearanceStore
+    /// Layered environment assessment for Diagnostics (standard build: build, device and
+    /// process layers only).
+    public var environmentAssessment: @Sendable () async -> EnvironmentAssessment
 
     public init(
         distribution: DistributionBuild, workspace: FileWorkspace, vanilla: any LocalExecutionProvider,
@@ -109,8 +158,13 @@ public struct AppDependencies: Sendable {
         gate: AuthorizationGate, credentials: any CredentialStore, knownHosts: KnownHostsStore,
         keyManager: SSHKeyManager, hostStore: HostProfileStore, orchestrator: BuildOrchestrator,
         artifactIndex: ArtifactIndex, preferences: ModePreferenceStore,
-        buildIdentity: BuildIdentity? = nil
+        buildIdentity: BuildIdentity? = nil,
+        access: AccessPolicy = .shared,
+        appearance: AppearanceStore = AppearanceStore()
     ) {
+        self.access = access
+        self.appearance = appearance
+        self.environmentAssessment = { StandardEnvironmentAssessment.make(variant: distribution.rawValue) }
         self.distribution = distribution
         self.buildIdentity = buildIdentity ?? BuildIdentity.current(linkedBackend: distribution)
         self.workspace = workspace
@@ -135,25 +189,29 @@ public struct AppDependencies: Sendable {
         workspace: FileWorkspace,
         supportDirectory: URL,
         credentials: any CredentialStore = DefaultCredentialStore.make(),
-        preferences: ModePreferenceStore = ModePreferenceStore()
+        preferences: ModePreferenceStore = ModePreferenceStore(),
+        access: AccessPolicy = .shared,
+        appearance: AppearanceStore = AppearanceStore()
     ) -> AppDependencies {
         let vanillaCapabilities = VanillaCapabilityProvider(workspace: workspace)
         return AppDependencies(
             distribution: .standard,
             workspace: workspace,
-            vanilla: VanillaExecutionProvider(workspace: workspace, capabilities: vanillaCapabilities),
+            vanilla: VanillaExecutionProvider(workspace: workspace, capabilities: vanillaCapabilities, access: access),
             vanillaCapabilities: vanillaCapabilities,
             unleashed: nil,
             unleashedCapabilities: UnleashedNotIncludedCapabilityProvider(),
             unleashedTools: nil,
-            gate: AuthorizationGate(),
+            gate: AuthorizationGate(access: access),
             credentials: credentials,
             knownHosts: KnownHostsStore(fileURL: supportDirectory.appendingPathComponent("known_hosts.json")),
             keyManager: SSHKeyManager(credentials: credentials, metadataURL: supportDirectory.appendingPathComponent("ssh-keys.json")),
             hostStore: HostProfileStore(fileURL: supportDirectory.appendingPathComponent("hosts.json")),
-            orchestrator: BuildOrchestrator(logDirectory: (try? workspace.url(for: .logs)) ?? supportDirectory.appendingPathComponent("logs")),
+            orchestrator: BuildOrchestrator(logDirectory: (try? workspace.url(for: .logs)) ?? supportDirectory.appendingPathComponent("logs"), access: access),
             artifactIndex: ArtifactIndex(workspace: workspace),
-            preferences: preferences
+            preferences: preferences,
+            access: access,
+            appearance: appearance
         )
     }
 }

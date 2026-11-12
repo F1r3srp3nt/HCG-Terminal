@@ -33,6 +33,12 @@ public struct UnleashedEnvironmentScan: Hashable, Sendable {
     public var operatingSystem: String
     /// Outcome of each path probe (keeps EPERM vs ENOENT).
     public var pathProbes: [String: PathProbe] = [:]
+    /// Candidate bootstrap roots and what was observed for each.
+    public var roots: [EnvironmentAssessment.Root] = []
+    /// Jailbreak indicators checked. Their presence is never treated as usability.
+    public var indicators: [EnvironmentAssessment.Indicator] = []
+    /// Tool name → resolved executable path.
+    public var resolvedTools: [String: String] = [:]
 
     /// Whether the app can see any part of a shell environment at all (a jailbreak prefix, or a
     /// listable directory with executables). False on a standard, sandboxed iOS install.
@@ -61,7 +67,17 @@ public struct UnleashedEnvironmentScan: Hashable, Sendable {
 /// Performs the read-only Unleashed scan. Uses only `SystemProbing` (stat, access, directory
 /// listing, a sysctl read and loopback TCP connects without sending data).
 public struct UnleashedEnvironmentScanner: Sendable {
+    /// Fixed candidate prefixes: rootless, then the system root (rootful). Relocated roots and
+    /// roots the user entered are added at scan time.
     public static let prefixes = ["/var/jb", ""]
+    /// Where relocated rootless bootstraps live (e.g. `/private/preboot/<UUID>/jb-XXXX/procursus`
+    /// or `…/dopamine-XXXX/procursus`). Only listed if the system allows it.
+    public static let prebootDirectory = "/private/preboot"
+    public static let relocatedNamePrefixes = ["jb-", "dopamine-"]
+    /// Files a bootstrap creates. Relative to a root.
+    public static let strongIndicators = [".procursus_strapped", ".installed_dopamine", ".bootstrapped", "var/lib/dpkg/status", "etc/apt/sources.list.d"]
+    /// Common but not conclusive (an app bundle can exist without a working userland).
+    public static let weakIndicators = ["Applications/Sileo.app", "Applications/Zebra.app", "Applications/Cydia.app", "Applications/Filza.app"]
     public static let shellCandidates = ["/bin/zsh", "/usr/bin/zsh", "/bin/bash", "/usr/bin/bash", "/bin/sh", "/usr/bin/sh", "/bin/dash"]
     public static let binDirectories = ["/usr/bin", "/bin", "/usr/local/bin", "/usr/sbin", "/sbin"]
     public static let packageManagerCandidates = [("apt", "/usr/bin/apt"), ("apt-get", "/usr/bin/apt-get"), ("dpkg", "/usr/bin/dpkg"), ("dpkg-query", "/usr/bin/dpkg-query")]
@@ -74,15 +90,74 @@ public struct UnleashedEnvironmentScanner: Sendable {
     ]
 
     private let probe: any SystemProbing
+    /// Bootstrap roots the user entered (Settings → Unleashed environment). Probed read-only
+    /// like the built-in candidates; never trusted without evidence.
+    private let customRoots: @Sendable () -> [String]
 
-    public init(probe: any SystemProbing) {
+    public init(probe: any SystemProbing, customRoots: @escaping @Sendable () -> [String] = { [] }) {
         self.probe = probe
+        self.customRoots = customRoots
+    }
+
+    /// Finds candidate bootstrap roots: `/var/jb` (and where it really points), relocated roots
+    /// under /private/preboot when listable, user-entered roots, and the system root.
+    func candidateRoots(pathProbes: inout [String: PathProbe]) -> [EnvironmentAssessment.Root] {
+        var roots: [EnvironmentAssessment.Root] = []
+        var seen: Set<String> = []
+        func add(_ path: String, _ layout: EnvironmentAssessment.Layout) {
+            let result = probe.probe(path.isEmpty ? "/" : path)
+            if result != .missing { pathProbes[path.isEmpty ? "/" : path] = result }
+            let resolved = result == .present ? probe.resolvedPath(path.isEmpty ? "/" : path) : nil
+            let key = resolved ?? path
+            guard !seen.contains(key) || path.isEmpty else { return }
+            seen.insert(key)
+            roots.append(EnvironmentAssessment.Root(path: path, resolvedPath: resolved, layout: layout, probe: result))
+        }
+        add("/var/jb", .rootless)
+        switch probe.listing(Self.prebootDirectory) {
+        case .success(let volumes):
+            for volume in volumes.sorted().prefix(16) {
+                let volumePath = Self.prebootDirectory + "/" + volume
+                guard case .success(let entries) = probe.listing(volumePath) else { continue }
+                for entry in entries.sorted().prefix(32) where Self.relocatedNamePrefixes.contains(where: entry.hasPrefix) {
+                    let candidate = volumePath + "/" + entry + "/procursus"
+                    if probe.isDirectory(candidate) { add(candidate, .relocated) }
+                }
+            }
+        case .failure(let failure):
+            if failure.probe != .missing { pathProbes[Self.prebootDirectory] = failure.probe }
+        }
+        for custom in customRoots() {
+            let trimmed = custom.trimmingCharacters(in: .whitespaces)
+            guard trimmed.hasPrefix("/"), trimmed != "/" else { continue }
+            add(trimmed.hasSuffix("/") ? String(trimmed.dropLast()) : trimmed, .custom)
+        }
+        add("", .rootful)
+        return roots
     }
 
     public func scan() -> UnleashedEnvironmentScan {
         var evidence: [CapabilityEvidence] = []
 
         var pathProbes: [String: PathProbe] = [:]
+        let roots = candidateRoots(pathProbes: &pathProbes)
+        var indicators: [EnvironmentAssessment.Indicator] = []
+        for root in roots where root.layout == .rootful || root.probe == .present {
+            for (names, strength) in [(Self.strongIndicators, EnvironmentAssessment.Indicator.Strength.strong), (Self.weakIndicators, .weak)] {
+                for name in names {
+                    // `.bootstrapped` only means something at the system root (rootful).
+                    if name == ".bootstrapped" && root.layout != .rootful { continue }
+                    let path = root.path + "/" + name
+                    let result = probe.probe(path)
+                    if result != .missing { pathProbes[path] = result }
+                    indicators.append(EnvironmentAssessment.Indicator(path: path, layout: root.layout, strength: strength, probe: result))
+                }
+            }
+        }
+        for indicator in indicators where indicator.probe != .missing {
+            evidence.append(CapabilityEvidence(probe: "lstat(\(indicator.path))", observation: indicator.probe.description + (indicator.strength == .weak ? " (weak indicator)" : ""), positive: indicator.probe == .present))
+        }
+        let prefixes = roots.filter { $0.layout != .rootful && $0.probe == .present }.map(\.path) + [""]
         // Layout indicator (context only — never decisive on its own).
         let jbProbe = probe.probe("/var/jb")
         pathProbes["/var/jb"] = jbProbe
@@ -100,7 +175,7 @@ public struct UnleashedEnvironmentScanner: Sendable {
         var elevation: [DetectedTool] = []
         var prefixWithTools: String?
 
-        for prefix in Self.prefixes {
+        for prefix in prefixes {
             for candidate in Self.shellCandidates {
                 let path = prefix + candidate
                 guard !shells.contains(path) else { continue }
@@ -173,6 +248,12 @@ public struct UnleashedEnvironmentScanner: Sendable {
             )
         }
 
+        var resolvedTools: [String: String] = [:]
+        for shell in shells { resolvedTools[(shell as NSString).lastPathComponent] = resolvedTools[(shell as NSString).lastPathComponent] ?? (probe.resolvedPath(shell) ?? shell) }
+        for tool in packageManagers + elevation where resolvedTools[tool.name] == nil {
+            resolvedTools[tool.name] = probe.resolvedPath(tool.path) ?? tool.path
+        }
+
         return UnleashedEnvironmentScan(
             environmentPrefix: prefixWithTools ?? (rootlessPrefix ? "/var/jb" : nil),
             shells: shells,
@@ -185,7 +266,10 @@ public struct UnleashedEnvironmentScanner: Sendable {
             locations: locations,
             evidence: evidence,
             operatingSystem: probe.osDescription(),
-            pathProbes: pathProbes
+            pathProbes: pathProbes,
+            roots: roots,
+            indicators: indicators,
+            resolvedTools: resolvedTools
         )
     }
 }

@@ -1,4 +1,5 @@
 import Foundation
+import TerminalCore
 #if canImport(Darwin)
 import Darwin
 #elseif canImport(Glibc)
@@ -25,12 +26,20 @@ public enum ProcessListing: Sendable, Equatable {
     /// subset (typical of the iOS sandbox).
     case listed([ProcessEntry], complete: Bool)
     case restricted(String)
+    /// The user turned process inspection off; the table was not read.
+    case disabled(String)
 }
 
 /// Read-only process inspection using the APIs the platform exposes. Reports exactly what the
 /// system reveals; it never tries to widen its view.
 public enum ProcessInspector {
-    public static func listProcesses() -> ProcessListing {
+    /// Reads the process table unless “Process inspection” is turned off.
+    public static func listProcesses(access: AccessPolicy = .shared) -> ProcessListing {
+        if let refusal = access.denial(.processInspection) { return .disabled(refusal) }
+        return readProcessTable()
+    }
+
+    static func readProcessTable() -> ProcessListing {
         #if canImport(Darwin)
         var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0]
         var size = 0

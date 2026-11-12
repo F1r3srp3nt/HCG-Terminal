@@ -342,6 +342,11 @@ public enum ProcessRunner {
         public var stdout: Data
         public var stderr: Data
         public var status: Int32
+        public var pid: Int32 = 0
+        /// The process was killed because it exceeded the time limit.
+        public var timedOut = false
+        /// The process ended because of a signal (e.g. SIGKILL from code-signing enforcement).
+        public var terminatingSignal: Int32?
         public var stdoutText: String { String(decoding: stdout, as: UTF8.self) }
         public var stderrText: String { String(decoding: stderr, as: UTF8.self) }
     }
@@ -351,7 +356,8 @@ public enum ProcessRunner {
         arguments: [String],
         environment: [String: String],
         workingDirectory: String? = nil,
-        outputLimit: Int = 8 * 1024 * 1024
+        outputLimit: Int = 8 * 1024 * 1024,
+        timeout: TimeInterval? = nil
     ) async throws -> Result {
         var outPipe: [Int32] = [0, 0]
         var errPipe: [Int32] = [0, 0]
@@ -381,6 +387,18 @@ public enum ProcessRunner {
         close(errPipe[1])
 
         let readOut = outPipe[0], readErr = errPipe[0]
+        let finished = LockedFlag()
+        let timedOut = LockedFlag()
+        if let timeout {
+            DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
+                // Bounded: a verification or listing never hangs the app.
+                if !finished.value {
+                    timedOut.set()
+                    _ = kill(-pid, SIGKILL)
+                    _ = kill(pid, SIGKILL)
+                }
+            }
+        }
         return await withTaskCancellationHandler {
             await withCheckedContinuation { (continuation: CheckedContinuation<Result, Never>) in
                 let thread = Thread {
@@ -397,7 +415,12 @@ public enum ProcessRunner {
                     group.wait()
                     var status: Int32 = 0
                     while waitpid(pid, &status, 0) < 0 && errno == EINTR {}
-                    continuation.resume(returning: Result(stdout: outBox.data, stderr: errBox.data, status: POSIX.exitCode(fromWaitStatus: status)))
+                    finished.set()
+                    let signal: Int32? = (status & 0x7F) != 0 && (status & 0x7F) != 0x7F ? status & 0x7F : nil
+                    continuation.resume(returning: Result(
+                        stdout: outBox.data, stderr: errBox.data, status: POSIX.exitCode(fromWaitStatus: status),
+                        pid: pid, timedOut: timedOut.value, terminatingSignal: signal
+                    ))
                 }
                 thread.start()
             }
@@ -425,4 +448,11 @@ public enum ProcessRunner {
 
 private final class DataBox: @unchecked Sendable {
     var data = Data()
+}
+
+private final class LockedFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var flag = false
+    var value: Bool { lock.lock(); defer { lock.unlock() }; return flag }
+    func set() { lock.lock(); flag = true; lock.unlock() }
 }

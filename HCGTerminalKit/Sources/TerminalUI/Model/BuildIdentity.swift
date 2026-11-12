@@ -13,6 +13,9 @@ public struct BuildIdentity: Hashable, Sendable {
     public var sourceRevision: String
     public var bundleIdentifier: String
     public var displayName: String
+    /// The marker the linked Unleashed backend reports (`UnleashedBackend.marker`), or `nil`
+    /// when no backend is linked. Build checks look for the same string in the executable.
+    public var backendMarker: String?
 
     public init(
         declaredVariant: String, linkedBackend: DistributionBuild, version: String, buildNumber: String,
@@ -50,7 +53,8 @@ public struct BuildIdentity: Hashable, Sendable {
 
     /// The variant the user should be told about: always what is linked, never what is named.
     public var variantLabel: String {
-        switch linkedBackend {
+        if linkedBackend == .unleashed && backendMarker == nil { return "Unleashed (backend marker missing)" }
+        return switch linkedBackend {
         case .standard: "Standard (no Unleashed backend in this build)"
         case .unleashed: "Unleashed (backend included)"
         }
@@ -73,6 +77,9 @@ public struct BuildIdentity: Hashable, Sendable {
         let unleashedBundle = bundleIdentifier.hasSuffix(".unleashed")
         if unleashedBundle != (linkedBackend == .unleashed) {
             problems.append("Bundle identifier \(bundleIdentifier) does not match the linked \(linkedBackend.rawValue) backend.")
+        }
+        if linkedBackend == .unleashed && backendMarker == nil {
+            problems.append("The Unleashed composition is active but the backend did not report its marker.")
         }
         let unleashedName = displayName.localizedCaseInsensitiveContains("unleashed")
         if unleashedName && linkedBackend != .unleashed {

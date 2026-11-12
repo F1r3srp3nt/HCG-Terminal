@@ -135,8 +135,10 @@ public actor BuildOrchestrator {
     private let logDirectory: URL
     private let historyURL: URL
     private var history: [BuildRun]
+    private let access: AccessPolicy
 
-    public init(logDirectory: URL) {
+    public init(logDirectory: URL, access: AccessPolicy = .shared) {
+        self.access = access
         self.logDirectory = logDirectory
         self.historyURL = logDirectory.appendingPathComponent("build-history.json")
         try? FileManager.default.createDirectory(at: logDirectory, withIntermediateDirectories: true)
@@ -163,6 +165,14 @@ public actor BuildOrchestrator {
         formatter.formatOptions = [.withFullDate, .withTime, .withColonSeparatorInTime]
         let logName = "build-\(formatter.string(from: Date()).replacingOccurrences(of: ":", with: ""))-\(id.uuidString.prefix(8)).log"
         var run = BuildRun(id: id, plan: plan, startedAt: Date(), finishedAt: nil, status: .running, diagnostics: [], testSummary: nil, logFileName: logName)
+
+        // Nothing is sent to the host while remote builds (or SSH) are turned off.
+        if let refusal = access.denial(.remoteBuilds) {
+            run.status = .couldNotStart(refusal)
+            run.finishedAt = Date()
+            record(run)
+            return run
+        }
 
         guard executor.endpoint.hostID == plan.hostID else {
             run.status = .couldNotStart("The plan belongs to \(plan.hostName), not \(executor.endpoint.displayName).")

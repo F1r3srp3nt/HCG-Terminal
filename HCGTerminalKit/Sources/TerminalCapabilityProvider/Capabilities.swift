@@ -43,13 +43,19 @@ public enum CapabilityKind: String, CaseIterable, Codable, Sendable, Identifiabl
 
 /// State of one capability. Never optimistic: a capability is "verified" only after it was
 /// actually used successfully on this device; anything not observed is reported as such.
+///
+/// The user's switch (Capabilities & Access) is applied *after* detection and can only turn a
+/// usable state into `disabledByUser`; it never makes an unusable state usable.
 public enum CapabilityAvailability: Hashable, Codable, Sendable {
-    /// The code for this capability is not part of this build (e.g. the standard build has no
-    /// Unleashed backend).
+    /// The code is not part of this build or this mode (e.g. the standard build has no
+    /// Unleashed backend; Vanilla mode never launches programs).
     case notIncluded(String)
-    /// The platform or device does not offer this at all (e.g. the iOS sandbox hides the system).
-    case unsupportedEnvironment(String)
-    /// The environment supports it, but a required program or service is not installed/running.
+    /// Available to this process, but the user turned it off in Capabilities & Access.
+    case disabledByUser(String)
+    /// Nothing needed was observable from this process (typically the app sandbox). This is not
+    /// a claim about the device: it may or may not be jailbroken.
+    case environmentUnknown(String)
+    /// The environment is visible, but a required program or service is not installed/running.
     case toolMissing(String)
     /// The thing exists, but the system refused this app access (EPERM/EACCES, sandbox).
     case permissionDenied(String)
@@ -58,21 +64,30 @@ public enum CapabilityAvailability: Hashable, Codable, Sendable {
     /// It was used successfully on this device.
     case verified(String)
 
-    /// Whether the user can try to use it now.
+    /// Whether the user can use it now (detected and enabled).
     public var isUsable: Bool {
         switch self {
         case .availableUntested, .verified: true
-        case .notIncluded, .unsupportedEnvironment, .toolMissing, .permissionDenied: false
+        case .notIncluded, .disabledByUser, .environmentUnknown, .toolMissing, .permissionDenied: false
+        }
+    }
+
+    /// Whether the device and build would allow it, ignoring the user's switch.
+    public var isAvailableToProcess: Bool {
+        switch self {
+        case .availableUntested, .verified, .disabledByUser: true
+        case .notIncluded, .environmentUnknown, .toolMissing, .permissionDenied: false
         }
     }
 
     public var label: String {
         switch self {
-        case .notIncluded: "Not included in this build"
-        case .unsupportedEnvironment: "Unsupported environment"
-        case .toolMissing: "Required tool missing"
+        case .notIncluded: "Not included"
+        case .disabledByUser: "Disabled by you"
+        case .environmentUnknown: "Environment unknown"
+        case .toolMissing: "Tool missing"
         case .permissionDenied: "Permission denied"
-        case .availableUntested: "Available, not tested"
+        case .availableUntested: "Available, untested"
         case .verified: "Verified working"
         }
     }
@@ -80,7 +95,8 @@ public enum CapabilityAvailability: Hashable, Codable, Sendable {
     public var symbolName: String {
         switch self {
         case .notIncluded: "shippingbox"
-        case .unsupportedEnvironment: "nosign"
+        case .disabledByUser: "pause.circle"
+        case .environmentUnknown: "eye.slash"
         case .toolMissing: "wrench.and.screwdriver"
         case .permissionDenied: "lock"
         case .availableUntested: "questionmark.circle"
@@ -91,7 +107,7 @@ public enum CapabilityAvailability: Hashable, Codable, Sendable {
     /// Why it is in this state.
     public var reason: String {
         switch self {
-        case .notIncluded(let s), .unsupportedEnvironment(let s), .toolMissing(let s),
+        case .notIncluded(let s), .disabledByUser(let s), .environmentUnknown(let s), .toolMissing(let s),
              .permissionDenied(let s), .availableUntested(let s), .verified(let s): s
         }
     }
@@ -99,12 +115,19 @@ public enum CapabilityAvailability: Hashable, Codable, Sendable {
     /// What would change the state, for states that are not usable.
     public var remedy: String? {
         switch self {
-        case .notIncluded: "Install the build variant that contains this backend."
-        case .unsupportedEnvironment: "Not possible on this device configuration."
+        case .notIncluded: "Use the build or mode that contains it."
+        case .disabledByUser: "Turn it on in Settings → Capabilities & Access."
+        case .environmentUnknown: "Nothing was observable from this app. On a configured device, the app must be installed so it can see the environment (see the Unleashed installation guide)."
         case .toolMissing: "Install or start the missing tool on the device, then re-check."
         case .permissionDenied: "The device must grant this app access; HCG Terminal never tries to bypass a denial."
         case .availableUntested, .verified: nil
         }
+    }
+
+    /// Applies the user's switch: only usable states become `disabledByUser`.
+    public func applyingSwitch(enabled: Bool, reason: @autoclosure () -> String) -> CapabilityAvailability {
+        guard !enabled, isUsable else { return self }
+        return .disabledByUser(reason())
     }
 }
 
@@ -200,6 +223,25 @@ public struct CapabilityReport: Hashable, Codable, Sendable {
         results.filter { !$0.availability.isUsable }
     }
 
+    /// Applies the user's Capabilities & Access switches. Detected availability is kept; a
+    /// usable capability whose switch (or a prerequisite) is off becomes `disabledByUser`.
+    public func applying(access: AccessPolicy) -> CapabilityReport {
+        var copy = self
+        copy.results = results.map { result in
+            guard let control = AccessControl.control(for: result.kind, mode: mode) else { return result }
+            var updated = result
+            updated.availability = result.availability.applyingSwitch(
+                enabled: access.isEnabled(control),
+                reason: access.denial(control) ?? ""
+            )
+            return updated
+        }
+        if mode == .unleashed, copy.localFeaturesAvailable, !copy[.localShell].availability.isUsable {
+            copy.localFeaturesAvailable = false
+        }
+        return copy
+    }
+
     /// Marks capabilities as verified after real use. Only `availableUntested` results change;
     /// a capability reported as unavailable is never upgraded by a claim.
     public func applying(verifications: [CapabilityKind: CapabilityEvidence]) -> CapabilityReport {
@@ -217,6 +259,39 @@ public struct CapabilityReport: Hashable, Codable, Sendable {
     /// The exact message the interface shows when Unleashed features are unavailable.
     public static let unleashedUnavailableMessage =
         "Unleashed features are not available in this environment. Vanilla terminal and remote development remain available."
+}
+
+public extension AccessControl {
+    /// The switch that governs a capability in a mode, if any.
+    static func control(for kind: CapabilityKind, mode: ExecutionMode) -> AccessControl? {
+        switch (kind, mode) {
+        case (.localShell, .vanilla): .workspaceCommands
+        case (.localShell, .unleashed), (.executableAccess, .unleashed): .localShell
+        case (.executableAccess, .vanilla): nil
+        case (.filesystemPermissions, .unleashed): .expandedFileRead
+        case (.filesystemPermissions, .vanilla): nil
+        case (.packageManager, _): .packageManagement
+        case (.processInspection, _): .processInspection
+        case (.privilegedOperations, _): .privilegedOperations
+        case (.remoteSSH, _): .remoteSSH
+        case (.buildOrchestration, _): .remoteBuilds
+        }
+    }
+
+    /// The capability whose detected availability this switch depends on, in a mode.
+    func capability(in mode: ExecutionMode) -> CapabilityKind? {
+        switch self {
+        case .workspaceCommands: mode == .vanilla ? .localShell : nil
+        case .externalFiles: nil
+        case .localShell: mode == .unleashed ? .localShell : nil
+        case .expandedFileRead, .expandedFileWrite: mode == .unleashed ? .filesystemPermissions : nil
+        case .packageManagement: .packageManager
+        case .processInspection: .processInspection
+        case .privilegedOperations: .privilegedOperations
+        case .remoteSSH: .remoteSSH
+        case .remoteBuilds: .buildOrchestration
+        }
+    }
 }
 
 /// The interface implemented separately by the Vanilla and Unleashed providers.

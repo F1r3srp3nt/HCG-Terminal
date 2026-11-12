@@ -95,7 +95,9 @@ public actor LocalProcessSession: TerminalSession {
     private let workingDirectory: String?
     private let observations: RuntimeObservations
     private let gate: AuthorizationGate
+    private let access: AccessPolicy
     private var process: PTYProcess?
+    private var exitStatus: Int32?
     private var guardState = CommandGuard()
     private var awaitingAuthorization = false
     private var closed = false
@@ -112,8 +114,10 @@ public actor LocalProcessSession: TerminalSession {
         environment: [String: String],
         workingDirectory: String?,
         observations: RuntimeObservations,
-        gate: AuthorizationGate
+        gate: AuthorizationGate,
+        access: AccessPolicy = .shared
     ) {
+        self.access = access
         self.executable = executable
         self.arguments = arguments
         self.environment = environment
@@ -125,6 +129,11 @@ public actor LocalProcessSession: TerminalSession {
 
     public func start(size: TerminalSize) async throws {
         guard process == nil, !closed else { return }
+        if let refusal = access.denial(.localShell) {
+            channel.yield(.notice(TerminalNotice(.error, refusal)))
+            channel.yield(.stateChanged(.failed(message: refusal)))
+            throw AccessDenied(control: .localShell, blockedBy: access.blockingPrerequisite(of: .localShell))
+        }
         channel.yield(.stateChanged(.connecting))
         do {
             let process = try PTYProcess.spawn(
@@ -167,6 +176,7 @@ public actor LocalProcessSession: TerminalSession {
     }
 
     private func exited(_ status: Int32) {
+        exitStatus = status
         guard !closed else { return }
         channel.write("\r\n\(ANSI.dim)[process exited with status \(status)]\(ANSI.reset)\r\n")
         channel.yield(.stateChanged(.exited(status: status)))
@@ -176,6 +186,11 @@ public actor LocalProcessSession: TerminalSession {
     public func send(_ bytes: [UInt8]) async throws {
         guard let process, !closed else { throw ExecutionError.sessionClosed }
         guard !awaitingAuthorization else { return } // input is held while the user decides
+        if let refusal = access.denial(.localShell) {
+            // Enforced here too, not only in the interface: input is not passed to the process.
+            channel.yield(.notice(TerminalNotice(.warning, "Input not sent. \(refusal)")))
+            return
+        }
         switch guardState.observeInput(bytes) {
         case .forward:
             try process.write(bytes)
@@ -185,11 +200,13 @@ public actor LocalProcessSession: TerminalSession {
                 try process.write(Array(bytes[..<returnIndex]))
             }
             awaitingAuthorization = true
-            let granted = await gate.requestAuthorization(AuthorizationRequest(
-                title: "Run a privileged command?", commandLine: line, target: target, reasons: reasons
+            let decision = await gate.decide(AuthorizationRequest(
+                title: "Run a privileged command?", commandLine: line, target: target, reasons: reasons,
+                requiredAccess: PrivilegeClassifier.assess(line).requiredAccess
             ))
             awaitingAuthorization = false
-            await DiagnosticLog.shared.record(.notice, "authorization", granted ? "Privileged command approved" : "Privileged command declined", metadata: ["target": target.label])
+            let granted = decision.isApproved
+            await DiagnosticLog.shared.record(.notice, "authorization", granted ? "Privileged command approved" : "Privileged command not run", metadata: ["target": target.label])
             if granted {
                 try process.write([0x0D])
             } else {
@@ -197,7 +214,11 @@ public actor LocalProcessSession: TerminalSession {
                 // Ctrl-E moves to the end (readline/zle; inserted literally by a canonical tty),
                 // then Ctrl-U kills the whole line in all three cases.
                 try process.write([0x05, 0x15])
-                channel.yield(.notice(TerminalNotice(.info, "Not run: authorization was declined.")))
+                if case .refused(let denied) = decision {
+                    channel.yield(.notice(TerminalNotice(.warning, "Not run. \(denied.localizedDescription)")))
+                } else {
+                    channel.yield(.notice(TerminalNotice(.info, "Not run: authorization was declined.")))
+                }
             }
         }
     }
@@ -214,6 +235,29 @@ public actor LocalProcessSession: TerminalSession {
         // foreground job, so signal the session's process group directly.
         process.signal(SIGINT)
         #endif
+    }
+
+    /// Hangs up the shell, waits (bounded) for its exit, and only then reports it as exited.
+    /// If it has not exited after SIGHUP it gets SIGKILL; if that is not observed either, the
+    /// outcome says so.
+    public func stop() async -> SessionStopOutcome {
+        if let exitStatus { await close(); return .processExited(status: exitStatus) }
+        guard let process else { await close(); return .processExitNotConfirmed }
+        process.signal(SIGHUP)
+        if let status = await waitForExit(seconds: 2) { await close(); return .processExited(status: status) }
+        process.signal(SIGKILL)
+        let status = await waitForExit(seconds: 2)
+        await close()
+        return status.map { .processExited(status: $0) } ?? .processExitNotConfirmed
+    }
+
+    private func waitForExit(seconds: Double) async -> Int32? {
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline {
+            if let exitStatus { return exitStatus }
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+        return exitStatus
     }
 
     public func close() async {

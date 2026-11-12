@@ -47,6 +47,31 @@ public enum ConnectionTestResult: Equatable {
     case failure(category: String, message: String)
 }
 
+/// A pending change to a Capabilities & Access switch that needs the user's confirmation,
+/// because it stops something that is running or widens what HCG Terminal may do.
+public struct AccessChangeRequest: Identifiable {
+    public let id = UUID()
+    public let control: AccessControl
+    public let enabled: Bool
+    /// Switches that stop working with this change (the control and its dependents).
+    public let newlyDisabled: [AccessControl]
+    /// Live sessions that will be ended, with what ending them can and cannot guarantee.
+    public let sessions: [AffectedSession]
+    public let stopsRunningBuild: Bool
+    /// Extra explanation for switches that widen access (write, privileged).
+    public let caution: String?
+
+    public struct AffectedSession: Identifiable, Hashable {
+        public let id: SessionID
+        public let title: String
+        public let target: ExecutionTarget
+        public let consequence: String
+    }
+
+    public var stopsSomething: Bool { !sessions.isEmpty || stopsRunningBuild }
+    public var needsConfirmation: Bool { stopsSomething || caution != nil }
+}
+
 /// The mode-switch confirmation shown when existing local sessions could be moved.
 public struct ModeSwitchConfirmation: Identifiable {
     public let id = UUID()
@@ -88,9 +113,22 @@ public final class TerminalAppModel {
     // MARK: Remote development
     public private(set) var builds: BuildCenter!
 
+    // MARK: Capabilities & Access
+    /// Mirror of the access switches for the interface. The services read the policy itself.
+    public private(set) var accessSettings: AccessSettings
+    public var pendingAccessChange: AccessChangeRequest?
+    /// What the last confirmed change actually did (shown once).
+    public var accessChangeOutcome: String?
+
+    // MARK: Environment
+    public private(set) var assessment: EnvironmentAssessment?
+    public private(set) var appearance: AppearanceSettings
+
     public init(dependencies: AppDependencies) {
         self.dependencies = dependencies
         self.preferredMode = dependencies.preferences.preferredMode
+        self.accessSettings = dependencies.access.settings
+        self.appearance = dependencies.appearance.settings
         self.builds = BuildCenter(dependencies: dependencies) { [weak self] hostID in
             guard let self, let host = self.hosts.first(where: { $0.id == hostID }) else {
                 throw RemoteSessionError.unknownHost
@@ -115,6 +153,7 @@ public final class TerminalAppModel {
         keys = dependencies.keyManager.list()
         await builds.reload()
         await refreshCapabilities()
+        await refreshAssessment()
         if preferredMode != .vanilla, !isAvailable(preferredMode) {
             // A saved preference for a mode that cannot run here never takes effect.
             preferredMode = .vanilla
@@ -139,8 +178,163 @@ public final class TerminalAppModel {
 
     private func applyVerifications() {
         for (mode, report) in detectedReports {
-            reports[mode] = report.applying(verifications: verifications[mode] ?? [:])
+            reports[mode] = report
+                .applying(verifications: verifications[mode] ?? [:])
+                .applying(access: dependencies.access)
         }
+    }
+
+    /// Re-reads the layered environment assessment (read-only).
+    public func refreshAssessment() async {
+        assessment = await dependencies.environmentAssessment()
+    }
+
+    // MARK: - Appearance
+
+    public func updateAppearance(_ change: (inout AppearanceSettings) -> Void) {
+        var updated = appearance
+        change(&updated)
+        dependencies.appearance.settings = updated
+        appearance = dependencies.appearance.settings
+    }
+
+    // MARK: - Capabilities & Access
+
+    /// The detected availability of what a switch governs, ignoring the switch itself
+    /// (`nil` when no detection applies, e.g. files you pick in the system file picker).
+    public func detectedAvailability(for control: AccessControl) -> CapabilityAvailability? {
+        if control.requiresUnleashedBackend && dependencies.distribution == .standard {
+            return .notIncluded(UnleashedNotIncludedCapabilityProvider.reason)
+        }
+        let mode: ExecutionMode = (control.requiresUnleashedBackend || (control == .processInspection && dependencies.distribution == .unleashed)) ? .unleashed : .vanilla
+        guard let kind = control.capability(in: mode) ?? control.capability(in: .vanilla),
+              let report = detectedReports[mode] ?? detectedReports[.vanilla] else { return nil }
+        var availability = report.applying(verifications: verifications[mode] ?? [:])[kind].availability
+        if control == .expandedFileWrite, availability.isUsable {
+            // Listing proves reading only. Writing is "available" only where access(W_OK)
+            // allowed it and "verified" only after a real write.
+            availability = writeVerified ? .verified("A file was written in a location outside the sandbox.") : .availableUntested("Some locations report write access; nothing has been written yet.")
+        }
+        return availability
+    }
+
+    @ObservationIgnored private var writeVerified = false
+
+    /// Availability with the user's switch applied — what the interface shows as the status.
+    public func effectiveAvailability(for control: AccessControl) -> CapabilityAvailability? {
+        detectedAvailability(for: control).map {
+            $0.applyingSwitch(enabled: dependencies.access.isEnabled(control), reason: dependencies.access.denial(control) ?? "")
+        }
+    }
+
+    /// Asks to change a switch. Applies at once when nothing is running that it would stop and
+    /// it does not widen access; otherwise `pendingAccessChange` is set for confirmation.
+    public func requestAccessChange(_ control: AccessControl, enabled: Bool) async {
+        guard dependencies.access.isOn(control) != enabled else { return }
+        let request = accessChange(control, enabled: enabled)
+        if request.needsConfirmation {
+            pendingAccessChange = request
+        } else {
+            await applyAccessChange(request)
+        }
+    }
+
+    func accessChange(_ control: AccessControl, enabled: Bool) -> AccessChangeRequest {
+        let disabled = enabled ? [] : dependencies.access.newlyDisabled(ifSetting: control, to: false)
+        var affected: [AccessChangeRequest.AffectedSession] = []
+        for session in sessions where session.isLive {
+            let consequence: String?
+            switch session.backend {
+            case .builtInCommands where disabled.contains(.workspaceCommands):
+                consequence = "Ended (in-app session; nothing runs outside the app)."
+            case .localProcess where disabled.contains(.localShell):
+                consequence = "The shell and the programs it started are sent SIGHUP (then SIGKILL); the exit is confirmed before reporting."
+            case .loopbackService where disabled.contains(.localShell):
+                consequence = "Disconnected from the device's terminal service. Programs started through it may keep running; not verified."
+            case .sshShell, .sshCommand:
+                consequence = disabled.contains(.remoteSSH)
+                    ? "Disconnected. Programs started on the host may keep running there; HCG Terminal cannot confirm they stopped."
+                    : nil
+            default:
+                consequence = nil
+            }
+            if let consequence {
+                affected.append(.init(id: session.id, title: session.title, target: session.target, consequence: consequence))
+            }
+        }
+        let caution: String? = switch (control, enabled) {
+        case (.expandedFileWrite, true):
+            "HCG Terminal may then change files outside its sandbox where the device allows it. System and jailbreak locations still ask before each change. Nothing on the device's permissions changes."
+        case (.privilegedOperations, true):
+            "Privileged commands HCG Terminal recognizes will be offered for approval one at a time instead of refused. HCG Terminal never supplies a password and never elevates by itself."
+        default: nil
+        }
+        return AccessChangeRequest(
+            control: control, enabled: enabled, newlyDisabled: disabled, sessions: affected,
+            stopsRunningBuild: disabled.contains(.remoteBuilds) && builds.isRunning, caution: caution
+        )
+    }
+
+    /// Confirms the pending change: sets the switch, then stops what it affects and reports
+    /// exactly what is known about each stop.
+    public func confirmAccessChange() async {
+        guard let request = pendingAccessChange else { return }
+        pendingAccessChange = nil
+        await applyAccessChange(request)
+    }
+
+    /// Leaves the switch as it was; nothing is stopped.
+    public func cancelAccessChange() {
+        pendingAccessChange = nil
+        accessSettings = dependencies.access.settings
+    }
+
+    private func applyAccessChange(_ request: AccessChangeRequest) async {
+        dependencies.access.set(request.control, enabled: request.enabled)
+        accessSettings = dependencies.access.settings
+        var lines: [String] = []
+        var localConfirmed = 0, localUnconfirmed = 0, disconnected = 0, ended = 0
+        for affected in request.sessions {
+            guard let model = session(affected.id) else { continue }
+            switch await model.stop() {
+            case .processExited: localConfirmed += 1
+            case .processExitNotConfirmed: localUnconfirmed += 1
+            case .disconnected: disconnected += 1
+            case .ended: ended += 1
+            }
+        }
+        if request.newlyDisabled.contains(.remoteSSH) {
+            for (_, connection) in connections { await connection.close() }
+            connections.removeAll()
+        }
+        if ended > 0 { lines.append("Ended \(ended) built-in command session\(ended == 1 ? "" : "s").") }
+        if localConfirmed > 0 { lines.append("Stopped \(localConfirmed) local shell\(localConfirmed == 1 ? "" : "s"); exit confirmed.") }
+        if localUnconfirmed > 0 { lines.append("Sent stop signals to \(localUnconfirmed) local shell\(localUnconfirmed == 1 ? "" : "s"), but the exit was not confirmed.") }
+        if disconnected > 0 { lines.append("Disconnected \(disconnected) session\(disconnected == 1 ? "" : "s"). Programs started through them may still be running on the other side; that was not verified.") }
+        if request.stopsRunningBuild {
+            builds.cancel()
+            lines.append("Cancelled the running build: the channel was closed and the remote process group was sent TERM. Whether it stopped is shown in the build log, not assumed.")
+        }
+        accessChangeOutcome = lines.isEmpty ? nil : lines.joined(separator: " ")
+        await DiagnosticLog.shared.record(.notice, "access", "Switch changed", metadata: [
+            "control": request.control.rawValue, "enabled": "\(request.enabled)",
+            "stoppedSessions": "\(request.sessions.count)", "build": "\(request.stopsRunningBuild)",
+        ])
+        await refreshCapabilities()
+    }
+
+    /// Restores the factory switches (expanded write and privileged operations off). Uses the
+    /// same confirmation rules for anything it would stop.
+    public func resetAccessToDefaults() async {
+        for control in AccessControl.allCases where dependencies.access.isOn(control) != control.defaultEnabled {
+            await requestAccessChange(control, enabled: control.defaultEnabled)
+            if pendingAccessChange != nil { return }
+        }
+    }
+
+    /// Records a successful write (explicit write test or a saved file).
+    public func noteWriteVerified() {
+        writeVerified = true
     }
 
     /// Records that a capability was used successfully. Shared capabilities (remote SSH,
@@ -220,6 +414,10 @@ public final class TerminalAppModel {
         case .vanilla: provider = dependencies.vanilla
         case .unleashed: provider = dependencies.unleashed
         }
+        if let refusal = dependencies.access.denial(mode == .vanilla ? .workspaceCommands : .localShell), provider != nil {
+            errorMessage = refusal
+            return nil
+        }
         guard let provider, isAvailable(mode) else {
             errorMessage = CapabilityReport.unleashedUnavailableMessage
             return nil
@@ -252,7 +450,10 @@ public final class TerminalAppModel {
         }
         let endpoint = RemoteEndpoint(hostID: UUID(), displayName: "This device", hostname: "127.0.0.1", port: port, username: username)
         do {
-            let connection = try await SSHConnection.connect(endpoint: endpoint, authentication: .password(password), hostKeyPolicy: hostKeyPolicy)
+            let connection = try await SSHConnection.connect(
+                endpoint: endpoint, authentication: .password(password), hostKeyPolicy: hostKeyPolicy,
+                requiredAccess: [.localShell], access: dependencies.access
+            )
             let session = try await connection.openSession(
                 size: .standard, target: .local(.unleashed), backend: .loopbackService(host: "127.0.0.1", port: port)
             )
@@ -294,7 +495,7 @@ public final class TerminalAppModel {
         connections[host.id] = nil
         let connection: SSHConnection
         do {
-            connection = try await SSHConnection.connect(endpoint: host.endpoint, authentication: authentication(for: host), hostKeyPolicy: hostKeyPolicy)
+            connection = try await SSHConnection.connect(endpoint: host.endpoint, authentication: authentication(for: host), hostKeyPolicy: hostKeyPolicy, access: dependencies.access)
         } catch let error as SSHConnectionError {
             noteHostKeyChange(error, host: host)
             throw error
@@ -324,7 +525,8 @@ public final class TerminalAppModel {
         let started = Date()
         do {
             let connection = try await SSHConnection.connect(
-                endpoint: host.endpoint, authentication: authentication(for: host, enteredPassword: enteredPassword), hostKeyPolicy: hostKeyPolicy
+                endpoint: host.endpoint, authentication: authentication(for: host, enteredPassword: enteredPassword), hostKeyPolicy: hostKeyPolicy,
+                access: dependencies.access
             )
             defer { Task { await connection.close() } }
             let shell = try await connection.run("printf '%s' \"${SHELL:-unknown}\"").stdoutText
@@ -334,6 +536,8 @@ public final class TerminalAppModel {
         } catch let error as SSHConnectionError {
             noteHostKeyChange(error, host: host)
             return .failure(category: error.category, message: error.localizedDescription)
+        } catch let denied as AccessDenied {
+            return .failure(category: "Turned off", message: denied.localizedDescription)
         } catch {
             return .failure(category: "Error", message: error.localizedDescription)
         }

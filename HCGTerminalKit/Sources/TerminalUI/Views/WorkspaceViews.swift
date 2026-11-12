@@ -156,7 +156,7 @@ struct WorkspaceBrowserView: View {
     }
 
     private func export(_ path: WorkspacePath) {
-        do { exportTarget = ExportTarget(url: try workspace.url(for: path)) } catch { status = error.localizedDescription }
+        do { exportTarget = ExportTarget(url: try workspace.exportURL(for: path)) } catch { status = error.localizedDescription }
     }
 
     private func beginImport(_ urls: [URL]) {

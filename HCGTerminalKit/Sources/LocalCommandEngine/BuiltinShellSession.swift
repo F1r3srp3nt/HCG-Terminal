@@ -51,14 +51,19 @@ public struct BuiltinShellConfiguration: Sendable {
     public var capabilityDescription: @Sendable () async -> String
     /// Shared history and last working directory; `nil` keeps the session self-contained.
     public var persistence: ShellPersistence?
+    /// Checked before every command line. Returns why commands are refused (for example the
+    /// user turned workspace commands off), or `nil` to run it. `exit` always works.
+    public var commandGate: (@Sendable () -> String?)?
 
     public init(
         target: ExecutionTarget, workspace: FileWorkspace, environment: [String: String], banner: String,
         promptLabel: String, promptColor: String, sessionDescription: [String],
         capabilityDescription: @escaping @Sendable () async -> String,
-        persistence: ShellPersistence? = nil
+        persistence: ShellPersistence? = nil,
+        commandGate: (@Sendable () -> String?)? = nil
     ) {
         self.persistence = persistence
+        self.commandGate = commandGate
         self.target = target
         self.workspace = workspace
         self.environment = environment
@@ -249,6 +254,11 @@ public actor BuiltinShellSession: TerminalSession {
     }
 
     private func execute(_ line: String) async {
+        if let refusal = configuration.commandGate?(), !["exit", "logout"].contains(line.trimmingCharacters(in: .whitespaces)) {
+            channel.write("hcg: \(refusal)\n")
+            lastStatus = 126
+            return
+        }
         let list: CommandList
         do {
             list = try CommandParser.parse(line, environment: context.environment, lastStatus: lastStatus)

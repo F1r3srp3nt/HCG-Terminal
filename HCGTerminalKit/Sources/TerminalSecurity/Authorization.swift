@@ -5,6 +5,16 @@ import TerminalCore
 public struct PrivilegeAssessment: Hashable, Sendable {
     public var requiresAuthorization: Bool
     public var reasons: [String]
+    /// The Capabilities & Access switches an approval of this command depends on:
+    /// `.privilegedOperations` for elevation and device or system changes, `.packageManagement`
+    /// for package changes.
+    public var requiredAccess: [AccessControl]
+
+    public init(requiresAuthorization: Bool, reasons: [String], requiredAccess: [AccessControl] = []) {
+        self.requiresAuthorization = requiresAuthorization
+        self.reasons = reasons
+        self.requiredAccess = requiredAccess
+    }
 
     public static let unprivileged = PrivilegeAssessment(requiresAuthorization: false, reasons: [])
 }
@@ -46,7 +56,11 @@ public enum PrivilegeClassifier {
 
     public static func assess(_ commandLine: String) -> PrivilegeAssessment {
         var reasons: [String] = []
-        func add(_ reason: String) { if !reasons.contains(reason) { reasons.append(reason) } }
+        var access: [AccessControl] = []
+        func add(_ reason: String, _ control: AccessControl = .privilegedOperations) {
+            if !reasons.contains(reason) { reasons.append(reason) }
+            if !access.contains(control) { access.append(control) }
+        }
 
         for segment in commandLine.split(whereSeparator: { ";|&\n()`".contains($0) }) {
             var words = segment.split(whereSeparator: { $0 == " " || $0 == "\t" }).map {
@@ -69,7 +83,7 @@ public enum PrivilegeClassifier {
 
             if elevationTools.contains(tool) { add("`\(tool)` requests elevated privileges.") }
             if packageTools.contains(tool), arguments.contains(where: packageMutatingVerbs.contains) {
-                add("`\(tool)` would change installed packages.")
+                add("`\(tool)` would change installed packages.", .packageManagement)
             }
             if deviceStateTools.contains(tool) { add("`\(tool)` can change device or system state.") }
             if tool == "sysctl", arguments.contains(where: { $0 == "-w" || $0.contains("=") }) {
@@ -84,7 +98,7 @@ public enum PrivilegeClassifier {
             $0.trimmingCharacters(in: CharacterSet(charactersIn: "> \t")).split(separator: " ").first.map(String.init)
         }
         if redirectTargets.contains(where: isProtected) { add("Output is redirected into a protected system location.") }
-        return PrivilegeAssessment(requiresAuthorization: !reasons.isEmpty, reasons: reasons)
+        return PrivilegeAssessment(requiresAuthorization: !reasons.isEmpty, reasons: reasons, requiredAccess: access)
     }
 }
 
@@ -95,20 +109,35 @@ public struct AuthorizationRequest: Hashable, Sendable, Identifiable {
     public var commandLine: String
     public var target: ExecutionTarget
     public var reasons: [String]
+    /// Switches that must be on for this request to be offered at all. When one is off the
+    /// request is refused without asking.
+    public var requiredAccess: [AccessControl]
 
-    public init(id: UUID = UUID(), title: String, commandLine: String, target: ExecutionTarget, reasons: [String]) {
+    public init(id: UUID = UUID(), title: String, commandLine: String, target: ExecutionTarget, reasons: [String], requiredAccess: [AccessControl] = []) {
         self.id = id
         self.title = title
         self.commandLine = commandLine
         self.target = target
         self.reasons = reasons
+        self.requiredAccess = requiredAccess
     }
+}
+
+/// How a request ended.
+public enum AuthorizationDecision: Hashable, Sendable {
+    case approved
+    case declined
+    /// Not offered: a Capabilities & Access switch it needs is off.
+    case refused(AccessDenied)
+
+    public var isApproved: Bool { self == .approved }
 }
 
 public struct AuthorizationRecord: Hashable, Sendable {
     public var request: AuthorizationRequest
     public var granted: Bool
     public var decidedAt: Date
+    public var decision: AuthorizationDecision
 }
 
 /// Routes privileged actions through an explicit user decision. There is no "always allow":
@@ -118,9 +147,11 @@ public actor AuthorizationGate {
 
     private var presenter: Presenter?
     private var history: [AuthorizationRecord] = []
+    private let access: AccessPolicy
 
-    public init(presenter: Presenter? = nil) {
+    public init(presenter: Presenter? = nil, access: AccessPolicy = .shared) {
         self.presenter = presenter
+        self.access = access
     }
 
     public func setPresenter(_ presenter: Presenter?) {
@@ -129,13 +160,26 @@ public actor AuthorizationGate {
 
     /// Returns true only if the user explicitly approved this specific request.
     public func requestAuthorization(_ request: AuthorizationRequest) async -> Bool {
-        guard let presenter else {
-            history.append(AuthorizationRecord(request: request, granted: false, decidedAt: Date()))
-            return false
+        await decide(request).isApproved
+    }
+
+    /// Refuses without asking when a required switch is off; otherwise asks the user.
+    public func decide(_ request: AuthorizationRequest) async -> AuthorizationDecision {
+        let decision: AuthorizationDecision
+        do {
+            try access.requireAll(request.requiredAccess)
+            if let presenter {
+                decision = await presenter(request) ? .approved : .declined
+            } else {
+                decision = .declined
+            }
+        } catch let denied as AccessDenied {
+            decision = .refused(denied)
+        } catch {
+            decision = .declined
         }
-        let granted = await presenter(request)
-        history.append(AuthorizationRecord(request: request, granted: granted, decidedAt: Date()))
-        return granted
+        history.append(AuthorizationRecord(request: request, granted: decision.isApproved, decidedAt: Date(), decision: decision))
+        return decision
     }
 
     public func auditTrail() -> [AuthorizationRecord] { history }

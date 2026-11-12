@@ -35,7 +35,7 @@ public struct VanillaCapabilityProvider: TerminalCapabilityProvider {
             ),
             CapabilityResult(
                 kind: .executableAccess,
-                availability: .unsupportedEnvironment("iOS does not let App Store apps start other programs."),
+                availability: .notIncluded("Not part of Vanilla mode: iOS does not let ordinary apps start other programs."),
                 summary: "Only HCG built-in commands run locally; use a remote host for system tools.",
                 evidence: [CapabilityEvidence(probe: "Vanilla policy", observation: "no process execution", positive: false)]
             ),
@@ -52,13 +52,13 @@ public struct VanillaCapabilityProvider: TerminalCapabilityProvider {
             ),
             CapabilityResult(
                 kind: .packageManager,
-                availability: .unsupportedEnvironment("There is no package manager on standard iOS."),
+                availability: .notIncluded("Not part of Vanilla mode: standard iOS has no package manager for apps."),
                 summary: "Install toolchains on a remote host instead."
             ),
             processInspectionResult(processCount),
             CapabilityResult(
                 kind: .privilegedOperations,
-                availability: .unsupportedEnvironment("Vanilla never performs privileged operations."),
+                availability: .notIncluded("Not part of Vanilla mode: it never performs privileged operations."),
                 summary: "Everything runs with the app's ordinary sandbox permissions."
             ),
             SharedCapabilities.remoteSSH(),
@@ -95,17 +95,21 @@ public struct VanillaExecutionProvider: LocalExecutionProvider {
     private let workspace: FileWorkspace
     private let capabilities: VanillaCapabilityProvider
     private let persistence: ShellPersistence
+    private let access: AccessPolicy
 
-    public init(workspace: FileWorkspace, capabilities: VanillaCapabilityProvider) {
+    public init(workspace: FileWorkspace, capabilities: VanillaCapabilityProvider, access: AccessPolicy = .shared) {
         self.workspace = workspace
         self.capabilities = capabilities
         self.persistence = ShellPersistence(workspace: workspace)
+        self.access = access
     }
 
     public func availableBackend() async -> SessionBackend? { .builtInCommands }
 
     public func makeSession() async throws -> any TerminalSession {
+        try access.require(.workspaceCommands)
         let capabilities = self.capabilities
+        let access = self.access
         let session = BuiltinShellSession(
             configuration: BuiltinShellConfiguration(
                 target: .local(.vanilla),
@@ -121,7 +125,8 @@ public struct VanillaExecutionProvider: LocalExecutionProvider {
                     "Files:    app workspace; history and last folder kept in /home/.hcg_history and /home/.hcg_cwd",
                 ],
                 capabilityDescription: { CapabilityReportFormatter.text(await capabilities.detectCapabilities()) },
-                persistence: persistence
+                persistence: persistence,
+                commandGate: { access.denial(.workspaceCommands) }
             ),
             external: RefusingExternalCommandHandler(
                 policyDescription: "Only HCG built-in commands run here. Other programs are not executed on this device and are never sent to a remote host automatically; open a Remote Host session for system tools.",

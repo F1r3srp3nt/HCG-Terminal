@@ -64,6 +64,8 @@ public protocol SystemProbing: Sendable {
     func visibleProcessCount() -> Int?
     /// Operating-system description for reports.
     func osDescription() -> String
+    /// The path with symlinks resolved (`realpath`), or `nil` if it cannot be resolved.
+    func resolvedPath(_ path: String) -> String?
 }
 
 public struct PathProbeFailure: Error, Hashable, Sendable {
@@ -72,6 +74,8 @@ public struct PathProbeFailure: Error, Hashable, Sendable {
 }
 
 public extension SystemProbing {
+    func resolvedPath(_ path: String) -> String? { exists(path) ? path : nil }
+
     /// Defaults for probes that only implement the boolean checks (tests).
     func probe(_ path: String) -> PathProbe { exists(path) ? .present : .missing }
     func listing(_ path: String) -> Result<[String], PathProbeFailure> {
@@ -111,6 +115,12 @@ public struct LiveSystemProbe: SystemProbing {
         var st = stat()
         guard stat(path, &st) == 0 else { return false }
         return (st.st_mode & S_IFMT) == S_IFDIR
+    }
+
+    public func resolvedPath(_ path: String) -> String? {
+        guard let resolved = realpath(path, nil) else { return nil }
+        defer { free(resolved) }
+        return String(cString: resolved)
     }
 
     public func isReadable(_ path: String) -> Bool { access(path, R_OK) == 0 }

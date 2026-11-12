@@ -22,7 +22,7 @@ final class HostFileSystemTests: XCTestCase {
     }
 
     func testWriteCreateRenameDeleteInsidePermittedRoot() async throws {
-        let files = HostFileSystem(roots: [root.path], gate: nil)
+        let files = HostFileSystem(roots: [root.path], gate: nil, access: .allEnabled())
         let base = HostFileSystem.resolve(root.path)
         XCTAssertTrue(files.isWritable(base))
         let folder = try await files.createDirectory(named: "My Notes", in: base)
@@ -40,7 +40,7 @@ final class HostFileSystemTests: XCTestCase {
     }
 
     func testEscapesAreRefused() async throws {
-        let files = HostFileSystem(roots: [root.path], gate: nil)
+        let files = HostFileSystem(roots: [root.path], gate: nil, access: .allEnabled())
         let base = HostFileSystem.resolve(root.path)
         XCTAssertThrowsError(try files.list(outside.path))
         XCTAssertThrowsError(try files.readText(base + "/../" + outside.lastPathComponent + "/secret.txt"))
@@ -69,8 +69,8 @@ final class HostFileSystemTests: XCTestCase {
 
         final class Answers: @unchecked Sendable { var asked: [String] = []; var answer = false }
         let answers = Answers()
-        let gate = AuthorizationGate(presenter: { request in answers.asked.append(request.commandLine); return answers.answer })
-        let files = HostFileSystem(roots: [protected], gate: gate, needsApproval: { $0.hasPrefix(protected) })
+        let gate = AuthorizationGate(presenter: { request in answers.asked.append(request.commandLine); return answers.answer }, access: .allEnabled())
+        let files = HostFileSystem(roots: [protected], gate: gate, needsApproval: { $0.hasPrefix(protected) }, access: .allEnabled())
         do { try await files.writeText("x", to: protected + "/config"); XCTFail("declined must not write") } catch {
             XCTAssertEqual(error as? LocationBrowserError, .approvalDeclined(protected + "/config"))
         }
@@ -81,7 +81,7 @@ final class HostFileSystemTests: XCTestCase {
         try await files.delete(protected + "/config")
         XCTAssertEqual(answers.asked.count, 3, "asked for every change, no standing permission")
 
-        let ungated = HostFileSystem(roots: [protected], gate: nil, needsApproval: { $0.hasPrefix(protected) })
+        let ungated = HostFileSystem(roots: [protected], gate: nil, needsApproval: { $0.hasPrefix(protected) }, access: .allEnabled())
         do { try await ungated.writeText("x", to: protected + "/other"); XCTFail("no presenter means no approval") } catch {}
     }
 }

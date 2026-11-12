@@ -100,6 +100,15 @@ public final class SessionModel: Identifiable {
         Task { await session.interrupt() }
     }
 
+    /// Ends the session but keeps it (and its scrollback) in the list, and returns what is
+    /// actually known about the end.
+    public func stop() async -> SessionStopOutcome {
+        let outcome = await session.stop()
+        if !state.isTerminal { state = .closed }
+        handle(.notice(TerminalNotice(.info, "Session ended by a settings change: \(outcome.description).")))
+        return outcome
+    }
+
     public func close() async {
         await session.close()
         pump?.cancel()

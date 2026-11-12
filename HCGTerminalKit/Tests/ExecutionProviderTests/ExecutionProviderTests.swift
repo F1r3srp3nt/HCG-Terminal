@@ -66,7 +66,7 @@ final class UnleashedDetectionTests: XCTestCase {
         for kind in localKinds {
             XCTAssertFalse(report[kind].availability.isUsable, kind.rawValue)
         }
-        guard case .unsupportedEnvironment = report[.localShell].availability else { return XCTFail("\(report[.localShell].availability)") }
+        guard case .environmentUnknown = report[.localShell].availability else { return XCTFail("\(report[.localShell].availability)") }
         guard case .availableUntested = report[.remoteSSH].availability else { return XCTFail() }
         XCTAssertTrue(report[.buildOrchestration].availability.isUsable)
     }
@@ -255,7 +255,7 @@ final class UnleashedRealExecutionTests: XCTestCase {
         let gate = AuthorizationGate(presenter: { request in
             decisions.requests.append(request)
             return decisions.answer
-        })
+        }, access: .allEnabled())
         let arguments = shell.hasSuffix("bash") ? ["--norc", "--noprofile", "-i"] : shell.hasSuffix("zsh") ? ["-f", "-i"] : []
         let session = LocalProcessSession(executable: shell, arguments: arguments, environment: ["PATH": "/usr/bin:/bin", "PS1": "$ ", "TERM": "xterm-256color"], workingDirectory: "/", observations: RuntimeObservations(), gate: gate)
         let output = collect(session) { $0.contains("AFTER-2") }
@@ -403,7 +403,7 @@ final class VanillaProviderTests: XCTestCase {
         XCTAssertEqual(report[.privilegedOperations].availability.isUsable, false)
         guard case .verified = report[.localShell].availability else { return XCTFail() }
         guard case .verified = report[.filesystemPermissions].availability else { return XCTFail() }
-        guard case .unsupportedEnvironment = report[.executableAccess].availability else { return XCTFail() }
+        guard case .notIncluded = report[.executableAccess].availability else { return XCTFail() }
         XCTAssertTrue(report[.localShell].summary.contains("not a system shell"))
 
         let provider = VanillaExecutionProvider(workspace: workspace, capabilities: capabilities)

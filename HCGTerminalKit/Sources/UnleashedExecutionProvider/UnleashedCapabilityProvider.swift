@@ -8,8 +8,8 @@ public struct UnleashedCapabilityProvider: TerminalCapabilityProvider {
     private let scanner: UnleashedEnvironmentScanner
     private let observations: RuntimeObservations
 
-    public init(probe: any SystemProbing = LiveSystemProbe(), observations: RuntimeObservations) {
-        self.scanner = UnleashedEnvironmentScanner(probe: probe)
+    public init(probe: any SystemProbing = LiveSystemProbe(), observations: RuntimeObservations, customRoots: @escaping @Sendable () -> [String] = { [] }) {
+        self.scanner = UnleashedEnvironmentScanner(probe: probe, customRoots: customRoots)
         self.observations = observations
     }
 
@@ -32,16 +32,17 @@ public struct UnleashedCapabilityProvider: TerminalCapabilityProvider {
     public static func report(for scan: UnleashedEnvironmentScan, observations: RuntimeObservations) async -> CapabilityReport {
         let denied = scan.deniedPaths
         let deniedNote = denied.isEmpty ? nil : "The system refused this app access to \(denied.joined(separator: ", "))."
-        let stockReason = "This device does not expose a shell environment to apps (standard sandboxed iOS: no shell, no jailbreak layout visible)."
+        let stockReason = "No shell environment is observable from this app. A sandboxed install sees this even on a jailbroken device, so it does not show whether the device is jailbroken."
         func absent(_ tool: String) -> CapabilityAvailability {
             if let deniedNote, !scan.environmentVisible { return .permissionDenied(deniedNote) }
-            return scan.environmentVisible ? .toolMissing("\(tool) was not found in the visible environment.") : .unsupportedEnvironment(stockReason)
+            return scan.environmentVisible ? .toolMissing("\(tool) was not found in the visible environment.") : .environmentUnknown(stockReason)
         }
         func spawnState(_ code: Int32, _ message: String) -> CapabilityAvailability {
             switch code {
-            case EPERM, EACCES: .permissionDenied("The system refused to start it: \(message). Apps installed through TestFlight or the App Store are sandboxed and cannot start processes.")
+            case EPERM, EACCES: .permissionDenied("The system refused to start it: \(message). Apps installed through TestFlight, the App Store or Xcode run in the sandbox and cannot start processes.")
             case ENOENT: .toolMissing("It disappeared before it could be started: \(message).")
-            default: .unsupportedEnvironment("Starting it failed: \(message).")
+            case ENOEXEC: .toolMissing("It is not a program this device can run: \(message).")
+            default: .environmentUnknown("Starting it failed: \(message).")
             }
         }
 
@@ -105,7 +106,7 @@ public struct UnleashedCapabilityProvider: TerminalCapabilityProvider {
         } else if scan.locations.contains(where: { scan.pathProbes[$0.path]?.isDenied == true || ($0.exists && !$0.listable) }) {
             fsAvailability = .permissionDenied("Locations outside the app sandbox exist but this app may not list them.")
         } else {
-            fsAvailability = .unsupportedEnvironment("No location outside the app sandbox is visible to this app.")
+            fsAvailability = .environmentUnknown("No location outside the app sandbox is visible to this app.")
         }
         let filesystemResult = CapabilityResult(kind: .filesystemPermissions, availability: fsAvailability, summary: "Browse and read permitted locations outside the app sandbox; access is exactly what the device grants.", evidence: fsChecks)
 
@@ -148,7 +149,7 @@ public struct UnleashedCapabilityProvider: TerminalCapabilityProvider {
         )
 
         let localAvailable = shellResult.availability.isUsable
-        var notes = ["Unleashed build. \(scan.operatingSystem)"]
+        var notes = ["Unleashed build: backend linked. \(scan.operatingSystem)"]
         if let deniedNote { notes.append(deniedNote) }
         return CapabilityReport(
             mode: .unleashed,
@@ -163,4 +164,44 @@ public struct UnleashedCapabilityProvider: TerminalCapabilityProvider {
             buildNotes: notes
         )
     }
+}
+
+public extension UnleashedCapabilityProvider {
+    /// The full layered assessment (read-only; nothing is executed or written).
+    func assessment(variant: String = "unleashed", operations: [EnvironmentAssessment.Operation] = [], shellEnabled: Bool) async -> EnvironmentAssessment {
+        let scan = scan()
+        let report = await Self.report(for: scan, observations: observations)
+        let process = HostIdentity.process(deniedProbes: scan.deniedPaths)
+        let shell: EnvironmentAssessment.ShellVerdict
+        if !shellEnabled {
+            shell = .disabledByUser
+        } else {
+            switch report[.localShell].availability {
+            case .verified(let s): shell = .verified(s)
+            case .permissionDenied(let s): shell = .permissionDenied(s)
+            case .availableUntested(let s): shell = .availableUntested(s)
+            case .toolMissing(let s): shell = .toolMissing(s)
+            case .environmentUnknown(let s), .notIncluded(let s), .disabledByUser(let s): shell = .unknown(s)
+            }
+        }
+        return EnvironmentAssessment(
+            build: .init(variant: variant, backendLinked: true, backendComponents: UnleashedBackend.components),
+            device: HostIdentity.device(),
+            bootstrap: .init(
+                roots: scan.roots, indicators: scan.indicators, resolvedTools: scan.resolvedTools,
+                verdict: EnvironmentAssessment.verdict(indicators: scan.indicators, process: process)
+            ),
+            process: process,
+            operations: operations,
+            shell: shell
+        )
+    }
+}
+
+/// Identifies the Unleashed backend inside a built binary. The marker string is referenced at
+/// runtime (Diagnostics), so it survives dead stripping; build checks search the executable for
+/// it to prove the backend is really linked (a name or bundle ID alone proves nothing).
+public enum UnleashedBackend {
+    public static let marker = "HCG-UNLEASHED-BACKEND-LINKED-v1"
+    public static let components = ["PTY shell", "program launcher", "environment scanner", "host filesystem", "package client", "explicit verification"]
 }

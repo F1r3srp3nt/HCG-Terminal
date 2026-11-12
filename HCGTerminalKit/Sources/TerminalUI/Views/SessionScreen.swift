@@ -271,7 +271,7 @@ struct AvailabilityPill: View {
         case .verified: HCGPalette.vanillaGreen
         case .availableUntested: HCGPalette.vanillaBlue
         case .permissionDenied, .toolMissing: HCGPalette.warn
-        case .notIncluded, .unsupportedEnvironment: HCGPalette.muted
+        case .notIncluded, .environmentUnknown, .disabledByUser: HCGPalette.muted
         }
     }
 }

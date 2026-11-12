@@ -363,7 +363,7 @@ struct DiagnosticsView: View {
                             Text("uid \(process.userID)").font(.caption).foregroundStyle(.secondary)
                         }
                     }
-                case .restricted(let reason)?:
+                case .restricted(let reason)?, .disabled(let reason)?:
                     Text(reason).foregroundStyle(.secondary)
                 case nil:
                     ProgressView()

@@ -119,11 +119,46 @@ public protocol TerminalSession: AnyObject, Sendable {
     /// Ctrl-C semantics: interrupt the foreground command, never the session itself.
     func interrupt() async
     func close() async
+    /// Ends the session and reports what is known about the end. Implementations only claim
+    /// that a process exited when they observed it.
+    func stop() async -> SessionStopOutcome
+}
+
+/// What ending a session actually achieved.
+public enum SessionStopOutcome: Hashable, Sendable {
+    /// An in-app session (built-in commands); nothing ran outside the app.
+    case ended
+    /// A local process ended and its exit was observed.
+    case processExited(status: Int32)
+    /// Signals were sent to a local process but its exit was not observed in time.
+    case processExitNotConfirmed
+    /// A network channel was closed. Programs started through it may still be running on the
+    /// other side; that is not verified.
+    case disconnected
+
+    public var description: String {
+        switch self {
+        case .ended: "ended"
+        case .processExited(let status): "process exited (status \(status))"
+        case .processExitNotConfirmed: "signals sent; exit not confirmed"
+        case .disconnected: "disconnected; remote programs not verified as stopped"
+        }
+    }
 }
 
 public extension TerminalSession {
     func send(text: String) async throws {
         try await send(Array(text.utf8))
+    }
+
+    /// Default: close, and report a network session as disconnected (never as stopped).
+    func stop() async -> SessionStopOutcome {
+        await close()
+        switch backend {
+        case .sshShell, .sshCommand, .loopbackService: return .disconnected
+        case .builtInCommands: return .ended
+        case .localProcess: return .processExitNotConfirmed
+        }
     }
 }
 

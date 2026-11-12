@@ -256,10 +256,16 @@ final class AuthenticationWatcher: ChannelInboundHandler {
 public final class SSHConnection: RemoteCommandExecuting, @unchecked Sendable {
     public let endpoint: RemoteEndpoint
     let channel: Channel
+    /// Switches checked again before every command or session on this connection, so turning
+    /// SSH off also stops an already open connection from being used.
+    let requiredAccess: [AccessControl]
+    let access: AccessPolicy
 
-    init(endpoint: RemoteEndpoint, channel: Channel) {
+    init(endpoint: RemoteEndpoint, channel: Channel, requiredAccess: [AccessControl] = [.remoteSSH], access: AccessPolicy = .shared) {
         self.endpoint = endpoint
         self.channel = channel
+        self.requiredAccess = requiredAccess
+        self.access = access
     }
 
     public var isActive: Bool { channel.isActive }
@@ -268,8 +274,12 @@ public final class SSHConnection: RemoteCommandExecuting, @unchecked Sendable {
         endpoint: RemoteEndpoint,
         authentication: SSHAuthentication,
         hostKeyPolicy: HostKeyPolicy,
-        timeout: TimeAmount = .seconds(20)
+        timeout: TimeAmount = .seconds(20),
+        requiredAccess: [AccessControl] = [.remoteSSH],
+        access: AccessPolicy = .shared
     ) async throws -> SSHConnection {
+        // Refused before any network activity when the user turned SSH off.
+        try access.requireAll(requiredAccess)
         let eventLoop = MultiThreadedEventLoopGroup.singleton.next()
         let authenticated = eventLoop.makePromise(of: Void.self)
         let failures = FailureRecorder()
@@ -314,7 +324,7 @@ public final class SSHConnection: RemoteCommandExecuting, @unchecked Sendable {
             throw classified
         }
         await DiagnosticLog.shared.record(.info, "ssh", "Connected", metadata: ["host": endpoint.address])
-        return SSHConnection(endpoint: endpoint, channel: channel)
+        return SSHConnection(endpoint: endpoint, channel: channel, requiredAccess: requiredAccess, access: access)
     }
 
     /// Opens a child channel on the event loop and installs `makeHandler()` on it.
@@ -341,6 +351,10 @@ public final class SSHConnection: RemoteCommandExecuting, @unchecked Sendable {
 
     public func stream(_ command: String) -> AsyncThrowingStream<RemoteExecEvent, Error> {
         AsyncThrowingStream { continuation in
+            do { try self.access.requireAll(self.requiredAccess) } catch {
+                continuation.finish(throwing: error)
+                return
+            }
             let task = Task {
                 do {
                     let child = try await self.openChildChannel { child in
@@ -368,6 +382,7 @@ public final class SSHConnection: RemoteCommandExecuting, @unchecked Sendable {
         target: ExecutionTarget? = nil,
         backend: SessionBackend? = nil
     ) async throws -> SSHShellSession {
+        try access.requireAll(requiredAccess)
         let session = SSHShellSession(
             connection: self,
             target: target ?? .remote(endpoint),

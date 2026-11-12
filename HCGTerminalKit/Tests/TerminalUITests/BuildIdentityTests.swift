@@ -20,10 +20,12 @@ final class BuildIdentityTests: XCTestCase {
     }
 
     func testConsistentUnleashedBuild() {
-        let identity = BuildIdentity.from(
+        var identity = BuildIdentity.from(
             infoDictionary: info(variant: "unleashed", bundle: "com.hakmicapitalgroup.hcgterminal.unleashed", name: "HCG Terminal Unleashed"),
             linkedBackend: .unleashed
         )
+        XCTAssertEqual(identity.problems, ["The Unleashed composition is active but the backend did not report its marker."])
+        identity.backendMarker = "HCG-UNLEASHED-BACKEND-LINKED-v1"
         XCTAssertEqual(identity.problems, [])
         XCTAssertTrue(identity.variantLabel.hasPrefix("Unleashed"))
     }
