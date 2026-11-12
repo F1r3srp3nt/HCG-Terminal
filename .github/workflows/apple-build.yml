@@ -3,6 +3,8 @@
 # - iOS: Debug and Release builds and UNSIGNED archives of both schemes, the way HCG Executable
 #   Maker invokes xcodebuild, plus which target and bundle identifier each scheme really produces
 #   and the app icon metadata of every built app (Scripts/verify_app_icons.py).
+# - Simulator: both apps built for the iOS Simulator and launched into several states (crash check
+#   and screenshots), and the package tests run on the iOS Simulator runtime.
 # - macOS: the HCGTerminalKit package (Darwin code paths) builds and its tests run.
 #
 # No signing identities, profiles or secrets are used, nothing is exported to an IPA, and
@@ -176,6 +178,71 @@ jobs:
         with:
           name: logs-${{ matrix.scheme }}
           path: logs/
+
+  simulator:
+    name: iOS Simulator · launch smoke and package tests
+    runs-on: macos-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select newest Xcode and boot an iPhone simulator
+        run: |
+          sudo xcode-select -s "$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+          xcodebuild -version
+          UDID=$(xcrun simctl list devices available -j | python3 -c "import json,sys; d=json.load(sys.stdin)['devices']; c=[x for k,v in sorted(d.items()) if 'iOS' in k for x in v if x['name'].startswith('iPhone')]; print(c[-1]['udid'])")
+          xcrun simctl list devices available | grep "$UDID"
+          echo "UDID=$UDID" >> "$GITHUB_ENV"
+          xcrun simctl boot "$UDID" || true
+          xcrun simctl bootstatus "$UDID" -b
+
+      - name: Build both apps for the simulator (Debug)
+        run: |
+          set -o pipefail
+          for scheme in HCGTerminal HCGTerminalUnleashed; do
+            xcodebuild -project HCGTerminal.xcodeproj -scheme "$scheme" -configuration Debug -destination "id=$UDID" \
+              -derivedDataPath "$RUNNER_TEMP/DDsim" COMPILER_INDEX_STORE_ENABLE=NO build 2>&1 | tail -3
+          done
+
+      - name: Launch smoke (both variants, screenshots)
+        run: |
+          mkdir -p shots; status=0
+          for scheme in HCGTerminal HCGTerminalUnleashed; do
+            app="$RUNNER_TEMP/DDsim/Build/Products/Debug-iphonesimulator/$scheme.app"
+            bundle=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Info.plist")
+            echo "== $scheme ($bundle, variant $(/usr/libexec/PlistBuddy -c 'Print :HCGBuildVariant' "$app/Info.plist"))"
+            xcrun simctl install "$UDID" "$app"
+            for scenario in launch unleashed-tap session capabilities files diagnostics; do
+              xcrun simctl terminate "$UDID" "$bundle" 2>/dev/null || true
+              xcrun simctl launch "$UDID" "$bundle" -HCGSmokeScenario "$scenario" >/dev/null
+              sleep 7
+              xcrun simctl io "$UDID" screenshot "shots/$scheme-$scenario.png" >/dev/null
+              if xcrun simctl spawn "$UDID" launchctl list | grep -q "UIKitApplication:$bundle"; then
+                echo "PASS: $scheme running after '$scenario'"
+              else
+                echo "FAIL: $scheme is not running after '$scenario'"; status=1
+              fi
+            done
+          done
+          exit $status
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: simulator-screenshots
+          path: shots/
+
+      - name: Package tests on the iOS Simulator runtime
+        if: always()
+        working-directory: HCGTerminalKit
+        run: |
+          set -o pipefail
+          xcodebuild test -scheme HCGTerminalKit-Package -destination "id=$UDID" 2>&1 | tee ../simulator-tests.log | grep -E "Test Suite '.*' (passed|failed)|error:|Executed [0-9]+ tests|\*\* TEST" | tail -60
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: logs-simulator-tests
+          path: simulator-tests.log
 
   macos-package:
     name: macOS · HCGTerminalKit build and tests

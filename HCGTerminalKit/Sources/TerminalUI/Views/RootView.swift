@@ -37,7 +37,12 @@ public struct RootView: View {
         .environment(model)
         .tint(ModeAccent.color(model.preferredMode))
         .preferredColorScheme(.dark)
-        .task { await model.bootstrap() }
+        .task {
+            await model.bootstrap()
+            #if DEBUG
+            await runSmokeScenario()
+            #endif
+        }
         .onChange(of: model.selectedSessionID) { _, id in
             if let id { selection = .session(id) }
         }
@@ -188,6 +193,29 @@ public struct RootView: View {
     private func availability(_ mode: ExecutionMode) -> Bool? {
         model.report(for: mode).map { _ in model.isAvailable(mode) }
     }
+
+    #if DEBUG
+    /// CI launch smoke tests only (Debug builds): `-HCGSmokeScenario <name>` drives the real
+    /// interface into one state so a screenshot can be taken. Not compiled into Release.
+    private func runSmokeScenario() async {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: "-HCGSmokeScenario"), index + 1 < arguments.count else { return }
+        switch arguments[index + 1] {
+        case "unleashed-tap":
+            model.selectMode(.unleashed)
+        case "session":
+            if let session = await model.openLocalSession(mode: .vanilla) {
+                try? await Task.sleep(nanoseconds: 700_000_000)
+                session.send(Array("help\r".utf8))
+            }
+        case "capabilities": selection = .preferences
+        case "files": selection = .files
+        case "diagnostics": selection = .diagnostics
+        case "hosts": selection = .hosts
+        default: break
+        }
+    }
+    #endif
 }
 
 struct SessionRow: View {
