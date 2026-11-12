@@ -155,11 +155,11 @@ struct ModeUnavailableSheet: View {
         NavigationStack {
             List {
                 Section {
-                    Label(report.bannerText, systemImage: report.level == .partial ? "circle.lefthalf.filled" : "exclamationmark.triangle")
-                        .foregroundStyle(report.level == .partial ? HCGPalette.cyan : HCGPalette.warn)
+                    Label(report.bannerText, systemImage: report.level == .available ? "checkmark.circle" : report.level == .partial ? "circle.lefthalf.filled" : "exclamationmark.triangle")
+                        .foregroundStyle(report.level == .unavailable ? HCGPalette.warn : HCGPalette.cyan)
                     Text("You are still in \(model.preferredMode.displayName). Your open sessions are unchanged.")
                         .font(.footnote).foregroundStyle(.secondary)
-                    if model.isAvailable(explanation.mode) {
+                    if model.isAvailable(explanation.mode), model.preferredMode != explanation.mode {
                         Button("Switch to \(explanation.mode.displayName)") { dismiss(); model.selectMode(explanation.mode) }
                     }
                 }
@@ -190,7 +190,7 @@ struct ModeUnavailableSheet: View {
                 }
             }
             .hcgScreenBackground()
-            .navigationTitle(report.level == .partial ? "\(explanation.mode.displayName) partially available" : "\(explanation.mode.displayName) is not available")
+            .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
@@ -200,6 +200,15 @@ struct ModeUnavailableSheet: View {
             .sheet(isPresented: $showConnection) {
                 NavigationStack { LoopbackServiceSheet() }.environment(model)
             }
+        }
+    }
+
+    /// Follows the live report: after Recheck or a successful test it may no longer be "not available".
+    private var title: String {
+        switch report.level {
+        case .available: "\(explanation.mode.displayName) checks"
+        case .partial: "\(explanation.mode.displayName) partially available"
+        case .unavailable: "\(explanation.mode.displayName) is not available"
         }
     }
 
