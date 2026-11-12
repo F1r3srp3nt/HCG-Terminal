@@ -25,6 +25,7 @@ struct TerminalHeroHeader: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.verticalSizeClass) private var verticalSizeClass
+    @Environment(\.colorScheme) private var colorScheme
     @State private var visible = false
     @State private var lowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
     /// One controller per header for its whole lifetime; view updates never create a player.
@@ -60,9 +61,12 @@ struct TerminalHeroHeader: View {
             }
         }
         .aspectRatio(CGFloat(TerminalHeroLayout.aspectRatio), contentMode: .fit)
+        // Dark theme: the artwork's near-black edges fade into the screen background, so no box
+        // is visible. Light theme: it sits on its own dark plate in the artwork's edge colour.
+        .mask { if colorScheme == .dark { HeroEdgeFade() } else { Rectangle() } }
+        .background { if colorScheme != .dark { Self.edgeColor } }
+        .clipShape(RoundedRectangle(cornerRadius: colorScheme == .dark ? 0 : 12, style: .continuous))
         .frame(maxWidth: CGFloat(TerminalHeroLayout.maxWidth(compactHeight: verticalSizeClass == .compact)))
-        .background(Self.edgeColor)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .frame(maxWidth: .infinity)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("HCG Terminal")
@@ -80,6 +84,23 @@ struct TerminalHeroHeader: View {
 
     private func update() {
         if shouldAnimate { playback.play() } else { playback.pause() }
+    }
+}
+
+/// Fades the outer edges of the artwork (only its dark margins: the lettering lies between 22%
+/// and 79% horizontally and 5% and 89% vertically).
+struct HeroEdgeFade: View {
+    var body: some View {
+        LinearGradient(stops: [
+            .init(color: .clear, location: 0), .init(color: .black, location: 0.10),
+            .init(color: .black, location: 0.90), .init(color: .clear, location: 1),
+        ], startPoint: .leading, endPoint: .trailing)
+        .mask {
+            LinearGradient(stops: [
+                .init(color: .clear, location: 0), .init(color: .black, location: 0.04),
+                .init(color: .black, location: 0.95), .init(color: .clear, location: 1),
+            ], startPoint: .top, endPoint: .bottom)
+        }
     }
 }
 

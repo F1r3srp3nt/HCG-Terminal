@@ -188,6 +188,9 @@ public struct RootView: View {
             } header: { Eyebrow("Device") }
         }
         .listSectionSpacing(.compact)
+        // iPhone: no empty navigation bar above the header (pushed screens keep their own bar).
+        .toolbar(headerInSidebar ? .hidden : .automatic, for: .navigationBar)
+        .contentMargins(.top, headerInSidebar ? 4 : 0, for: .scrollContent)
         // The title stays for back buttons and the app switcher, but is not drawn: the header
         // artwork is the visible title (and is exposed to VoiceOver once, as a heading).
         .navigationTitle("HCG Terminal")

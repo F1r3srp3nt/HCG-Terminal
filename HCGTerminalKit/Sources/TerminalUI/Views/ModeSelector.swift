@@ -59,6 +59,9 @@ public struct ModeSelector: View {
                 }
                 Text(mode.displayName)
                     .font((compact ? Font.footnote : Font.subheadline).weight(.semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                    .fixedSize(horizontal: false, vertical: true)
                 if available == false {
                     Image(systemName: "lock.fill")
                         .font(.caption2.weight(.semibold))
