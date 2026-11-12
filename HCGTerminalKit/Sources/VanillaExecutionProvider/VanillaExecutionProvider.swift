@@ -23,36 +23,42 @@ public struct VanillaCapabilityProvider: TerminalCapabilityProvider {
         let builtinCount = BuiltinRegistry.standard.commands.count
         let rootPath = workspace.rootURL.path
         let writable = probe.isWritable(rootPath)
+        let created = FileWorkspace.standardDirectories.allSatisfy { workspace.isDirectory($0) }
         let processCount = probe.visibleProcessCount()
 
         let results: [CapabilityResult] = [
             CapabilityResult(
                 kind: .localShell,
-                availability: .limited("HCG Terminal's built-in command environment. iOS does not allow App Store apps to start a system shell."),
-                summary: "\(builtinCount) built-in commands with pipes, redirection and history.",
+                availability: .verified("Runs inside the app; no external process is needed."),
+                summary: "HCG built-in commands (\(builtinCount)) with pipes, redirection and history. This is an in-app command interpreter, not a system shell.",
                 evidence: [CapabilityEvidence(probe: "Built-in command registry", observation: "\(builtinCount) commands", positive: true)]
             ),
             CapabilityResult(
                 kind: .executableAccess,
-                availability: .unavailable("Running other executables is not permitted in the iOS app sandbox. Use a remote host for system tools."),
-                summary: "Only built-in commands run locally.",
-                evidence: [CapabilityEvidence(probe: "Vanilla policy", observation: "no local process execution", positive: false)]
+                availability: .unsupportedEnvironment("iOS does not let App Store apps start other programs."),
+                summary: "Only HCG built-in commands run locally; use a remote host for system tools.",
+                evidence: [CapabilityEvidence(probe: "Vanilla policy", observation: "no process execution", positive: false)]
             ),
             CapabilityResult(
                 kind: .filesystemPermissions,
-                availability: writable ? .limited("App sandbox workspace only.") : .unavailable("The app workspace is not writable."),
-                summary: "Read and write inside the app's workspace (also visible in the Files app).",
-                evidence: [CapabilityEvidence(probe: "access(workspace, W_OK)", observation: writable ? "writable" : "not writable", positive: writable)]
+                availability: writable && created
+                    ? .verified("The workspace and its folders were created at launch and are writable.")
+                    : .permissionDenied("The app workspace is not writable."),
+                summary: "Read and write inside the app's workspace (also visible in the Files app). Nothing outside it.",
+                evidence: [
+                    CapabilityEvidence(probe: "access(workspace, W_OK)", observation: writable ? "writable" : "not writable", positive: writable),
+                    CapabilityEvidence(probe: "standard folders (/home, /projects, /artifacts, /logs, /tmp)", observation: created ? "created" : "missing", positive: created),
+                ]
             ),
             CapabilityResult(
                 kind: .packageManager,
-                availability: .unavailable("Package managers are not available in Vanilla."),
+                availability: .unsupportedEnvironment("There is no package manager on standard iOS."),
                 summary: "Install toolchains on a remote host instead."
             ),
             processInspectionResult(processCount),
             CapabilityResult(
                 kind: .privilegedOperations,
-                availability: .unavailable("Vanilla never performs privileged operations."),
+                availability: .unsupportedEnvironment("Vanilla never performs privileged operations."),
                 summary: "Everything runs with the app's ordinary sandbox permissions."
             ),
             SharedCapabilities.remoteSSH(),
@@ -62,7 +68,7 @@ public struct VanillaCapabilityProvider: TerminalCapabilityProvider {
             mode: .vanilla,
             results: results,
             localFeaturesAvailable: true,
-            headline: "Vanilla terminal and remote development are available.",
+            headline: "Vanilla: built-in commands on the app workspace, plus remote development.",
             buildNotes: []
         )
     }
@@ -70,15 +76,15 @@ public struct VanillaCapabilityProvider: TerminalCapabilityProvider {
     private func processInspectionResult(_ count: Int?) -> CapabilityResult {
         let evidence = CapabilityEvidence(
             probe: "sysctl(KERN_PROC_ALL)",
-            observation: count.map { "\($0) process(es) visible" } ?? "not permitted",
+            observation: count.map { "\($0) process(es) visible" } ?? "refused",
             positive: (count ?? 0) > 1
         )
-        switch count {
-        case .some(let n) where n > 1:
-            return CapabilityResult(kind: .processInspection, availability: .limited("Read-only list of \(n) processes the system reveals to this app."), summary: "Read-only process list.", evidence: [evidence])
-        default:
-            return CapabilityResult(kind: .processInspection, availability: .unavailable("The sandbox reveals only this app's own process."), summary: "System process list is not visible.", evidence: [evidence])
+        let availability: CapabilityAvailability = switch count {
+        case .some(let n) where n > 1: .verified("The process table returned \(n) processes.")
+        case .some: .permissionDenied("The sandbox shows this app only its own process.")
+        case nil: .permissionDenied("The process table is not accessible to this app.")
         }
+        return CapabilityResult(kind: .processInspection, availability: availability, summary: "List running processes (read-only).", evidence: [evidence])
     }
 }
 

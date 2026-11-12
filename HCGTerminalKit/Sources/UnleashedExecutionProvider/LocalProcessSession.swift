@@ -152,7 +152,8 @@ public actor LocalProcessSession: TerminalSession {
             }
         } catch {
             let message = (error as? LocalizedError)?.errorDescription ?? "\(error)"
-            await observations.record(executable: executable, outcome: .failed(message))
+            let code: Int32 = if case ProcessSpawnError.spawn(_, let errno, _) = error { errno } else { 0 }
+            await observations.record(executable: executable, outcome: .failed(errno: code, message: message))
             await DiagnosticLog.shared.record(.warning, "unleashed", "Local shell failed to start", metadata: ["executable": executable, "error": message])
             channel.yield(.notice(TerminalNotice(.error, message)))
             channel.yield(.stateChanged(.failed(message: message)))

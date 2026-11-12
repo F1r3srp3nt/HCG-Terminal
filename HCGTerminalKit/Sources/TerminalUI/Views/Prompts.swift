@@ -1,5 +1,6 @@
 #if canImport(UIKit) && canImport(SwiftUI)
 import SwiftUI
+import TerminalCapabilityProvider
 import TerminalCore
 import TerminalSecurity
 
@@ -134,6 +135,60 @@ struct ModeSwitchConfirmationSheet: View {
             VStack(alignment: .leading) {
                 Text(entry.session.title)
                 Text(reason).font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+/// Shown instead of switching when a mode cannot run. The current mode and sessions are kept.
+struct ModeUnavailableSheet: View {
+    @Environment(TerminalAppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    let explanation: ModeUnavailableExplanation
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    Text(CapabilityReport.unleashedUnavailableMessage)
+                    Text("You are still in \(model.preferredMode.displayName). Your open sessions are unchanged.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+                if explanation.distribution == .standard {
+                    Section("Why") {
+                        Text(UnleashedNotIncludedCapabilityProvider.reason)
+                        Text("The Unleashed backend ships only in the separate HCG Terminal Unleashed build (bundle ID ending in .unleashed). See Diagnostics → Build for what is installed.")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+                } else {
+                    Section("What is missing") {
+                        ForEach(explanation.report.blockers.filter { $0.kind != .remoteSSH && $0.kind != .buildOrchestration }) { result in
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    Text(result.kind.title).font(.subheadline.weight(.semibold))
+                                    Spacer()
+                                    AvailabilityPill(availability: result.availability)
+                                }
+                                Text(result.availability.reason).font(.footnote)
+                                if let remedy = result.availability.remedy {
+                                    Text(remedy).font(.caption).foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                    }
+                }
+                Section {
+                    NavigationLink("All checks and results") {
+                        List { CapabilityReportView(report: explanation.report) }
+                            .navigationTitle("\(explanation.mode.displayName) checks")
+                    }
+                }
+            }
+            .navigationTitle("\(explanation.mode.displayName) is not available")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Keep \(model.preferredMode.displayName)") { dismiss() }
+                }
             }
         }
     }

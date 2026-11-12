@@ -23,6 +23,8 @@ public final class BuildCenter {
     @ObservationIgnored private let workspaceProvider: @MainActor () -> AppDependencies
     @ObservationIgnored private var runningTask: Task<Void, Never>?
     @ObservationIgnored let executorFor: @MainActor (UUID) async throws -> any RemoteCommandExecuting
+    /// Called on the main actor when a run has been recorded.
+    @ObservationIgnored public var onRunFinished: (@MainActor (BuildRun) -> Void)?
 
     init(dependencies: AppDependencies, executorFor: @escaping @MainActor (UUID) async throws -> any RemoteCommandExecuting) {
         self.orchestrator = dependencies.orchestrator
@@ -60,6 +62,7 @@ public final class BuildCenter {
                 let run = await orchestrator.run(plan, on: executor) { text in logSink.yield(text) }
                 logSink.finish()
                 await logPump.value
+                onRunFinished?(run)
                 if run.status == .succeeded, let found = try? await ArtifactDiscovery.discover(for: plan, on: executor) {
                     discovered[run.id] = found
                 }

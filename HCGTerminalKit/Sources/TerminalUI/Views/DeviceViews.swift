@@ -73,7 +73,12 @@ struct UnleashedToolsView: View {
         roots = await tools.permittedRoots()
         logRoots = await tools.logRoots()
         if packagesAvailable {
-            do { packages = try await tools.installedPackages() } catch { model.errorMessage = error.localizedDescription }
+            do {
+                packages = try await tools.installedPackages()
+                model.recordVerification(.packageManager, mode: .unleashed, observation: "Listed \(packages.count) installed packages.")
+            } catch {
+                model.errorMessage = error.localizedDescription
+            }
         }
     }
 

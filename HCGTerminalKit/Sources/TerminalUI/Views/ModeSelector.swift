@@ -10,7 +10,8 @@ import TerminalCore
 /// accent, selection haptics, and an availability dot for modes that are unavailable.
 ///
 /// Selecting a mode only changes the preferred local mode. It never interrupts SSH sessions:
-/// the selector has no access to sessions at all.
+/// the selector has no access to sessions at all. A mode that cannot run shows a lock; the
+/// model explains it instead of switching, so the accent never suggests an absent backend.
 public struct ModeSelector: View {
     let selection: ExecutionMode
     /// `true` available, `false` unavailable, `nil` still detecting.
@@ -58,9 +59,9 @@ public struct ModeSelector: View {
                 Text(mode.displayName)
                     .font(.system(size: compact ? 12 : 13, weight: .semibold))
                 if available == false {
-                    Circle()
-                        .fill(selected ? Color.white.opacity(0.7) : HCGPalette.muted)
-                        .frame(width: 5, height: 5)
+                    Image(systemName: "lock.fill")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(HCGPalette.muted)
                         .accessibilityHidden(true)
                 }
             }
@@ -80,7 +81,7 @@ public struct ModeSelector: View {
         .buttonStyle(.plain)
         .accessibilityAddTraits(selected ? .isSelected : [])
         .accessibilityLabel("\(mode.displayName) mode")
-        .accessibilityHint(available == false ? "Not available in this environment" : mode.summary)
+        .accessibilityHint(available == false ? "Not available here. Tapping explains what is missing; the current mode stays." : mode.summary)
     }
 }
 
@@ -105,7 +106,7 @@ struct ModeStatusLine: View {
     private var text: String {
         switch (mode, available) {
         case (_, nil): "Checking capabilities…"
-        case (.vanilla, _): "Vanilla: sandboxed workspace and built-in commands. Remote development available."
+        case (.vanilla, _): "Vanilla: HCG built-in commands on the app workspace (not a system shell). Remote development available."
         case (.unleashed, true?): "Unleashed: local capabilities available as reported. Nothing is elevated automatically."
         case (.unleashed, false?): "Unleashed features are not available in this environment. Vanilla terminal and remote development remain available."
         }

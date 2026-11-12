@@ -52,21 +52,41 @@ final class TerminalAppModelTests: XCTestCase {
         let model = try makeModel()
         await model.bootstrap()
         XCTAssertEqual(model.preferredMode, .vanilla)
+        let vanilla = await model.openLocalSession()
+        XCTAssertNotNil(vanilla)
         model.selectMode(.unleashed)
-        XCTAssertEqual(model.preferredMode, .unleashed)
+        // Not switched: explained instead; the current mode and session are untouched.
+        XCTAssertEqual(model.preferredMode, .vanilla)
+        XCTAssertEqual(model.modeUnavailable?.mode, .unleashed)
+        XCTAssertEqual(model.modeUnavailable?.distribution, .standard)
         XCTAssertFalse(model.isAvailable(.unleashed))
         XCTAssertEqual(model.report(for: .unleashed)?.headline, CapabilityReport.unleashedUnavailableMessage)
-        let session = await model.openLocalSession()
-        XCTAssertNil(session)
+        XCTAssertEqual(model.sessions.map(\.id), [vanilla!.id])
+        XCTAssertNil(model.modeSwitchConfirmation)
+        let unleashed = await model.openLocalSession(mode: .unleashed)
+        XCTAssertNil(unleashed)
         XCTAssertEqual(model.errorMessage, CapabilityReport.unleashedUnavailableMessage)
-        XCTAssertTrue(model.sessions.isEmpty)
     }
 
-    func testPreferenceIsPersisted() async throws {
-        let first = try makeModel()
-        first.selectMode(.unleashed)
-        let second = try makeModel()
-        XCTAssertEqual(second.preferredMode, .unleashed)
+    func testUnavailableSavedPreferenceFallsBackToVanilla() async throws {
+        ModePreferenceStore(defaults: defaults).preferredMode = .unleashed
+        let model = try makeModel()
+        XCTAssertEqual(model.preferredMode, .unleashed)
+        await model.bootstrap()
+        XCTAssertEqual(model.preferredMode, .vanilla)
+        XCTAssertEqual(ModePreferenceStore(defaults: defaults).preferredMode, .vanilla)
+    }
+
+    func testRealUseMarksSharedCapabilitiesVerified() async throws {
+        let model = try makeModel()
+        await model.bootstrap()
+        guard case .availableUntested = model.report(for: .vanilla)?[.remoteSSH].availability else { return XCTFail() }
+        model.recordVerification(.remoteSSH, observation: "Connected to me@mac.")
+        for mode in ExecutionMode.allCases {
+            guard case .verified = model.report(for: mode)?[.remoteSSH].availability else { return XCTFail(mode.rawValue) }
+        }
+        model.recordVerification(.localShell, mode: .unleashed, observation: "claimed")
+        XCTAssertFalse(model.report(for: .unleashed)?[.localShell].availability.isUsable ?? true, "not-included stays not-included")
     }
 
     func testSwitchingModesPreservesRemoteSessions() async throws {
@@ -95,7 +115,7 @@ final class TerminalAppModelTests: XCTestCase {
         struct AvailableUnleashed: TerminalCapabilityProvider {
             let mode: ExecutionMode = .unleashed
             func detectCapabilities() async -> CapabilityReport {
-                CapabilityReport(mode: .unleashed, results: [CapabilityResult(kind: .localShell, availability: .available, summary: "test")], localFeaturesAvailable: true, headline: "ok")
+                CapabilityReport(mode: .unleashed, results: [CapabilityResult(kind: .localShell, availability: .verified("test shell"), summary: "test")], localFeaturesAvailable: true, headline: "ok")
             }
         }
         struct FakeUnleashedProvider: LocalExecutionProvider {

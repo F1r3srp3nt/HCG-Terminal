@@ -31,6 +31,19 @@ public struct UnleashedEnvironmentScan: Hashable, Sendable {
     public var locations: [LocationAccess]
     public var evidence: [CapabilityEvidence]
     public var operatingSystem: String
+    /// Outcome of each path probe (keeps EPERM vs ENOENT).
+    public var pathProbes: [String: PathProbe] = [:]
+
+    /// Whether the app can see any part of a shell environment at all (a jailbreak prefix, or a
+    /// listable directory with executables). False on a standard, sandboxed iOS install.
+    public var environmentVisible: Bool {
+        environmentPrefix != nil || !executableDirectories.isEmpty || !shells.isEmpty
+    }
+
+    /// Paths the system refused to let this app inspect.
+    public var deniedPaths: [String] {
+        pathProbes.filter { $0.value.isDenied }.map(\.key).sorted()
+    }
 
     public var permittedLocations: [LocationAccess] { locations.filter { $0.readable || $0.writable } }
 
@@ -69,9 +82,17 @@ public struct UnleashedEnvironmentScanner: Sendable {
     public func scan() -> UnleashedEnvironmentScan {
         var evidence: [CapabilityEvidence] = []
 
+        var pathProbes: [String: PathProbe] = [:]
         // Layout indicator (context only — never decisive on its own).
-        let rootlessPrefix = probe.isDirectory("/var/jb")
-        evidence.append(CapabilityEvidence(probe: "stat(/var/jb)", observation: rootlessPrefix ? "directory" : "absent or not visible", positive: rootlessPrefix))
+        let jbProbe = probe.probe("/var/jb")
+        pathProbes["/var/jb"] = jbProbe
+        let rootlessPrefix = jbProbe == .present && probe.isDirectory("/var/jb")
+        evidence.append(CapabilityEvidence(probe: "lstat(/var/jb)", observation: rootlessPrefix ? "directory present" : jbProbe.description, positive: rootlessPrefix))
+        for path in ["/usr/bin", "/bin"] {
+            let result = probe.probe(path)
+            pathProbes[path] = result
+            evidence.append(CapabilityEvidence(probe: "lstat(\(path))", observation: result.description, positive: result == .present))
+        }
 
         var shells: [String] = []
         var directories: [String: Int] = [:]
@@ -87,11 +108,24 @@ public struct UnleashedEnvironmentScanner: Sendable {
                     shells.append(path)
                     if prefixWithTools == nil { prefixWithTools = prefix }
                     evidence.append(CapabilityEvidence(probe: "access(\(path), X_OK)", observation: "executable", positive: true))
+                } else {
+                    let result = probe.probe(path)
+                    if result != .missing { pathProbes[path] = result }
                 }
             }
             for directory in Self.binDirectories {
                 let path = prefix + directory
-                guard directories[path] == nil, let entries = probe.listDirectory(path) else { continue }
+                guard directories[path] == nil else { continue }
+                let entries: [String]
+                switch probe.listing(path) {
+                case .success(let names): entries = names
+                case .failure(let failure):
+                    if failure.probe != .missing {
+                        pathProbes[path] = failure.probe
+                        evidence.append(CapabilityEvidence(probe: "list \(path)", observation: failure.probe.description, positive: false))
+                    }
+                    continue
+                }
                 let executables = entries.prefix(4000).filter { probe.isExecutableFile(path + "/" + $0) }.count
                 if executables > 0 {
                     directories[path] = executables
@@ -111,7 +145,7 @@ public struct UnleashedEnvironmentScanner: Sendable {
             }
         }
         if shells.isEmpty {
-            evidence.append(CapabilityEvidence(probe: "access(<shell candidates>, X_OK)", observation: "no executable shell visible", positive: false))
+            evidence.append(CapabilityEvidence(probe: "access(<\(Self.shellCandidates.count * Self.prefixes.count) shell candidates>, X_OK)", observation: "no executable shell found", positive: false))
         }
 
         let ports = Self.loopbackPorts.filter { probe.loopbackPortAccepts($0, timeout: 0.3) }
@@ -127,7 +161,9 @@ public struct UnleashedEnvironmentScanner: Sendable {
         evidence.append(CapabilityEvidence(probe: "geteuid()", observation: "\(euid)", positive: euid == 0))
 
         let locations = Self.locationCandidates.map { path -> LocationAccess in
-            let exists = probe.exists(path)
+            let result = probe.probe(path)
+            if result != .missing { pathProbes[path] = pathProbes[path] ?? result }
+            let exists = result == .present
             return LocationAccess(
                 path: path,
                 exists: exists,
@@ -148,7 +184,8 @@ public struct UnleashedEnvironmentScanner: Sendable {
             visibleProcessCount: processCount,
             locations: locations,
             evidence: evidence,
-            operatingSystem: probe.osDescription()
+            operatingSystem: probe.osDescription(),
+            pathProbes: pathProbes
         )
     }
 }
@@ -159,7 +196,8 @@ public struct UnleashedEnvironmentScanner: Sendable {
 public actor RuntimeObservations {
     public enum SpawnOutcome: Hashable, Sendable {
         case succeeded(pid: Int32)
-        case failed(String)
+        /// `errno` is 0 when the failure was not a spawn error (e.g. no pseudo-terminal).
+        case failed(errno: Int32, message: String)
     }
 
     private var spawns: [String: SpawnOutcome] = [:]

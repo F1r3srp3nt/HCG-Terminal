@@ -44,6 +44,9 @@ public struct RootView: View {
         .sheet(item: $model.hostKeyPrompt) { prompt in
             HostKeySheet(prompt: prompt.request).environment(model)
         }
+        .sheet(item: $model.modeUnavailable) { explanation in
+            ModeUnavailableSheet(explanation: explanation).environment(model)
+        }
         .sheet(item: $model.modeSwitchConfirmation) { confirmation in
             ModeSwitchConfirmationSheet(confirmation: confirmation).environment(model)
         }

@@ -41,51 +41,78 @@ public enum CapabilityKind: String, CaseIterable, Codable, Sendable, Identifiabl
     }
 }
 
-/// Availability of one capability. Never optimistic: anything not positively observed is
-/// reported as unavailable or unverified.
+/// State of one capability. Never optimistic: a capability is "verified" only after it was
+/// actually used successfully on this device; anything not observed is reported as such.
 public enum CapabilityAvailability: Hashable, Codable, Sendable {
-    /// Observed working (or structurally guaranteed, e.g. built-in commands).
-    case available
-    /// Partially available; `detail` says what is and is not possible.
-    case limited(String)
-    /// Indicators were found but the capability has not been exercised yet. It will be
-    /// confirmed or refuted the first time the user explicitly uses it.
-    case unverified(String)
-    /// Exists, but every use needs explicit user authorization and runs with the permissions
-    /// the device actually grants.
-    case requiresAuthorization(String)
-    case unavailable(String)
+    /// The code for this capability is not part of this build (e.g. the standard build has no
+    /// Unleashed backend).
+    case notIncluded(String)
+    /// The platform or device does not offer this at all (e.g. the iOS sandbox hides the system).
+    case unsupportedEnvironment(String)
+    /// The environment supports it, but a required program or service is not installed/running.
+    case toolMissing(String)
+    /// The thing exists, but the system refused this app access (EPERM/EACCES, sandbox).
+    case permissionDenied(String)
+    /// Everything needed was found by read-only checks, but it has not been used yet.
+    case availableUntested(String)
+    /// It was used successfully on this device.
+    case verified(String)
 
+    /// Whether the user can try to use it now.
     public var isUsable: Bool {
         switch self {
-        case .available, .limited, .unverified, .requiresAuthorization: true
-        case .unavailable: false
+        case .availableUntested, .verified: true
+        case .notIncluded, .unsupportedEnvironment, .toolMissing, .permissionDenied: false
         }
     }
 
     public var label: String {
         switch self {
-        case .available: "Available"
-        case .limited: "Limited"
-        case .unverified: "Detected, not yet verified"
-        case .requiresAuthorization: "Requires authorization"
-        case .unavailable: "Unavailable"
+        case .notIncluded: "Not included in this build"
+        case .unsupportedEnvironment: "Unsupported environment"
+        case .toolMissing: "Required tool missing"
+        case .permissionDenied: "Permission denied"
+        case .availableUntested: "Available, not tested"
+        case .verified: "Verified working"
         }
     }
 
-    public var detail: String? {
+    public var symbolName: String {
         switch self {
-        case .available: nil
-        case .limited(let s), .unverified(let s), .requiresAuthorization(let s), .unavailable(let s): s
+        case .notIncluded: "shippingbox"
+        case .unsupportedEnvironment: "nosign"
+        case .toolMissing: "wrench.and.screwdriver"
+        case .permissionDenied: "lock"
+        case .availableUntested: "questionmark.circle"
+        case .verified: "checkmark.seal"
+        }
+    }
+
+    /// Why it is in this state.
+    public var reason: String {
+        switch self {
+        case .notIncluded(let s), .unsupportedEnvironment(let s), .toolMissing(let s),
+             .permissionDenied(let s), .availableUntested(let s), .verified(let s): s
+        }
+    }
+
+    /// What would change the state, for states that are not usable.
+    public var remedy: String? {
+        switch self {
+        case .notIncluded: "Install the build variant that contains this backend."
+        case .unsupportedEnvironment: "Not possible on this device configuration."
+        case .toolMissing: "Install or start the missing tool on the device, then re-check."
+        case .permissionDenied: "The device must grant this app access; HCG Terminal never tries to bypass a denial."
+        case .availableUntested, .verified: nil
         }
     }
 }
 
-/// A single read-only observation that contributed to a result.
+/// One check that ran, and what it found.
 public struct CapabilityEvidence: Hashable, Codable, Sendable {
     /// What was checked, e.g. `access("/var/jb/bin/sh", X_OK)`.
     public var probe: String
-    /// What was observed, e.g. `executable`.
+    /// What was observed, e.g. `executable` or `EPERM (Operation not permitted)`.
     public var observation: String
     /// Whether this observation supports the capability being present.
     public var positive: Bool
@@ -100,16 +127,35 @@ public struct CapabilityEvidence: Hashable, Codable, Sendable {
 public struct CapabilityResult: Hashable, Codable, Sendable, Identifiable {
     public var kind: CapabilityKind
     public var availability: CapabilityAvailability
+    /// One line: what this capability does in this mode.
     public var summary: String
+    /// Checks that ran and their results.
     public var evidence: [CapabilityEvidence]
+    /// Each use needs explicit user approval (privileged commands, package changes).
+    public var requiresAuthorization: Bool
 
     public var id: CapabilityKind { kind }
 
-    public init(kind: CapabilityKind, availability: CapabilityAvailability, summary: String, evidence: [CapabilityEvidence] = []) {
+    public init(
+        kind: CapabilityKind,
+        availability: CapabilityAvailability,
+        summary: String,
+        evidence: [CapabilityEvidence] = [],
+        requiresAuthorization: Bool = false
+    ) {
         self.kind = kind
         self.availability = availability
         self.summary = summary
         self.evidence = evidence
+        self.requiresAuthorization = requiresAuthorization
+    }
+
+    /// The state's reason, unless it only repeats the summary.
+    public var detail: String? {
+        let reason = availability.reason.trimmingCharacters(in: .whitespacesAndNewlines)
+        let summary = self.summary.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !reason.isEmpty, reason != summary, !summary.contains(reason) else { return nil }
+        return reason
     }
 }
 
@@ -138,7 +184,7 @@ public struct CapabilityReport: Hashable, Codable, Sendable {
         // Always present all kinds, in canonical order.
         self.results = CapabilityKind.allCases.map { kind in
             results.first(where: { $0.kind == kind })
-                ?? CapabilityResult(kind: kind, availability: .unavailable("Not reported."), summary: "Not reported by this provider.")
+                ?? CapabilityResult(kind: kind, availability: .notIncluded("Not reported by this provider."), summary: kind.title)
         }
         self.localFeaturesAvailable = localFeaturesAvailable
         self.headline = headline
@@ -147,6 +193,25 @@ public struct CapabilityReport: Hashable, Codable, Sendable {
 
     public subscript(kind: CapabilityKind) -> CapabilityResult {
         results.first(where: { $0.kind == kind })!
+    }
+
+    /// Capabilities that cannot be used now, for "what is missing" explanations.
+    public var blockers: [CapabilityResult] {
+        results.filter { !$0.availability.isUsable }
+    }
+
+    /// Marks capabilities as verified after real use. Only `availableUntested` results change;
+    /// a capability reported as unavailable is never upgraded by a claim.
+    public func applying(verifications: [CapabilityKind: CapabilityEvidence]) -> CapabilityReport {
+        var copy = self
+        copy.results = results.map { result in
+            guard let evidence = verifications[result.kind], case .availableUntested = result.availability else { return result }
+            var updated = result
+            updated.availability = .verified(evidence.observation)
+            updated.evidence.append(evidence)
+            return updated
+        }
+        return copy
     }
 
     /// The exact message the interface shows when Unleashed features are unavailable.
@@ -168,46 +233,53 @@ public protocol TerminalCapabilityProvider: Sendable {
     func detectCapabilities() async -> CapabilityReport
 }
 
-/// Shared results for capabilities that do not depend on the local mode.
+/// Shared results for capabilities that do not depend on the local mode. They become
+/// "verified" through `CapabilityReport.applying(verifications:)` after real use.
 public enum SharedCapabilities {
     public static func remoteSSH() -> CapabilityResult {
         CapabilityResult(
             kind: .remoteSSH,
-            availability: .available,
-            summary: "SSH connections with interactive PTY sessions. Independent of the local mode.",
-            evidence: [CapabilityEvidence(probe: "RemoteSSH module linked", observation: "SwiftNIO SSH client", positive: true)]
+            availability: .availableUntested("SSH client included; no connection has succeeded yet in this app session."),
+            summary: "SSH connections with interactive terminals. Independent of the local mode.",
+            evidence: [CapabilityEvidence(probe: "RemoteSSH module", observation: "linked (SwiftNIO SSH)", positive: true)]
         )
     }
 
     public static func buildOrchestration() -> CapabilityResult {
         CapabilityResult(
             kind: .buildOrchestration,
-            availability: .limited("Runs on a connected remote host (for example a Mac). Requires an SSH host with the toolchain installed."),
+            availability: .availableUntested("Runs on a connected SSH host that has the toolchain; no build has completed yet in this app session."),
             summary: "Remote Swift, Xcode and .NET builds and tests over SSH. Independent of the local mode.",
-            evidence: [CapabilityEvidence(probe: "BuildOrchestrator module linked", observation: "remote execution only", positive: true)]
+            evidence: [CapabilityEvidence(probe: "BuildOrchestrator module", observation: "linked (remote execution only)", positive: true)]
         )
     }
 }
 
-/// Used by the standard (Vanilla) app build, which does not link the Unleashed backend at all.
-/// Reports Unleashed as unavailable without probing anything.
+/// Used by the standard build, which does not link the Unleashed backend at all.
+/// Reports Unleashed as not included without probing anything.
 public struct UnleashedNotIncludedCapabilityProvider: TerminalCapabilityProvider {
     public let mode: ExecutionMode = .unleashed
 
     public init() {}
 
+    public static let reason = "This is the standard build. The Unleashed backend is not included in it."
+
     public func detectCapabilities() async -> CapabilityReport {
-        let reason = "The Unleashed backend is not included in this build (standard distribution)."
+        let evidence = [CapabilityEvidence(probe: "Unleashed backend linked", observation: "no (standard build)", positive: false)]
         let local: [CapabilityResult] = [
-            .localShell, .executableAccess, .filesystemPermissions, .packageManager,
-            .processInspection, .privilegedOperations,
-        ].map { CapabilityResult(kind: $0, availability: .unavailable(reason), summary: reason) }
+            (CapabilityKind.localShell, "Start a shell on this device."),
+            (.executableAccess, "Run installed command-line tools."),
+            (.filesystemPermissions, "Access permitted locations outside the app sandbox."),
+            (.packageManager, "List and change installed packages."),
+            (.processInspection, "List running processes."),
+            (.privilegedOperations, "Run privileged commands after your approval."),
+        ].map { CapabilityResult(kind: $0.0, availability: .notIncluded(Self.reason), summary: $0.1, evidence: evidence) }
         return CapabilityReport(
             mode: .unleashed,
             results: local + [SharedCapabilities.remoteSSH(), SharedCapabilities.buildOrchestration()],
             localFeaturesAvailable: false,
             headline: CapabilityReport.unleashedUnavailableMessage,
-            buildNotes: ["Standard distribution build. Unleashed requires the separate Unleashed build on a supported device."]
+            buildNotes: ["Standard build: the Unleashed backend is not linked into this app. It ships only in the separate HCG Terminal Unleashed build."]
         )
     }
 }
@@ -217,8 +289,13 @@ public enum CapabilityReportFormatter {
     public static func text(_ report: CapabilityReport) -> String {
         var lines = ["\(report.mode.displayName) capabilities — \(report.headline)"]
         for result in report.results {
-            lines.append("  \(result.kind.title.padding(toLength: 30, withPad: " ", startingAt: 0))\(result.availability.label)")
-            if let detail = result.availability.detail { lines.append("      \(detail)") }
+            let approval = result.requiresAuthorization ? " · needs your approval" : ""
+            lines.append("  \(result.kind.title.padding(toLength: 30, withPad: " ", startingAt: 0))\(result.availability.label)\(approval)")
+            lines.append("      \(result.summary)")
+            if let detail = result.detail { lines.append("      \(detail)") }
+            for check in result.evidence {
+                lines.append("      \(check.positive ? "✓" : "·") \(check.probe): \(check.observation)")
+            }
         }
         for note in report.buildNotes { lines.append("  Note: \(note)") }
         return lines.joined(separator: "\n")

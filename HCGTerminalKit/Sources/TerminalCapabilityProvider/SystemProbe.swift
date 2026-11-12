@@ -5,9 +5,46 @@ import Darwin
 import Glibc
 #endif
 
+/// Result of probing one path, keeping the reason a probe failed.
+public enum PathProbe: Hashable, Sendable {
+    case present
+    case missing
+    /// The system refused this app (EPERM / EACCES), typically the sandbox.
+    case denied(Int32)
+    case failed(Int32)
+
+    public var description: String {
+        switch self {
+        case .present: "present"
+        case .missing: "not found (ENOENT)"
+        case .denied(let code): "access denied (\(PathProbe.errnoName(code)))"
+        case .failed(let code): "failed (\(PathProbe.errnoName(code)))"
+        }
+    }
+
+    public var isDenied: Bool { if case .denied = self { true } else { false } }
+
+    public static func errnoName(_ code: Int32) -> String {
+        let names: [Int32: String] = [EPERM: "EPERM", EACCES: "EACCES", ENOENT: "ENOENT", ENOTDIR: "ENOTDIR", ELOOP: "ELOOP"]
+        return "\(names[code] ?? "errno \(code)"): \(String(cString: strerror(code)))"
+    }
+
+    static func from(errno code: Int32) -> PathProbe {
+        switch code {
+        case ENOENT, ENOTDIR: .missing
+        case EPERM, EACCES: .denied(code)
+        default: .failed(code)
+        }
+    }
+}
+
 /// Read-only system observations used by capability providers. Abstracted so detection logic
 /// can be tested with a scripted environment.
 public protocol SystemProbing: Sendable {
+    /// `lstat`, keeping why it failed.
+    func probe(_ path: String) -> PathProbe
+    /// Directory listing, or the probe failure.
+    func listing(_ path: String) -> Result<[String], PathProbeFailure>
     /// `lstat` succeeded.
     func exists(_ path: String) -> Bool
     func isDirectory(_ path: String) -> Bool
@@ -29,9 +66,41 @@ public protocol SystemProbing: Sendable {
     func osDescription() -> String
 }
 
+public struct PathProbeFailure: Error, Hashable, Sendable {
+    public var probe: PathProbe
+    public init(_ probe: PathProbe) { self.probe = probe }
+}
+
+public extension SystemProbing {
+    /// Defaults for probes that only implement the boolean checks (tests).
+    func probe(_ path: String) -> PathProbe { exists(path) ? .present : .missing }
+    func listing(_ path: String) -> Result<[String], PathProbeFailure> {
+        if let entries = listDirectory(path) { return .success(entries) }
+        return .failure(PathProbeFailure(probe(path) == .present ? .denied(EPERM) : .missing))
+    }
+}
+
 /// The real, read-only implementation.
 public struct LiveSystemProbe: SystemProbing {
     public init() {}
+
+    public func probe(_ path: String) -> PathProbe {
+        var st = stat()
+        return lstat(path, &st) == 0 ? .present : PathProbe.from(errno: errno)
+    }
+
+    public func listing(_ path: String) -> Result<[String], PathProbeFailure> {
+        guard let directory = opendir(path) else { return .failure(PathProbeFailure(PathProbe.from(errno: errno))) }
+        defer { closedir(directory) }
+        var names: [String] = []
+        while let entry = readdir(directory) {
+            let name = withUnsafeBytes(of: entry.pointee.d_name) { raw in
+                String(decoding: raw.prefix(while: { $0 != 0 }), as: UTF8.self)
+            }
+            if name != "." && name != ".." { names.append(name) }
+        }
+        return .success(names)
+    }
 
     public func exists(_ path: String) -> Bool {
         var st = stat()

@@ -19,6 +19,19 @@ struct ScriptedProbe: SystemProbing {
     var euid: UInt32 = 501
     var ports: Set<Int> = []
     var processCount: Int? = 1
+    /// Paths the "sandbox" refuses with EPERM.
+    var denied: Set<String> = []
+
+    func probe(_ path: String) -> PathProbe {
+        if denied.contains(path) { return .denied(EPERM) }
+        return exists(path) ? .present : .missing
+    }
+
+    func listing(_ path: String) -> Result<[String], PathProbeFailure> {
+        if denied.contains(path) { return .failure(PathProbeFailure(.denied(EPERM))) }
+        if let entries = listings[path] { return .success(entries) }
+        return .failure(PathProbeFailure(.missing))
+    }
 
     func exists(_ path: String) -> Bool { directories.contains(path) || executables.contains(path) || readable.contains(path) }
     func isDirectory(_ path: String) -> Bool { directories.contains(path) }
@@ -43,16 +56,36 @@ struct ScriptedProbe: SystemProbing {
 }
 
 final class UnleashedDetectionTests: XCTestCase {
-    func testStandardDeviceReportsUnavailableTruthfully() async throws {
+    private let localKinds: [CapabilityKind] = [.localShell, .executableAccess, .filesystemPermissions, .packageManager, .processInspection, .privilegedOperations]
+
+    func testStandardDeviceReportsUnsupportedEnvironmentTruthfully() async throws {
         let provider = UnleashedCapabilityProvider(probe: ScriptedProbe.stockDevice, observations: RuntimeObservations())
         let report = await provider.detectCapabilities()
         XCTAssertFalse(report.localFeaturesAvailable)
         XCTAssertEqual(report.headline, "Unleashed features are not available in this environment. Vanilla terminal and remote development remain available.")
-        for kind in [CapabilityKind.localShell, .executableAccess, .filesystemPermissions, .packageManager, .processInspection, .privilegedOperations] {
+        for kind in localKinds {
             XCTAssertFalse(report[kind].availability.isUsable, kind.rawValue)
         }
-        XCTAssertEqual(report[.remoteSSH].availability, .available)
+        guard case .unsupportedEnvironment = report[.localShell].availability else { return XCTFail("\(report[.localShell].availability)") }
+        guard case .availableUntested = report[.remoteSSH].availability else { return XCTFail() }
         XCTAssertTrue(report[.buildOrchestration].availability.isUsable)
+    }
+
+    func testSandboxDenialIsPermissionDeniedNotMissing() async {
+        let probe = ScriptedProbe(denied: ["/var/jb", "/usr/bin", "/bin", "/var/mobile"])
+        let report = await UnleashedCapabilityProvider(probe: probe, observations: RuntimeObservations()).detectCapabilities()
+        guard case .permissionDenied(let reason) = report[.localShell].availability else { return XCTFail("\(report[.localShell].availability)") }
+        XCTAssertTrue(reason.contains("/var/jb"), reason)
+        guard case .permissionDenied = report[.filesystemPermissions].availability else { return XCTFail("\(report[.filesystemPermissions].availability)") }
+        XCTAssertTrue(report[.localShell].evidence.contains { $0.observation.contains("EPERM") })
+    }
+
+    func testVisibleEnvironmentWithoutShellIsToolMissing() async {
+        let probe = ScriptedProbe(directories: ["/var/jb"], executables: ["/var/jb/usr/bin/ls"], readable: ["/var/jb"], listings: ["/var/jb/usr/bin": ["ls"]])
+        let report = await UnleashedCapabilityProvider(probe: probe, observations: RuntimeObservations()).detectCapabilities()
+        XCTAssertFalse(report.localFeaturesAvailable)
+        guard case .toolMissing = report[.localShell].availability else { return XCTFail("\(report[.localShell].availability)") }
+        guard case .toolMissing = report[.packageManager].availability else { return XCTFail("\(report[.packageManager].availability)") }
     }
 
     func testSelectingUnleashedOnStandardDeviceDoesNotCrash() async {
@@ -82,11 +115,13 @@ final class UnleashedDetectionTests: XCTestCase {
     func testDetectedCapabilitiesAreNotClaimedAsVerified() async {
         let report = await UnleashedCapabilityProvider(probe: ScriptedProbe.rootlessDevice, observations: RuntimeObservations()).detectCapabilities()
         XCTAssertTrue(report.localFeaturesAvailable)
-        guard case .unverified = report[.localShell].availability else { return XCTFail("\(report[.localShell].availability)") }
-        guard case .unverified = report[.executableAccess].availability else { return XCTFail() }
-        guard case .requiresAuthorization = report[.packageManager].availability else { return XCTFail() }
-        guard case .requiresAuthorization = report[.privilegedOperations].availability else { return XCTFail() }
-        XCTAssertEqual(report[.processInspection].availability, .available)
+        guard case .availableUntested = report[.localShell].availability else { return XCTFail("\(report[.localShell].availability)") }
+        guard case .availableUntested = report[.executableAccess].availability else { return XCTFail() }
+        guard case .availableUntested = report[.packageManager].availability else { return XCTFail() }
+        XCTAssertTrue(report[.packageManager].requiresAuthorization)
+        guard case .availableUntested = report[.privilegedOperations].availability else { return XCTFail() }
+        XCTAssertTrue(report[.privilegedOperations].requiresAuthorization)
+        guard case .verified = report[.processInspection].availability else { return XCTFail("reading the process table is a real read") }
         XCTAssertFalse(report[.localShell].evidence.isEmpty)
     }
 
@@ -94,8 +129,8 @@ final class UnleashedDetectionTests: XCTestCase {
         let probe = ScriptedProbe(ports: [22])
         let report = await UnleashedCapabilityProvider(probe: probe, observations: RuntimeObservations()).detectCapabilities()
         XCTAssertTrue(report.localFeaturesAvailable)
-        guard case .limited(let detail) = report[.localShell].availability else { return XCTFail() }
-        XCTAssertTrue(detail.contains("127.0.0.1:22"))
+        guard case .availableUntested(let reason) = report[.localShell].availability else { return XCTFail() }
+        XCTAssertTrue(reason.contains("127.0.0.1:22"))
     }
 
     func testSpawnFailureIsReportedWithRealError() async throws {
@@ -108,9 +143,39 @@ final class UnleashedDetectionTests: XCTestCase {
         var scan = UnleashedEnvironmentScanner(probe: ScriptedProbe.stockDevice).scan()
         scan.shells = ["/nonexistent/hcg-sh"]
         let report = await UnleashedCapabilityProvider.report(for: scan, observations: observations)
-        guard case .unavailable(let detail) = report[.localShell].availability else { return XCTFail() }
-        XCTAssertTrue(detail.contains("No such file or directory"), detail)
+        guard case .toolMissing(let reason) = report[.localShell].availability else { return XCTFail("\(report[.localShell].availability)") }
+        XCTAssertTrue(reason.contains("No such file or directory"), reason)
         XCTAssertFalse(report.localFeaturesAvailable)
+    }
+
+    func testSandboxSpawnRefusalIsPermissionDenied() async {
+        let observations = RuntimeObservations()
+        let shell = UnleashedEnvironmentScanner(probe: ScriptedProbe.rootlessDevice).scan().shells.first!
+        await observations.record(executable: shell, outcome: .failed(errno: EPERM, message: "Operation not permitted"))
+        let report = await UnleashedCapabilityProvider(probe: ScriptedProbe.rootlessDevice, observations: observations).detectCapabilities()
+        guard case .permissionDenied = report[.localShell].availability else { return XCTFail("\(report[.localShell].availability)") }
+        guard case .permissionDenied = report[.executableAccess].availability else { return XCTFail() }
+        XCTAssertFalse(report.localFeaturesAvailable)
+    }
+
+    func testNoResultRepeatsItsSummary() async {
+        for report in [
+            await UnleashedNotIncludedCapabilityProvider().detectCapabilities(),
+            await UnleashedCapabilityProvider(probe: ScriptedProbe.stockDevice, observations: RuntimeObservations()).detectCapabilities(),
+            await UnleashedCapabilityProvider(probe: ScriptedProbe.rootlessDevice, observations: RuntimeObservations()).detectCapabilities(),
+        ] {
+            for result in report.results {
+                XCTAssertNotEqual(result.detail, result.summary, result.kind.rawValue)
+            }
+        }
+    }
+
+    func testVerificationsUpgradeOnlyUntestedResults() async {
+        let report = await UnleashedCapabilityProvider(probe: ScriptedProbe.stockDevice, observations: RuntimeObservations()).detectCapabilities()
+        let evidence = CapabilityEvidence(probe: "Used in this session", observation: "Connected", positive: true)
+        let applied = report.applying(verifications: [.remoteSSH: evidence, .localShell: evidence])
+        guard case .verified = applied[.remoteSSH].availability else { return XCTFail() }
+        XCTAssertFalse(applied[.localShell].availability.isUsable, "an unavailable capability is never upgraded by a claim")
     }
 }
 
@@ -145,7 +210,7 @@ final class UnleashedRealExecutionTests: XCTestCase {
         var scan = UnleashedEnvironmentScanner(probe: ScriptedProbe.stockDevice).scan()
         scan.shells = ["/bin/sh"]
         let report = await UnleashedCapabilityProvider.report(for: scan, observations: observations)
-        XCTAssertEqual(report[.localShell].availability, .available)
+        guard case .verified = report[.localShell].availability else { return XCTFail("\(report[.localShell].availability)") }
         await session.close()
     }
 
@@ -336,7 +401,10 @@ final class VanillaProviderTests: XCTestCase {
         XCTAssertTrue(report.localFeaturesAvailable)
         XCTAssertEqual(report[.executableAccess].availability.isUsable, false)
         XCTAssertEqual(report[.privilegedOperations].availability.isUsable, false)
-        XCTAssertEqual(report[.remoteSSH].availability, .available)
+        guard case .verified = report[.localShell].availability else { return XCTFail() }
+        guard case .verified = report[.filesystemPermissions].availability else { return XCTFail() }
+        guard case .unsupportedEnvironment = report[.executableAccess].availability else { return XCTFail() }
+        XCTAssertTrue(report[.localShell].summary.contains("not a system shell"))
 
         let provider = VanillaExecutionProvider(workspace: workspace, capabilities: capabilities)
         let session = try await provider.makeSession()
@@ -351,6 +419,9 @@ final class VanillaProviderTests: XCTestCase {
         let report = await UnleashedNotIncludedCapabilityProvider().detectCapabilities()
         XCTAssertFalse(report.localFeaturesAvailable)
         XCTAssertEqual(report.headline, CapabilityReport.unleashedUnavailableMessage)
-        XCTAssertEqual(report[.remoteSSH].availability, .available)
+        for kind in [CapabilityKind.localShell, .executableAccess, .filesystemPermissions, .packageManager, .processInspection, .privilegedOperations] {
+            guard case .notIncluded = report[kind].availability else { return XCTFail(kind.rawValue) }
+        }
+        guard case .availableUntested = report[.remoteSSH].availability else { return XCTFail() }
     }
 }

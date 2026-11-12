@@ -37,7 +37,7 @@ public struct UnleashedExecutionProvider: LocalExecutionProvider {
         guard let shell = scan.shells.first else {
             throw ExecutionError.modeUnavailable(.unleashed, reason: "No local shell can be started in this environment.")
         }
-        if case .failed(let message)? = await observations.outcome(for: shell) {
+        if case .failed(_, let message)? = await observations.outcome(for: shell) {
             throw ExecutionError.modeUnavailable(.unleashed, reason: message)
         }
         return LocalProcessSession(

@@ -158,7 +158,9 @@ struct SessionDetailsView: View {
     }
 }
 
-/// Capability status for one mode: headline plus one row per capability with its evidence.
+/// Capability status for one mode: headline plus one row per capability. Each row shows its
+/// summary once, the reason for its state only when it adds something, the checks that ran,
+/// and what would change the state.
 struct CapabilityReportView: View {
     let report: CapabilityReport
 
@@ -168,28 +170,7 @@ struct CapabilityReportView: View {
                 .font(.subheadline)
                 .foregroundStyle(report.localFeaturesAvailable ? ModeAccent.color(report.mode) : HCGPalette.warn)
             ForEach(report.results) { result in
-                DisclosureGroup {
-                    if let detail = result.availability.detail {
-                        Text(detail).font(.footnote)
-                    }
-                    Text(result.summary).font(.footnote).foregroundStyle(.secondary)
-                    ForEach(Array(result.evidence.enumerated()), id: \.offset) { _, evidence in
-                        HStack(alignment: .top, spacing: 6) {
-                            Image(systemName: evidence.positive ? "checkmark.circle" : "minus.circle")
-                                .foregroundStyle(evidence.positive ? HCGPalette.vanillaGreen : HCGPalette.muted)
-                            VStack(alignment: .leading) {
-                                Text(evidence.probe).font(.caption.monospaced())
-                                Text(evidence.observation).font(.caption).foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                } label: {
-                    HStack {
-                        Label(result.kind.title, systemImage: result.kind.symbolName)
-                        Spacer()
-                        AvailabilityPill(availability: result.availability)
-                    }
-                }
+                CapabilityRow(result: result)
             }
             ForEach(report.buildNotes, id: \.self) { note in
                 Text(note).font(.caption).foregroundStyle(.secondary)
@@ -197,7 +178,47 @@ struct CapabilityReportView: View {
         } header: {
             Text("\(report.mode.displayName) capabilities")
         } footer: {
-            Text("Detected \(report.generatedAt.formatted(date: .omitted, time: .standard)). Detection is read-only and never requests privileges.")
+            Text("Checked \(report.generatedAt.formatted(date: .omitted, time: .standard)). Checks are read-only and never request privileges. “Verified working” means it was actually used successfully on this device.")
+        }
+    }
+}
+
+struct CapabilityRow: View {
+    let result: CapabilityResult
+
+    var body: some View {
+        DisclosureGroup {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(result.summary).font(.footnote)
+                if let detail = result.detail {
+                    Text(detail).font(.footnote).foregroundStyle(.secondary)
+                }
+                if result.requiresAuthorization {
+                    Label("Each use needs your explicit approval.", systemImage: "hand.raised").font(.caption).foregroundStyle(HCGPalette.warn)
+                }
+                if let remedy = result.availability.remedy {
+                    Label(remedy, systemImage: "lightbulb").font(.caption).foregroundStyle(.secondary)
+                }
+                if !result.evidence.isEmpty {
+                    Text("Checks").font(.caption.weight(.semibold)).padding(.top, 2)
+                    ForEach(Array(result.evidence.enumerated()), id: \.offset) { _, check in
+                        HStack(alignment: .top, spacing: 6) {
+                            Image(systemName: check.positive ? "checkmark.circle" : "minus.circle")
+                                .foregroundStyle(check.positive ? HCGPalette.vanillaGreen : HCGPalette.muted)
+                            VStack(alignment: .leading) {
+                                Text(check.probe).font(.caption.monospaced())
+                                Text(check.observation).font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+            }
+        } label: {
+            HStack {
+                Label(result.kind.title, systemImage: result.kind.symbolName)
+                Spacer()
+                AvailabilityPill(availability: result.availability)
+            }
         }
     }
 }
@@ -206,20 +227,22 @@ struct AvailabilityPill: View {
     let availability: CapabilityAvailability
 
     var body: some View {
-        Text(availability.label)
+        Label(availability.label, systemImage: availability.symbolName)
+            .labelStyle(.titleAndIcon)
             .font(.system(size: 11, weight: .semibold))
             .foregroundStyle(color)
             .padding(.horizontal, 7)
             .padding(.vertical, 3)
             .background(color.opacity(0.14), in: Capsule())
+            .accessibilityLabel(availability.label)
     }
 
     private var color: Color {
         switch availability {
-        case .available: HCGPalette.vanillaGreen
-        case .limited, .unverified: HCGPalette.vanillaBlue
-        case .requiresAuthorization: HCGPalette.warn
-        case .unavailable: HCGPalette.muted
+        case .verified: HCGPalette.vanillaGreen
+        case .availableUntested: HCGPalette.vanillaBlue
+        case .permissionDenied, .toolMissing: HCGPalette.warn
+        case .notIncluded, .unsupportedEnvironment: HCGPalette.muted
         }
     }
 }

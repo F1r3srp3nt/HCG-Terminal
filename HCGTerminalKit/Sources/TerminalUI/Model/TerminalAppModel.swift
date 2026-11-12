@@ -23,6 +23,15 @@ public struct HostKeyPrompt: Sendable, Hashable {
     public var key: PresentedHostKey
 }
 
+/// Shown when the user taps a mode that cannot run here. Nothing about the current mode or
+/// sessions changes.
+public struct ModeUnavailableExplanation: Identifiable {
+    public let id = UUID()
+    public let mode: ExecutionMode
+    public let report: CapabilityReport
+    public let distribution: DistributionBuild
+}
+
 /// The mode-switch confirmation shown when existing local sessions could be moved.
 public struct ModeSwitchConfirmation: Identifiable {
     public let id = UUID()
@@ -37,9 +46,14 @@ public final class TerminalAppModel {
 
     // MARK: Mode
     public private(set) var preferredMode: ExecutionMode
+    /// Reports as detected, with verifications from real use applied.
     public private(set) var reports: [ExecutionMode: CapabilityReport] = [:]
+    @ObservationIgnored private var detectedReports: [ExecutionMode: CapabilityReport] = [:]
+    /// Evidence from real use in this app session (e.g. an SSH connection that succeeded).
+    @ObservationIgnored private var verifications: [ExecutionMode: [CapabilityKind: CapabilityEvidence]] = [:]
     public private(set) var isDetecting = false
     public var modeSwitchConfirmation: ModeSwitchConfirmation?
+    public var modeUnavailable: ModeUnavailableExplanation?
 
     // MARK: Sessions
     public private(set) var sessions: [SessionModel] = []
@@ -67,6 +81,13 @@ public final class TerminalAppModel {
             }
             return try await self.connection(for: host)
         }
+        self.builds.onRunFinished = { @MainActor [weak self] run in
+            guard case .failed(let status) = run.status else {
+                if run.status == .succeeded { self?.recordVerification(.buildOrchestration, observation: "\(run.plan.title) on \(run.plan.hostName) finished (exit 0).") }
+                return
+            }
+            self?.recordVerification(.buildOrchestration, observation: "\(run.plan.title) on \(run.plan.hostName) ran to completion (exit \(status)).")
+        }
     }
 
     /// Wires prompts and loads persisted state. Call once from the root view.
@@ -78,6 +99,12 @@ public final class TerminalAppModel {
         keys = dependencies.keyManager.list()
         await builds.reload()
         await refreshCapabilities()
+        if preferredMode != .vanilla, !isAvailable(preferredMode) {
+            // A saved preference for a mode that cannot run here never takes effect.
+            preferredMode = .vanilla
+            dependencies.preferences.preferredMode = .vanilla
+            await DiagnosticLog.shared.record(.notice, "mode", "Saved mode not available; using Vanilla")
+        }
         await DiagnosticLog.shared.record(.info, "app", "Started", metadata: ["build": dependencies.distribution.rawValue, "mode": preferredMode.rawValue])
     }
 
@@ -89,8 +116,25 @@ public final class TerminalAppModel {
         async let vanilla = dependencies.vanillaCapabilities.detectCapabilities()
         async let unleashed = dependencies.unleashedCapabilities.detectCapabilities()
         let (v, u) = await (vanilla, unleashed)
-        reports[.vanilla] = v
-        reports[.unleashed] = u
+        detectedReports[.vanilla] = v
+        detectedReports[.unleashed] = u
+        applyVerifications()
+    }
+
+    private func applyVerifications() {
+        for (mode, report) in detectedReports {
+            reports[mode] = report.applying(verifications: verifications[mode] ?? [:])
+        }
+    }
+
+    /// Records that a capability was used successfully. Shared capabilities (remote SSH,
+    /// builds) are recorded for both modes. Only "available, not tested" results change.
+    public func recordVerification(_ kind: CapabilityKind, mode: ExecutionMode? = nil, observation: String) {
+        let evidence = CapabilityEvidence(probe: "Used in this session", observation: observation, positive: true)
+        for target in mode.map({ [$0] }) ?? ExecutionMode.allCases {
+            verifications[target, default: [:]][kind] = evidence
+        }
+        applyVerifications()
     }
 
     public func report(for mode: ExecutionMode) -> CapabilityReport? { reports[mode] }
@@ -106,6 +150,22 @@ public final class TerminalAppModel {
     /// session by itself; if local sessions could be moved, a confirmation is offered.
     public func selectMode(_ mode: ExecutionMode) {
         guard mode != preferredMode else { return }
+        // A mode that cannot run here is explained, not selected: the current mode, its
+        // appearance and every open session stay exactly as they are.
+        guard isAvailable(mode) else {
+            if let report = reports[mode] {
+                modeUnavailable = ModeUnavailableExplanation(mode: mode, report: report, distribution: dependencies.distribution)
+            } else {
+                Task {
+                    await refreshCapabilities()
+                    if isAvailable(mode) { selectMode(mode) } else if let report = reports[mode] {
+                        modeUnavailable = ModeUnavailableExplanation(mode: mode, report: report, distribution: dependencies.distribution)
+                    }
+                }
+            }
+            Task { await DiagnosticLog.shared.record(.info, "mode", "Mode not available; explained instead of switching", metadata: ["mode": mode.rawValue]) }
+            return
+        }
         let previous = preferredMode
         preferredMode = mode
         dependencies.preferences.preferredMode = mode
@@ -180,6 +240,7 @@ public final class TerminalAppModel {
             let session = try await connection.openSession(
                 size: .standard, target: .local(.unleashed), backend: .loopbackService(host: "127.0.0.1", port: port)
             )
+            recordVerification(.localShell, mode: .unleashed, observation: "Signed in to the terminal service on 127.0.0.1:\(port).")
             return await register(session, title: "Unleashed · service")
         } catch {
             errorMessage = error.localizedDescription
@@ -215,6 +276,7 @@ public final class TerminalAppModel {
         if let existing = connections[host.id], existing.isActive { return existing }
         let connection = try await SSHConnection.connect(endpoint: host.endpoint, authentication: authentication(for: host), hostKeyPolicy: hostKeyPolicy)
         connections[host.id] = connection
+        recordVerification(.remoteSSH, observation: "Connected to \(host.endpoint.address).")
         return connection
     }
 

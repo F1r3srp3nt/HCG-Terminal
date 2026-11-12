@@ -20,94 +20,136 @@ public struct UnleashedCapabilityProvider: TerminalCapabilityProvider {
         return await Self.report(for: scan, observations: observations)
     }
 
+    /// Builds the report from the read-only scan and what real use has shown.
+    ///
+    /// Decision order for each capability:
+    /// 1. real use (spawn succeeded / failed with errno) decides first;
+    /// 2. then read-only checks: found → "available, not tested";
+    /// 3. a probe the system refused (EPERM/EACCES) → "permission denied";
+    /// 4. a visible environment without the needed program → "required tool missing";
+    /// 5. nothing of a shell environment visible → "unsupported environment".
+    /// Linked modules or a jailbreak marker alone never make anything available.
     public static func report(for scan: UnleashedEnvironmentScan, observations: RuntimeObservations) async -> CapabilityReport {
+        let denied = scan.deniedPaths
+        let deniedNote = denied.isEmpty ? nil : "The system refused this app access to \(denied.joined(separator: ", "))."
+        let stockReason = "This device does not expose a shell environment to apps (standard sandboxed iOS: no shell, no jailbreak layout visible)."
+        func absent(_ tool: String) -> CapabilityAvailability {
+            if let deniedNote, !scan.environmentVisible { return .permissionDenied(deniedNote) }
+            return scan.environmentVisible ? .toolMissing("\(tool) was not found in the visible environment.") : .unsupportedEnvironment(stockReason)
+        }
+        func spawnState(_ code: Int32, _ message: String) -> CapabilityAvailability {
+            switch code {
+            case EPERM, EACCES: .permissionDenied("The system refused to start it: \(message). Apps installed through TestFlight or the App Store are sandboxed and cannot start processes.")
+            case ENOENT: .toolMissing("It disappeared before it could be started: \(message).")
+            default: .unsupportedEnvironment("Starting it failed: \(message).")
+            }
+        }
+
         // Local shell
+        let shellChecks = scan.evidence.filter { $0.probe.contains("X_OK") || $0.probe.contains("127.0.0.1") || $0.probe.hasPrefix("lstat") }
         var shellOutcome: RuntimeObservations.SpawnOutcome?
         if let shell = scan.shells.first { shellOutcome = await observations.outcome(for: shell) }
-        let shellResult: CapabilityResult
-        let shellEvidence = scan.evidence.filter { $0.probe.contains("X_OK") || $0.probe.contains("127.0.0.1") }
+        var shellAvailability: CapabilityAvailability
+        var shellSummary = "Start a shell on this device in a pseudo-terminal."
         if let shell = scan.shells.first {
             switch shellOutcome {
             case .succeeded(let pid)?:
-                shellResult = CapabilityResult(kind: .localShell, availability: .available, summary: "\(shell) runs in a local pseudo-terminal (verified, pid \(pid)).", evidence: shellEvidence)
-            case .failed(let message)? where !scan.loopbackServicePorts.isEmpty:
-                shellResult = CapabilityResult(kind: .localShell, availability: .limited("\(shell) could not be started (\(message)), but a terminal service accepts connections on 127.0.0.1:\(scan.loopbackServicePorts[0])."), summary: "Existing local terminal service.", evidence: shellEvidence)
-            case .failed(let message)?:
-                shellResult = CapabilityResult(kind: .localShell, availability: .unavailable("\(shell) exists but could not be started: \(message)"), summary: "The device refused to start the shell.", evidence: shellEvidence)
+                shellAvailability = .verified("\(shell) started in a pseudo-terminal (pid \(pid)).")
+            case .failed(let code, let message)?:
+                shellAvailability = spawnState(code, message)
             case nil:
-                shellResult = CapabilityResult(kind: .localShell, availability: .unverified("\(shell) is present and executable. Starting it is verified when you open a Local Unleashed session."), summary: "Local shell detected.", evidence: shellEvidence)
+                shellAvailability = .availableUntested("\(shell) exists and is executable; it has not been started yet.")
+            }
+            if !shellAvailability.isUsable, let port = scan.loopbackServicePorts.first {
+                shellSummary = "Start a shell on this device, or sign in to the terminal service on 127.0.0.1:\(port)."
+                shellAvailability = .availableUntested("\(shellAvailability.reason) A terminal service accepts connections on 127.0.0.1:\(port); signing in has not been tested.")
             }
         } else if let port = scan.loopbackServicePorts.first {
-            shellResult = CapabilityResult(kind: .localShell, availability: .limited("No shell can be started directly, but a terminal service accepts connections on 127.0.0.1:\(port). Signing in uses that service's own credentials."), summary: "Existing local terminal service.", evidence: shellEvidence)
+            shellSummary = "Sign in to the terminal service running on this device."
+            shellAvailability = .availableUntested("A terminal service accepts connections on 127.0.0.1:\(port) (no data sent). Signing in uses that service's own account and has not been tested.")
         } else {
-            shellResult = CapabilityResult(kind: .localShell, availability: .unavailable("No executable shell and no local terminal service were found."), summary: "No local shell.", evidence: shellEvidence)
+            shellAvailability = absent("No shell (sh, bash, zsh, dash) and no terminal service on 127.0.0.1:22/2222")
         }
+        let shellResult = CapabilityResult(kind: .localShell, availability: shellAvailability, summary: shellSummary, evidence: shellChecks)
 
         // Executable access
         let executableCount = scan.executableDirectories.values.reduce(0, +)
-        let executableEvidence = scan.evidence.filter { $0.probe.hasPrefix("list ") }
-        let spawnRefuted: Bool = { if case .failed? = shellOutcome { true } else { false } }()
-        let executableResult: CapabilityResult
+        let executableChecks = scan.evidence.filter { $0.probe.hasPrefix("list ") }
+        let executableAvailability: CapabilityAvailability
         if executableCount == 0 {
-            executableResult = CapabilityResult(kind: .executableAccess, availability: .unavailable("No executable directories are visible to this app."), summary: "No additional command-line tools.", evidence: executableEvidence)
-        } else if spawnRefuted {
-            executableResult = CapabilityResult(kind: .executableAccess, availability: .unavailable("\(executableCount) tools are visible, but the device does not allow this app to start processes."), summary: "Tools visible but not executable from this app.", evidence: executableEvidence)
+            executableAvailability = absent("No directory with executables")
+        } else if case .failed(let code, let message)? = shellOutcome {
+            executableAvailability = spawnState(code, message)
         } else if await observations.anySucceeded() {
-            executableResult = CapabilityResult(kind: .executableAccess, availability: .available, summary: "\(executableCount) executables in \(scan.executableDirectories.keys.sorted().joined(separator: ", ")).", evidence: executableEvidence)
+            executableAvailability = .verified("Processes started successfully; \(executableCount) executables visible.")
         } else {
-            executableResult = CapabilityResult(kind: .executableAccess, availability: .unverified("\(executableCount) executables visible. Execution is verified on first use."), summary: "Installed command-line tools detected.", evidence: executableEvidence)
+            executableAvailability = .availableUntested("\(executableCount) executables visible in \(scan.executableDirectories.keys.sorted().joined(separator: ", ")); none started yet.")
         }
+        let executableResult = CapabilityResult(kind: .executableAccess, availability: executableAvailability, summary: "Run installed command-line tools from a local shell.", evidence: executableChecks)
 
         // Filesystem
-        let permitted = scan.permittedLocations
-        let readable = permitted.filter(\.readable).map(\.path)
-        let writable = permitted.filter(\.writable).map(\.path)
-        let fsEvidence = scan.locations.map {
-            CapabilityEvidence(probe: "access(\($0.path))", observation: $0.exists ? "r=\($0.readable) list=\($0.listable) w=\($0.writable)" : "absent or not visible", positive: $0.readable)
-        }
-        let filesystemResult = permitted.isEmpty
-            ? CapabilityResult(kind: .filesystemPermissions, availability: .unavailable("No location outside the app sandbox is accessible."), summary: "Sandbox only.", evidence: fsEvidence)
-            : CapabilityResult(
-                kind: .filesystemPermissions,
-                availability: .limited("Readable: \(readable.joined(separator: ", ")). Writable: \(writable.isEmpty ? "none" : writable.joined(separator: ", "))."),
-                summary: "Access exactly as the device permits; nothing is remounted or re-permissioned.",
-                evidence: fsEvidence
+        let listable = scan.locations.filter(\.listable).map(\.path)
+        let writable = scan.locations.filter(\.writable).map(\.path)
+        let fsChecks = scan.locations.map { location in
+            CapabilityEvidence(
+                probe: "lstat/list \(location.path)",
+                observation: location.exists
+                    ? "listable=\(location.listable) readable=\(location.readable) writable(access)=\(location.writable)"
+                    : (scan.pathProbes[location.path]?.description ?? "not found"),
+                positive: location.listable
             )
+        }
+        let fsAvailability: CapabilityAvailability
+        if !listable.isEmpty {
+            fsAvailability = .verified("Listed \(listable.joined(separator: ", ")). Writable per access(2), not yet written: \(writable.isEmpty ? "none" : writable.joined(separator: ", ")).")
+        } else if scan.locations.contains(where: { scan.pathProbes[$0.path]?.isDenied == true || ($0.exists && !$0.listable) }) {
+            fsAvailability = .permissionDenied("Locations outside the app sandbox exist but this app may not list them.")
+        } else {
+            fsAvailability = .unsupportedEnvironment("No location outside the app sandbox is visible to this app.")
+        }
+        let filesystemResult = CapabilityResult(kind: .filesystemPermissions, availability: fsAvailability, summary: "Browse and read permitted locations outside the app sandbox; access is exactly what the device grants.", evidence: fsChecks)
 
         // Package manager
-        let packageEvidence = scan.packageManagers.map { CapabilityEvidence(probe: "access(\($0.path), X_OK)", observation: "executable", positive: true) }
-        let packageResult = scan.packageManagers.isEmpty
-            ? CapabilityResult(kind: .packageManager, availability: .unavailable("No supported package manager (apt, dpkg) was found."), summary: "No package manager.")
-            : CapabilityResult(
-                kind: .packageManager,
-                availability: .requiresAuthorization("\(scan.packageManagers.map(\.name).joined(separator: ", ")) found. Listing packages is read-only; installing or removing needs your explicit approval each time and runs with the permissions the device grants."),
-                summary: "Package management through the installed tools.",
-                evidence: packageEvidence
-            )
+        let packageChecks = scan.packageManagers.map { CapabilityEvidence(probe: "access(\($0.path), X_OK)", observation: "executable", positive: true) }
+        let packageAvailability: CapabilityAvailability = scan.packageManagers.isEmpty
+            ? absent("No apt or dpkg")
+            : .availableUntested("\(scan.packageManagers.map(\.name).joined(separator: ", ")) found; listing installed packages has not run yet.")
+        let packageResult = CapabilityResult(
+            kind: .packageManager, availability: packageAvailability,
+            summary: "List installed packages (read-only); install or remove only after your approval, with the device's permissions.",
+            evidence: packageChecks, requiresAuthorization: !scan.packageManagers.isEmpty
+        )
 
         // Process inspection
-        let processEvidence = scan.evidence.filter { $0.probe.hasPrefix("sysctl") }
-        let processResult: CapabilityResult
+        let processChecks = scan.evidence.filter { $0.probe.hasPrefix("sysctl") }
+        let processAvailability: CapabilityAvailability
         switch scan.visibleProcessCount {
-        case .some(let count) where count > 1:
-            processResult = CapabilityResult(kind: .processInspection, availability: .available, summary: "\(count) processes visible (read-only).", evidence: processEvidence)
-        default:
-            processResult = CapabilityResult(kind: .processInspection, availability: .unavailable("The system reveals only this app's own process."), summary: "Process list not visible.", evidence: processEvidence)
+        case .some(let count) where count > 1: processAvailability = .verified("The process table returned \(count) processes.")
+        case .some: processAvailability = .permissionDenied("The system shows this app only its own process.")
+        case nil: processAvailability = .permissionDenied("sysctl(KERN_PROC_ALL) was refused.")
         }
+        let processResult = CapabilityResult(kind: .processInspection, availability: processAvailability, summary: "List running processes (read-only).", evidence: processChecks)
 
         // Privileged operations
-        let privilegeEvidence = scan.evidence.filter { $0.probe == "geteuid()" }
+        let privilegeChecks = scan.evidence.filter { $0.probe == "geteuid()" }
             + scan.elevationTools.map { CapabilityEvidence(probe: "access(\($0.path), X_OK)", observation: "executable", positive: true) }
-        let privilegedResult: CapabilityResult
+        let privilegedAvailability: CapabilityAvailability
         if scan.effectiveUserID == 0 {
-            privilegedResult = CapabilityResult(kind: .privilegedOperations, availability: .requiresAuthorization("This app process already runs as root (euid 0). Privileged commands still need your explicit approval each time."), summary: "Running as root.", evidence: privilegeEvidence)
+            privilegedAvailability = .availableUntested("This app process runs as root (euid 0).")
         } else if let tool = scan.elevationTools.first {
-            privilegedResult = CapabilityResult(kind: .privilegedOperations, availability: .requiresAuthorization("\(tool.name) found at \(tool.path). HCG Terminal never runs it on its own; it asks for its own password, which HCG Terminal does not store. Commands run as uid \(scan.effectiveUserID) otherwise."), summary: "Elevation only through tools you invoke.", evidence: privilegeEvidence)
+            privilegedAvailability = .availableUntested("\(tool.name) found at \(tool.path). It asks for its own password, which HCG Terminal never supplies or stores.")
         } else {
-            privilegedResult = CapabilityResult(kind: .privilegedOperations, availability: .unavailable("No elevation mechanism detected. Commands run as uid \(scan.effectiveUserID)."), summary: "No privileged operations.", evidence: privilegeEvidence)
+            privilegedAvailability = absent("No sudo or su (commands would run as uid \(scan.effectiveUserID))")
         }
+        let privilegedResult = CapabilityResult(
+            kind: .privilegedOperations, availability: privilegedAvailability,
+            summary: "Run privileged commands only after you approve each one; HCG Terminal never elevates by itself.",
+            evidence: privilegeChecks, requiresAuthorization: true
+        )
 
         let localAvailable = shellResult.availability.isUsable
+        var notes = ["Unleashed build. \(scan.operatingSystem)"]
+        if let deniedNote { notes.append(deniedNote) }
         return CapabilityReport(
             mode: .unleashed,
             results: [
@@ -116,9 +158,9 @@ public struct UnleashedCapabilityProvider: TerminalCapabilityProvider {
             ],
             localFeaturesAvailable: localAvailable,
             headline: localAvailable
-                ? "Unleashed features are available as listed. Nothing is installed or elevated automatically."
+                ? "Unleashed: \(shellResult.availability.label.lowercased()). Nothing is installed or elevated automatically."
                 : CapabilityReport.unleashedUnavailableMessage,
-            buildNotes: ["Unleashed build. \(scan.operatingSystem)"]
+            buildNotes: notes
         )
     }
 }
