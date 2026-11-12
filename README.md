@@ -26,10 +26,11 @@ If Unleashed is not available, the app says so:
 HCGTerminal.xcodeproj        two app targets sharing HCGTerminal/:
                                HCGTerminal           standard build (no Unleashed code linked)
                                HCGTerminalUnleashed  Unleashed build (adds UnleashedIntegration)
-HCGTerminal/                 app entry point and composition root, assets
+HCGTerminal/                 app entry point, assets (shared by both targets)
+Variants/Standard|Unleashed/ per-target composition: decides which backend is linked
 HCGTerminal-Support/         Info.plist additions, entitlements
 HCGTerminalKit/              Swift package with all modules and tests
-Scripts/                     test SSH server, Xcode project generator
+Scripts/                     test SSH server, project generator, packaging, build-variant check
 docs/                        architecture, distribution, status
 ```
 
@@ -44,7 +45,10 @@ Requirements: Xcode 16 or later (CI uses Xcode 26.6), iOS / iPadOS 17 or later. 
 | Standard app on your own iPhone/iPad | Open `HCGTerminal.xcodeproj`, scheme **HCGTerminal**, your device, Run. |
 | Standard app for TestFlight/App Store | Scheme **HCGTerminal** → Product → Archive → Distribute App (you upload; HCG Terminal never does). In HCG Executable Maker choose scheme `HCGTerminal`. |
 | Unleashed app | Scheme **HCGTerminalUnleashed**. Separate app (bundle ID `…hcgterminal.unleashed`); see [`docs/UNLEASHED.md`](docs/UNLEASHED.md) for prerequisites and the separate installation. |
-| Unsigned artifacts, kept apart | `Scripts/package-ios.sh standard dist` → `dist/standard/…`; `Scripts/package-ios.sh unleashed dist` → `dist/unleashed/…` (unsigned archive; Unleashed also an unsigned `.ipa`). |
+| Unsigned artifacts, kept apart | `Scripts/package-ios.sh standard dist` → `dist/standard/…`; `Scripts/package-ios.sh unleashed dist` → `dist/unleashed/…` (unsigned archive; Unleashed also an unsigned `.ipa`). Both refuse a bundle whose code does not match its variant. |
+| Jailbroken device (`.deb`) | `Scripts/package-ios.sh unleashed dist --deb rootless --ldid-entitlements <file>`; you install it with the device's package manager. See [`docs/UNLEASHED.md`](docs/UNLEASHED.md). |
+
+**Settings → Capabilities & Access** lets you turn each area on or off (enforced in the services). A switch only limits HCG Terminal; it never grants anything. See [`docs/CAPABILITIES_AND_ACCESS.md`](docs/CAPABILITIES_AND_ACCESS.md). Remaining work: [`docs/TODO.md`](docs/TODO.md).
 
 Check what is installed in **Diagnostics → Build**: variant (from the linked code), version, build number, source revision and bundle ID. [`docs/BUILD_VARIANTS.md`](docs/BUILD_VARIANTS.md) explains the two variants and why the first TestFlight build was the standard one.
 

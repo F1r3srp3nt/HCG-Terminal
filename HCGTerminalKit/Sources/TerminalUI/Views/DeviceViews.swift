@@ -80,9 +80,13 @@ struct UnleashedToolsView: View {
         loading = true
         defer { loading = false }
         packagesAvailable = await tools.packageManagerAvailable()
-        let readable = model.dependencies.access.isEnabled(.expandedFileRead)
-        roots = readable ? await tools.permittedRoots() : []
-        logRoots = readable ? await tools.logRoots() : []
+        if model.dependencies.access.isEnabled(.expandedFileRead) {
+            roots = await tools.permittedRoots()
+            logRoots = await tools.logRoots()
+        } else {
+            roots = []
+            logRoots = []
+        }
         if packagesAvailable, model.dependencies.access.isEnabled(.packageManagement) {
             do {
                 packages = try await tools.installedPackages()

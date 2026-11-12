@@ -56,8 +56,10 @@ struct EnvironmentAssessmentSections: View {
                     Text(indicator.strength == .strong ? "strong indicator" : "weak indicator").font(.caption2).foregroundStyle(.secondary)
                 }
             }
-            ForEach(assessment.bootstrap.resolvedTools.sorted(by: { $0.key < $1.key }), id: \.key) { tool, path in
-                LabeledContent(tool) { Text(path).font(.caption.monospaced()).multilineTextAlignment(.trailing) }
+            ForEach(assessment.bootstrap.resolvedTools.keys.sorted(), id: \.self) { tool in
+                LabeledContent(tool) {
+                    Text(assessment.bootstrap.resolvedTools[tool] ?? "").font(.caption.monospaced()).multilineTextAlignment(.trailing)
+                }
             }
         } header: { Text("3 · Bootstrap evidence") }
 
@@ -81,7 +83,8 @@ struct EnvironmentAssessmentSections: View {
             if assessment.operations.isEmpty {
                 Text("No explicit test has run in this app session.").font(.footnote).foregroundStyle(.secondary)
             }
-            ForEach(Array(assessment.operations.enumerated()), id: \.offset) { _, operation in
+            ForEach(assessment.operations.indices, id: \.self) { index in
+                let operation = assessment.operations[index]
                 VStack(alignment: .leading, spacing: 2) {
                     Label(operation.name, systemImage: operation.succeeded ? "checkmark.seal" : "xmark.octagon")
                         .font(.subheadline.weight(.semibold))

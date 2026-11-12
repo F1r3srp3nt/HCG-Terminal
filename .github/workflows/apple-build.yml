@@ -232,8 +232,9 @@ jobs:
             app="$RUNNER_TEMP/DDsim/Build/Products/Debug-iphonesimulator/$scheme.app"
             bundle=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Info.plist")
             echo "== $scheme ($bundle, variant $(/usr/libexec/PlistBuddy -c 'Print :HCGBuildVariant' "$app/Info.plist"))"
+            Scripts/verify-build-variant.sh "$app"
             xcrun simctl install "$UDID" "$app"
-            for scenario in launch unleashed-tap session capabilities files diagnostics; do
+            for scenario in launch dashboard unleashed-tap session capabilities settings files diagnostics; do
               xcrun simctl terminate "$UDID" "$bundle" 2>/dev/null || true
               xcrun simctl launch "$UDID" "$bundle" -HCGSmokeScenario "$scenario" >/dev/null
               sleep 7
