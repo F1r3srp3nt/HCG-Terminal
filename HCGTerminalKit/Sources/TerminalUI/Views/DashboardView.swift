@@ -106,7 +106,7 @@ struct DashboardView: View {
     }
 
     private var workspacePanel: some View {
-        DashboardPanel(title: "Workspace", symbol: "folder", value: workspace.map { ByteCountFormatter.string(fromByteCount: $0.bytes, countStyle: .file) } ?? "…") {
+        DashboardPanel(title: "Workspace", symbol: "folder", value: workspace.map { WorkspaceSummary.format(bytes: $0.bytes) } ?? "…") {
             if let workspace {
                 LabeledContent("Projects", value: "\(workspace.projects)")
                 LabeledContent("Files", value: workspace.truncated ? "\(workspace.files)+" : "\(workspace.files)")
@@ -233,6 +233,14 @@ struct WorkspaceSummary: Equatable {
     var files: Int
     var projects: Int
     var truncated: Bool
+
+    /// "0 KB" rather than the formatter's default "Zero KB".
+    static func format(bytes: Int64) -> String {
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        formatter.allowsNonnumericFormatting = false
+        return formatter.string(fromByteCount: bytes)
+    }
 
     static func load(_ workspace: FileWorkspace) async -> WorkspaceSummary {
         let root = workspace.rootURL

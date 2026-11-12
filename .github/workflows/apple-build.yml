@@ -264,12 +264,6 @@ jobs:
           done
           exit $status
 
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: simulator-screenshots
-          path: shots/
-
       - name: Small iPhone and iPad launch (header layout, both variants)
         run: |
           mkdir -p shots; status=0
@@ -300,6 +294,12 @@ jobs:
             xcrun simctl shutdown "$udid" || true
           done
           exit $status
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: simulator-screenshots
+          path: shots/
 
       - name: Package tests on the iOS Simulator runtime
         if: always()

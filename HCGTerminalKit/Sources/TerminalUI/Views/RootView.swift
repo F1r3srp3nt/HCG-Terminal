@@ -19,7 +19,9 @@ enum SidebarItem: Hashable {
 /// Root of HCG Terminal. Split view on iPad, stack on iPhone (NavigationSplitView adapts).
 public struct RootView: View {
     @State private var model: TerminalAppModel
-    @State private var selection: SidebarItem? = .dashboard
+    /// Nothing selected at launch: iPhone shows the home list (header, mode selector, New
+    /// Session); iPad shows the dashboard, which is also the detail for no selection.
+    @State private var selection: SidebarItem?
     /// iPhone (compact width) opens on the sidebar: header, mode selector and New Session first.
     @State private var compactColumn: NavigationSplitViewColumn = .sidebar
     /// Read outside the split view: inside it, the sidebar column always reports compact.

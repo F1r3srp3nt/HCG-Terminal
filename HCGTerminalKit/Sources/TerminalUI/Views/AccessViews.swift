@@ -68,15 +68,23 @@ struct AccessControlRow: View {
         let isOn = model.accessSettings.isOn(control)
         let blocker = model.dependencies.access.blockingPrerequisite(of: control)
         VStack(alignment: .leading, spacing: 8) {
-            Toggle(isOn: Binding(
-                get: { model.accessSettings.isOn(control) },
-                set: { newValue in Task { await model.requestAccessChange(control, enabled: newValue) } }
-            )) {
+            if included {
+                Toggle(isOn: Binding(
+                    get: { model.accessSettings.isOn(control) },
+                    set: { newValue in Task { await model.requestAccessChange(control, enabled: newValue) } }
+                )) {
+                    Label(control.title, systemImage: control.symbolName)
+                        .font(.body.weight(.semibold))
+                }
+                .frame(minHeight: 44)
+            } else {
+                // No switch for code that is not in this build: a switch (even a disabled one in
+                // the "on" position) would suggest the capability is enabled.
                 Label(control.title, systemImage: control.symbolName)
                     .font(.body.weight(.semibold))
+                    .foregroundStyle(HCGPalette.muted)
+                    .frame(minHeight: 44, alignment: .leading)
             }
-            .disabled(!included)
-            .frame(minHeight: 44)
 
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 8) { facts(isOn: isOn, blocker: blocker) }
@@ -96,25 +104,28 @@ struct AccessControlRow: View {
 
     @ViewBuilder
     private func facts(isOn: Bool, blocker: AccessControl?) -> some View {
-        Text(included ? "In this build" : "Not in this build")
-            .font(.caption)
-            .foregroundStyle(.secondary)
-        if let availability = model.detectedAvailability(for: control) {
-            StatusChip(availability: availability)
-                .accessibilityLabel("On this device: \(availability.label)")
-        } else {
-            Text("Uses the system file picker")
+        if !included {
+            Text("Not in this build: only the Unleashed app contains it.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-        }
-        if isOn, let blocker {
-            Label("Inactive: needs \(blocker.title)", systemImage: "link")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(HCGPalette.warn)
-        } else if !isOn {
-            Label("Off by your choice", systemImage: "pause.circle")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(HCGPalette.muted)
+        } else {
+            if let availability = model.detectedAvailability(for: control) {
+                StatusChip(availability: availability)
+                    .accessibilityLabel("On this device: \(availability.label)")
+            } else {
+                Text("Uses the system file picker")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if isOn, let blocker {
+                Label("Inactive: needs \(blocker.title)", systemImage: "link")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(HCGPalette.warn)
+            } else if !isOn {
+                Label("Off by your choice", systemImage: "pause.circle")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(HCGPalette.muted)
+            }
         }
     }
 }
@@ -127,11 +138,12 @@ struct AccessControlDetailView: View {
     var body: some View {
         List {
             Section {
-                Toggle(isOn: Binding(
-                    get: { model.accessSettings.isOn(control) },
-                    set: { newValue in Task { await model.requestAccessChange(control, enabled: newValue) } }
-                )) { Text("Allow HCG Terminal to use this") }
-                .disabled(control.requiresUnleashedBackend && model.dependencies.distribution == .standard)
+                if !(control.requiresUnleashedBackend && model.dependencies.distribution == .standard) {
+                    Toggle(isOn: Binding(
+                        get: { model.accessSettings.isOn(control) },
+                        set: { newValue in Task { await model.requestAccessChange(control, enabled: newValue) } }
+                    )) { Text("Allow HCG Terminal to use this") }
+                }
                 LabeledContent("In this build", value: control.requiresUnleashedBackend && model.dependencies.distribution == .standard ? "Not included" : "Included")
                 if let availability = model.detectedAvailability(for: control) {
                     LabeledContent("On this device") { StatusChip(availability: availability) }
