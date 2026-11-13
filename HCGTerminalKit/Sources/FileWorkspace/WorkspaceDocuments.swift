@@ -117,7 +117,8 @@ public extension FileWorkspace {
         let info = try item(at: path)
         guard !info.isDirectory else { throw WorkspaceError.isADirectory(path.string) }
         guard info.size <= Self.editableTextLimit else { throw DocumentError.tooLarge(path.string, info.size, limit: Self.editableTextLimit) }
-        let data = try readData(path, limit: Int(Self.editableTextLimit))
+        let data = try readData(path, limit: Int(Self.editableTextLimit) + 1)
+        guard data.count <= Self.editableTextLimit else { throw DocumentError.tooLarge(path.string, Int64(data.count), limit: Self.editableTextLimit) }
         guard let text = String(data: data, encoding: .utf8), !data.contains(0) else { throw DocumentError.notText(path.string) }
         return TextDocument(path: path, text: text, modified: info.modified, size: info.size)
     }
@@ -126,9 +127,11 @@ public extension FileWorkspace {
     /// `.changedOnDisk` unless `overwriteChanges` is true. Returns the refreshed document.
     @discardableResult
     func saveTextDocument(_ document: TextDocument, text: String, overwriteChanges: Bool = false) throws -> TextDocument {
-        if exists(document.path), !overwriteChanges {
+        if !overwriteChanges {
+            guard exists(document.path) else { throw DocumentError.changedOnDisk(document.path.string) }
             let current = try item(at: document.path)
-            if current.modified != document.modified || current.size != document.size {
+            let currentText = try openTextDocument(document.path).text
+            if current.modified != document.modified || current.size != document.size || currentText != document.text {
                 throw DocumentError.changedOnDisk(document.path.string)
             }
         }

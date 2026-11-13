@@ -98,6 +98,11 @@ actor UnleashedToolsAdapter: UnleashedTools {
         await observations.recordWrite(in: (path as NSString).deletingLastPathComponent)
     }
 
+    func saveEditedText(_ text: String, original: String, to path: String) async throws {
+        try await files().writeText(text, to: path, expectedText: original)
+        await observations.recordWrite(in: (path as NSString).deletingLastPathComponent)
+    }
+
     func createDirectory(named name: String, in directory: String) async throws {
         try await files().createDirectory(named: name, in: directory)
     }

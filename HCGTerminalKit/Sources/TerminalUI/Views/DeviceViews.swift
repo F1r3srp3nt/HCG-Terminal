@@ -1,6 +1,7 @@
 #if canImport(UIKit) && canImport(SwiftUI)
 import Diagnostics
 import SwiftUI
+import UIKit
 import TerminalCapabilityProvider
 import TerminalCore
 
@@ -134,6 +135,8 @@ struct HostDirectoryView: View {
     @Environment(TerminalAppModel.self) private var model
     let path: String
     @State private var rows: [HostFileRow] = []
+    @State private var query = ""
+    @AppStorage("hcg.fileCommand.showHidden") private var showHidden = false
     @State private var writable = false
     @State private var newFolderName = ""
     @State private var showNewFolder = false
@@ -151,7 +154,10 @@ struct HostDirectoryView: View {
                     .font(.footnote).foregroundStyle(.secondary)
                 if let status { Text(status).font(.footnote).foregroundStyle(HCGPalette.warn) }
             }
-            ForEach(rows) { row in
+            if rows.isEmpty && status == nil {
+                Text("Empty folder").foregroundStyle(.secondary)
+            }
+            ForEach(rows.filter { (showHidden || !$0.name.hasPrefix(".")) && (query.isEmpty || $0.name.localizedCaseInsensitiveContains(query)) }) { row in
                 Group {
                     if row.isDirectory {
                         NavigationLink { HostDirectoryView(path: row.path) } label: { label(row) }
@@ -167,13 +173,21 @@ struct HostDirectoryView: View {
                 }
             }
         }
-        .navigationTitle((path as NSString).lastPathComponent)
+        .searchable(text: $query, prompt: "Search this folder")
+        .navigationTitle(path == "/" ? "Device Root" : (path as NSString).lastPathComponent)
+        .safeAreaInset(edge: .bottom) {
+            Text(path).font(.caption.monospaced()).textSelection(.enabled).padding(6)
+        }
         .toolbar {
+            Menu {
+                Toggle("Show Hidden Files", isOn: $showHidden)
+                Button("Copy Path") { UIPasteboard.general.string = path }
+            } label: { Label("View Options", systemImage: "ellipsis.circle") }
             if writable {
                 Button { newFolderName = ""; showNewFolder = true } label: { Label("New Folder", systemImage: "folder.badge.plus") }
             }
         }
-        .task { await load() }
+        .task(id: model.accessSettings) { await load() }
         .refreshable { await load() }
         .alert("New Folder", isPresented: $showNewFolder) {
             TextField("Name", text: $newFolderName)
@@ -212,7 +226,13 @@ struct HostDirectoryView: View {
     private func load() async {
         guard let tools else { return }
         writable = await tools.canWrite(path)
-        do { rows = try await tools.list(path) } catch { status = error.localizedDescription }
+        do {
+            rows = try await tools.list(path).sorted {
+                if $0.isDirectory != $1.isDirectory { return $0.isDirectory }
+                return $0.name.localizedStandardCompare($1.name) == .orderedAscending
+            }
+            status = nil
+        } catch { rows = []; status = error.localizedDescription }
     }
 
     private func change(_ action: @escaping (any UnleashedTools) async throws -> Void) {
@@ -230,71 +250,108 @@ struct HostDirectoryView: View {
     }
 }
 
-/// Shows a file (the end of large logs); text files this app may write can be edited.
+/// Full UTF-8 text editing with explicit save and unsaved-change protection.
+/// Log tails are preview-only and are never used as the source of an edit.
 struct HostFileView: View {
     @Environment(TerminalAppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
     let path: String
     let writable: Bool
     @State private var text = ""
     @State private var original = ""
     @State private var editing = false
+    @State private var busy = false
+    @State private var showClose = false
     @State private var status: String?
+    private var dirty: Bool { editing && text != original }
+    private var mayWrite: Bool { writable && model.accessSettings.isOn(.expandedFileWrite) }
 
     var body: some View {
         Group {
-            if editing {
+            if !model.dependencies.access.isEnabled(.expandedFileRead) {
+                ContentUnavailableView("File Access Disabled", systemImage: "lock",
+                    description: Text("Enable expanded filesystem browsing in Capabilities & Access."))
+            } else if editing {
                 TextEditor(text: $text)
                     .font(.system(.body, design: .monospaced))
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
+                    .disabled(busy)
             } else {
                 ScrollView {
-                    Text(text).font(.system(size: 11, design: .monospaced)).textSelection(.enabled)
+                    Text(text).font(.system(.body, design: .monospaced)).textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading).padding()
                 }
-                .defaultScrollAnchor(.bottom)
             }
         }
         .safeAreaInset(edge: .top) {
-            if let status { Text(status).font(.footnote).foregroundStyle(HCGPalette.warn).padding(6) }
+            VStack(alignment: .leading) {
+                Text(path).font(.caption.monospaced()).textSelection(.enabled)
+                if let status { Text(status).font(.footnote).foregroundStyle(HCGPalette.warn) }
+            }.padding(6)
         }
-        .navigationTitle((path as NSString).lastPathComponent)
+        .navigationTitle((path as NSString).lastPathComponent + (dirty ? " •" : ""))
         .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden(dirty || busy)
         .toolbar {
-            if writable {
+            if dirty { Button("Close") { showClose = true }.disabled(busy) }
+            if mayWrite {
                 if editing {
-                    Button("Save") { Task { await save() } }.disabled(text == original)
+                    Button("Save") { Task { _ = await save() } }.disabled(!dirty || busy)
                 } else {
-                    Button("Edit") { Task { await startEditing() } }
+                    Button("Edit") { Task { await startEditing() } }.disabled(busy)
                 }
             }
         }
-        .task {
-            do { text = try await model.dependencies.unleashedTools?.readTail(path) ?? "" } catch { text = error.localizedDescription }
+        .task { await loadPreview() }
+        .confirmationDialog("Save changes before closing?", isPresented: $showClose, titleVisibility: .visible) {
+            Button("Save and Close") { Task { if await save() { dismiss() } } }
+            Button("Discard Changes", role: .destructive) { dismiss() }
+            Button("Keep Editing", role: .cancel) {}
+        }
+    }
+
+    private func loadPreview() async {
+        guard let tools = model.dependencies.unleashedTools else { status = "Backend unavailable."; return }
+        do {
+            text = try await tools.readText(path)
+            status = "UTF-8 text · up to 2 MB. Edit opens the complete file."
+        } catch {
+            // A tail can be useful for a large log, but cannot be saved as the whole file.
+            do {
+                text = try await tools.readTail(path)
+                status = "Preview only: last 256 KB, decoded as text. " + error.localizedDescription
+            } catch { text = ""; status = error.localizedDescription }
         }
     }
 
     private func startEditing() async {
+        guard let tools = model.dependencies.unleashedTools else { return }
+        busy = true
+        defer { busy = false }
         do {
-            let full = try await model.dependencies.unleashedTools?.readText(path) ?? ""
+            let full = try await tools.readText(path)
             text = full
             original = full
             editing = true
-            status = nil
-        } catch {
-            status = error.localizedDescription
-        }
+            status = "Unsaved edits stay here until you choose Save."
+        } catch { status = error.localizedDescription }
     }
 
-    private func save() async {
+    private func save() async -> Bool {
+        guard let tools = model.dependencies.unleashedTools, !busy else { return false }
+        busy = true
+        defer { busy = false }
         do {
-            try await model.dependencies.unleashedTools?.writeText(text, to: path)
+            try await tools.saveEditedText(text, original: original, to: path)
             original = text
             status = "Saved."
             model.recordVerification(.filesystemPermissions, mode: .unleashed, observation: "Wrote \(path).")
             model.noteWriteVerified()
+            return true
         } catch {
-            status = error.localizedDescription
+            status = error.localizedDescription + " Your edits have been kept; copy them before reopening the file."
+            return false
         }
     }
 }

@@ -290,6 +290,8 @@ public enum LocationBrowserError: Error, LocalizedError, Equatable {
     case alreadyExists(String)
     case invalidName(String)
     case failed(String, String)
+    case changedOnDisk(String)
+    case tooLarge(String)
 
     public var errorDescription: String? {
         switch self {
@@ -300,6 +302,8 @@ public enum LocationBrowserError: Error, LocalizedError, Equatable {
         case .alreadyExists(let name): "“\(name)” already exists."
         case .invalidName(let name): "“\(name)” is not a valid name."
         case .failed(let path, let reason): "\(path): \(reason)"
+        case .changedOnDisk(let path): "\(path) changed since it was opened. Reload before saving."
+        case .tooLarge(let path): "\(path) exceeds the text editor size limit. Use a log preview or export it."
         }
     }
 }
@@ -359,7 +363,7 @@ public struct HostFileSystem: Sendable {
         let resolved = exists
             ? Self.resolve(standardized)
             : (Self.resolve((standardized as NSString).deletingLastPathComponent) as NSString).appendingPathComponent((standardized as NSString).lastPathComponent)
-        guard roots.contains(where: { resolved == $0 || resolved.hasPrefix($0 + "/") }) else {
+        guard roots.contains(where: { ($0 == "/" && resolved.hasPrefix("/")) || resolved == $0 || resolved.hasPrefix($0 + "/") }) else {
             throw LocationBrowserError.notPermitted(path)
         }
         return resolved
@@ -387,9 +391,11 @@ public struct HostFileSystem: Sendable {
         return names.sorted().map { name in
             let full = (directory as NSString).appendingPathComponent(name)
             let attributes = (try? FileManager.default.attributesOfItem(atPath: full)) ?? [:]
+            var directoryFlag: ObjCBool = false
+            _ = FileManager.default.fileExists(atPath: full, isDirectory: &directoryFlag)
             return HostFileEntry(
                 path: full, name: name,
-                isDirectory: (attributes[.type] as? FileAttributeType) == .typeDirectory,
+                isDirectory: directoryFlag.boolValue,
                 size: (attributes[.size] as? NSNumber)?.int64Value ?? 0,
                 modified: attributes[.modificationDate] as? Date,
                 writable: canWrite && posixAccess(full, W_OK) == 0
@@ -415,7 +421,12 @@ public struct HostFileSystem: Sendable {
         let file = try check(path)
         guard let handle = FileHandle(forReadingAtPath: file) else { throw LocationBrowserError.unreadable(file) }
         defer { try? handle.close() }
-        let data = (try? handle.read(upToCount: limit)) ?? Data()
+        guard limit > 0, limit < Int.max else { throw LocationBrowserError.tooLarge(file) }
+        let size = try handle.seekToEnd()
+        guard size <= UInt64(limit) else { throw LocationBrowserError.tooLarge(file) }
+        try handle.seek(toOffset: 0)
+        let data = try handle.read(upToCount: limit + 1) ?? Data()
+        guard data.count <= limit else { throw LocationBrowserError.tooLarge(file) }
         guard let text = String(data: data, encoding: .utf8), !data.contains(0) else { throw LocationBrowserError.unreadable("\(file) (not UTF-8 text)") }
         return text
     }
@@ -452,13 +463,21 @@ public struct HostFileSystem: Sendable {
         return trimmed
     }
 
-    public func writeText(_ text: String, to path: String) async throws {
+    public func writeText(_ text: String, to path: String, expectedText: String? = nil) async throws {
         let file = try check(path)
         try requireWritableDirectory((file as NSString).deletingLastPathComponent)
         if FileManager.default.fileExists(atPath: file), posixAccess(file, W_OK) != 0 {
             throw LocationBrowserError.notWritable(file, String(cString: strerror(errno)))
         }
         try await authorizeChange("Write a file", path: file, command: "write \(file)")
+        // Approval can suspend: recheck the switch, path and contents after it returns.
+        try access.require(.expandedFileWrite)
+        guard try check(path) == file else { throw LocationBrowserError.changedOnDisk(path) }
+        if let expectedText {
+            guard FileManager.default.fileExists(atPath: file), try readText(file) == expectedText else {
+                throw LocationBrowserError.changedOnDisk(path)
+            }
+        }
         do { try Data(text.utf8).write(to: URL(fileURLWithPath: file), options: [.atomic]) } catch {
             throw LocationBrowserError.failed(file, error.localizedDescription)
         }

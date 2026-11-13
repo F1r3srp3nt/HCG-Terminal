@@ -11,6 +11,8 @@ struct WorkspaceBrowserView: View {
     let directory: WorkspacePath
 
     @State private var items: [WorkspaceItem] = []
+    @State private var query = ""
+    @AppStorage("hcg.fileCommand.showHidden") private var showHidden = false
     @State private var loadError: String?
     @State private var showImporter = false
     @State private var pendingImport: [URL] = []
@@ -29,12 +31,12 @@ struct WorkspaceBrowserView: View {
             if let status {
                 Text(status).font(.footnote).foregroundStyle(.secondary)
             }
-            ForEach(items) { item in
+            ForEach(items.filter { (showHidden || !$0.name.hasPrefix(".")) && (query.isEmpty || $0.name.localizedCaseInsensitiveContains(query)) }) { item in
                 Group {
                     if item.isDirectory {
                         NavigationLink { WorkspaceBrowserView(directory: item.path) } label: { row(item) }
                     } else {
-                        NavigationLink { TextFileEditor(path: item.path) } label: { row(item) }
+                        NavigationLink { WorkspaceFileView(path: item.path) } label: { row(item) }
                     }
                 }
                 .contextMenu { actions(for: item) }
@@ -51,9 +53,12 @@ struct WorkspaceBrowserView: View {
                 ContentUnavailableView("Empty Folder", systemImage: "folder", description: Text("Create a file or import from the Files app."))
             }
         }
+        .searchable(text: $query, prompt: "Search this folder")
         .navigationTitle(directory.isRoot ? "Workspace" : directory.name)
+        .safeAreaInset(edge: .bottom) { Text("Workspace: " + directory.string).font(.caption.monospaced()).textSelection(.enabled).padding(6) }
         .toolbar {
             Menu {
+                Toggle("Show Hidden Files", isOn: $showHidden)
                 Button { create(directory: false) } label: { Label("New Text File", systemImage: "doc.badge.plus") }
                 Button { create(directory: true) } label: { Label("New Folder", systemImage: "folder.badge.plus") }
                 Button { showImporter = true } label: { Label("Import from Files…", systemImage: "square.and.arrow.down") }
@@ -134,7 +139,7 @@ struct WorkspaceBrowserView: View {
 
     private func reload() {
         do {
-            items = try workspace.list(directory, includeHidden: false)
+            items = try workspace.list(directory, includeHidden: true)
             loadError = nil
         } catch {
             loadError = error.localizedDescription

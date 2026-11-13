@@ -87,4 +87,25 @@ final class WorkspaceDocumentsTests: XCTestCase {
         let folder = try workspace.createItem(named: "New Folder", in: .home, directory: true)
         XCTAssertTrue(workspace.isDirectory(folder))
     }
+    func testSaveDetectsSameSizeContentChangeWithRestoredTimestamp() throws {
+        let path = try WorkspacePath("/home/conflict.txt")
+        try workspace.write("old", to: path)
+        let opened = try workspace.openTextDocument(path)
+        try workspace.write("new", to: path)
+        if let date = opened.modified {
+            try FileManager.default.setAttributes([.modificationDate: date], ofItemAtPath: workspace.url(for: path).path)
+        }
+        XCTAssertThrowsError(try workspace.saveTextDocument(opened, text: "mine"))
+        XCTAssertEqual(try workspace.readText(path), "new")
+    }
+
+    func testSaveDetectsDeletedDocument() throws {
+        let path = try WorkspacePath("/home/deleted.txt")
+        try workspace.write("old", to: path)
+        let opened = try workspace.openTextDocument(path)
+        try workspace.remove(path)
+        XCTAssertThrowsError(try workspace.saveTextDocument(opened, text: "mine"))
+        XCTAssertFalse(workspace.exists(path))
+    }
+
 }

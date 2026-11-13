@@ -114,7 +114,7 @@ struct DashboardView: View {
             } else {
                 ProgressView()
             }
-            Button { openItem(.files) } label: { Label("Open Files", systemImage: "folder") }
+            Button { openItem(.files) } label: { Label("Open File Command", systemImage: "folder.badge.gearshape") }
                 .buttonStyle(.bordered)
         }
         .font(.callout)

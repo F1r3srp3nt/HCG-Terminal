@@ -84,4 +84,54 @@ final class HostFileSystemTests: XCTestCase {
         let ungated = HostFileSystem(roots: [protected], gate: nil, needsApproval: { $0.hasPrefix(protected) }, access: .allEnabled())
         do { try await ungated.writeText("x", to: protected + "/other"); XCTFail("no presenter means no approval") } catch {}
     }
+    func testOversizedTextCannotBeOpenedForEditing() async throws {
+        let files = HostFileSystem(roots: [root.path], gate: nil, access: .allEnabled())
+        let path = root.appendingPathComponent("large.txt").path
+        try Data(repeating: 65, count: 1025).write(to: URL(fileURLWithPath: path))
+        XCTAssertThrowsError(try files.readText(path, limit: 1024)) { error in
+            guard case LocationBrowserError.tooLarge = error else { return XCTFail("wrong error: \(error)") }
+        }
+        XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: path)).count, 1025)
+    }
+
+    func testGuardedSaveRefusesExternalChangesAndDeletedFile() async throws {
+        let files = HostFileSystem(roots: [root.path], gate: nil, access: .allEnabled())
+        let path = root.appendingPathComponent("edit.txt").path
+        try await files.writeText("original", to: path)
+        try await files.writeText("external", to: path)
+        do {
+            try await files.writeText("my edit", to: path, expectedText: "original")
+            XCTFail("Must preserve the external edit")
+        } catch { XCTAssertEqual(error as? LocationBrowserError, .changedOnDisk(path)) }
+        XCTAssertEqual(try files.readText(path), "external")
+        try FileManager.default.removeItem(atPath: path)
+        do {
+            try await files.writeText("my edit", to: path, expectedText: "original")
+            XCTFail("Must not recreate a deleted document")
+        } catch { XCTAssertEqual(error as? LocationBrowserError, .changedOnDisk(path)) }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: path))
+    }
+
+    func testWriteSwitchRecheckedAfterApproval() async throws {
+        let access = AccessPolicy.allEnabled()
+        let gate = AuthorizationGate(presenter: { _ in
+            access.set(.expandedFileWrite, enabled: false)
+            return true
+        }, access: access)
+        let files = HostFileSystem(roots: [root.path], gate: gate, needsApproval: { _ in true }, access: access)
+        let path = root.appendingPathComponent("revoked.txt").path
+        do {
+            try await files.writeText("must not write", to: path)
+            XCTFail("Revocation must take effect after the approval wait")
+        } catch { XCTAssertTrue(error is AccessDenied) }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: path))
+    }
+
+    func testExplicitRootAllowsOSReadableDescendants() throws {
+        let files = HostFileSystem(roots: ["/"], gate: nil, access: .allEnabled())
+        XCTAssertEqual(try files.readText(outside.appendingPathComponent("secret.txt").path), "secret")
+        let disabled = HostFileSystem(roots: ["/"], gate: nil, access: .inMemory(AccessSettings(values: [AccessControl.expandedFileRead.rawValue: false])))
+        XCTAssertThrowsError(try disabled.list(root.path))
+    }
+
 }

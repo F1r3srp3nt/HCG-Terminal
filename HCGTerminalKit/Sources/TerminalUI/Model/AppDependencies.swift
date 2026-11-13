@@ -119,6 +119,7 @@ public protocol UnleashedTools: Sendable {
     func readText(_ path: String) async throws -> String
     /// Writes need approval each time for system and jailbreak locations.
     func writeText(_ text: String, to path: String) async throws
+    func saveEditedText(_ text: String, original: String, to path: String) async throws
     func createDirectory(named name: String, in directory: String) async throws
     func rename(_ path: String, to newName: String) async throws
     func delete(_ path: String) async throws
@@ -253,5 +254,12 @@ public final class ModePreferenceStore: @unchecked Sendable {
     public var preferredMode: ExecutionMode {
         get { defaults.string(forKey: Self.key).flatMap(ExecutionMode.init(rawValue:)) ?? .vanilla }
         set { defaults.set(newValue.rawValue, forKey: Self.key) }
+    }
+}
+
+/// Existing adapters must explicitly support guarded saves before exposing an editor.
+public extension UnleashedTools {
+    func saveEditedText(_ text: String, original: String, to path: String) async throws {
+        throw CocoaError(.featureUnsupported)
     }
 }

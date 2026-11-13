@@ -277,6 +277,7 @@ public struct UnleashedEnvironmentScanner: Sendable {
     public static let loopbackPorts = [22, 2222]
     /// Locations outside the sandbox. Root-relative entries are added for every bootstrap root.
     public static let systemLocations = [
+        "/",
         "/var/mobile", "/var/mobile/Documents", "/var/mobile/Library/Logs", "/var/log", "/private/var/tmp", "/tmp", "/etc",
         "/Applications", "/var/containers/Bundle/Application",
     ]

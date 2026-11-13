@@ -169,7 +169,7 @@ public struct RootView: View {
             } header: { Eyebrow("Sessions") }
 
             Section {
-                NavigationLink(value: SidebarItem.files) { Label("Files", systemImage: "folder") }
+                NavigationLink(value: SidebarItem.files) { Label("File Command", systemImage: "folder.badge.gearshape") }
             } header: { Eyebrow("Workspace") }
 
             Section {
@@ -222,7 +222,7 @@ public struct RootView: View {
             } else {
                 emptyState
             }
-        case .files: NavigationStack { WorkspaceBrowserView(directory: .root) }
+        case .files: NavigationStack { FileCommandView() }
         case .hosts: NavigationStack { HostsView() }
         case .builds: NavigationStack { BuildsView() }
         case .artifacts: NavigationStack { ArtifactsView() }
