@@ -30,21 +30,36 @@ public struct ModeSelector: View {
         self.onSelect = onSelect
     }
 
+    /// How much room the labels get. The selector picks the first layout whose natural width
+    /// fits (narrow iPad sidebars, small phones, large Dynamic Type), so mode names are never
+    /// cut off: icons go first, then padding; scaling text down is the last resort.
+    enum Density {
+        case full, noIcons, tight
+    }
+
     public var body: some View {
-        HStack(spacing: 2) {
-            ForEach(ExecutionMode.allCases) { mode in
-                segment(mode)
-            }
+        ViewThatFits(in: .horizontal) {
+            track(.full)
+            track(.noIcons)
+            track(.tight)
         }
-        .padding(2)
-        .background(HCGPalette.surface2, in: Capsule())
-        .overlay(Capsule().strokeBorder(HCGPalette.line, lineWidth: 1))
         .sensoryFeedback(.selection, trigger: selection)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Local execution mode")
     }
 
-    private func segment(_ mode: ExecutionMode) -> some View {
+    private func track(_ density: Density) -> some View {
+        HStack(spacing: 2) {
+            ForEach(ExecutionMode.allCases) { mode in
+                segment(mode, density: density)
+            }
+        }
+        .padding(2)
+        .background(HCGPalette.surface2, in: Capsule())
+        .overlay(Capsule().strokeBorder(HCGPalette.line, lineWidth: 1))
+    }
+
+    private func segment(_ mode: ExecutionMode, density: Density) -> some View {
         let selected = selection == mode
         let available = availability(mode)
         return Button {
@@ -52,16 +67,18 @@ public struct ModeSelector: View {
                 onSelect(mode)
             }
         } label: {
-            HStack(spacing: 5) {
-                if !compact {
+            HStack(spacing: density == .tight ? 3 : 5) {
+                if !compact && density == .full {
                     Image(systemName: mode.symbolName)
                         .font(.caption.weight(.semibold))
+                        .accessibilityHidden(true)
                 }
                 Text(mode.displayName)
-                    .font((compact ? Font.footnote : Font.subheadline).weight(.semibold))
+                    .font((compact || density == .tight ? Font.footnote : Font.subheadline).weight(.semibold))
                     .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                    .fixedSize(horizontal: false, vertical: true)
+                    // Only the last layout may shrink text; the others are skipped instead.
+                    .minimumScaleFactor(density == .tight ? 0.8 : 1)
+                    .fixedSize(horizontal: density != .tight, vertical: true)
                 if available == false {
                     Image(systemName: "lock.fill")
                         .font(.caption2.weight(.semibold))
@@ -70,14 +87,14 @@ public struct ModeSelector: View {
                 }
             }
             .foregroundStyle(selected ? Color.black.opacity(0.85) : HCGPalette.ivory.opacity(0.8))
-            .padding(.horizontal, compact ? 12 : 14)
+            .padding(.horizontal, density == .tight ? 8 : (compact ? 12 : 14))
             .frame(minHeight: 44)
             .background {
                 if selected {
                     Capsule()
                         .fill(ModeAccent.gradient(mode, accent: appearance.accent))
                         .shadow(color: appearance.reducedEffects ? .clear : ModeAccent.color(mode, accent: appearance.accent).opacity(0.3), radius: 6, y: 1)
-                        .matchedGeometryEffect(id: "mode-thumb", in: thumbNamespace)
+                        .matchedGeometryEffect(id: "mode-thumb-\(density)", in: thumbNamespace)
                 }
             }
             .contentShape(Capsule())
