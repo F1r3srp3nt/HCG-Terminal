@@ -40,13 +40,22 @@ Added regression tests for oversized device files, stale/deleted documents,
 permission revocation during approval, explicit root access, and workspace content
 changes with restored timestamps.
 
-This change was prepared in an environment without Swift or Xcode. The tests and
-Apple targets have NOT been compiled or run here. Before merging, run:
+The package was built and its tests were run on Linux (Swift 6.0.3):
+`FileWorkspaceTests` and `ExecutionProviderTests` pass, as does the full suite
+(169 tests, 0 failures; the 12 tests that need an SSH server were skipped). The
+iOS app targets need Xcode, so they are built by CI (`.github/workflows/apple-build.yml`)
+on the commit that adds this note. The SwiftUI screens (File Command, the device
+editor and Quick Look preview) are compiled only there, and none of this has run on a
+device yet.
 
-```sh
-cd HCGTerminalKit
-swift test --filter 'HostFileSystemTests|WorkspaceDocumentsTests'
-```
+Review fixes on top of the original change:
+- The device editor offers Edit only when filesystem modifications *and* their
+  prerequisites (browsing, Unleashed features) are on, matching what the service enforces.
+- With Device Root `/` as a browse root, the log folders below it are listed again.
+
+Behaviour to be aware of: the scan now also lists `/`. Where the OS lets this process
+list it, Directory listing reports `/` and the Unleashed status can become "partially
+available" even on a device without a jailbreak. That is accurate (listing works) but new.
 
 Then build both iOS variants in Xcode/HCG Executable Maker. On a device, verify:
 

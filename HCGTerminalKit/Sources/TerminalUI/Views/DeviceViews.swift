@@ -264,11 +264,14 @@ struct HostFileView: View {
     @State private var showClose = false
     @State private var status: String?
     private var dirty: Bool { editing && text != original }
-    private var mayWrite: Bool { writable && model.accessSettings.isOn(.expandedFileWrite) }
+    /// The switch and its prerequisites (browsing, Unleashed features) must all be on; reading
+    /// `accessSettings` keeps the view updated when they change.
+    private var mayWrite: Bool { writable && model.accessSettings.isOn(.expandedFileWrite) && model.dependencies.access.isEnabled(.expandedFileWrite) }
+    private var mayRead: Bool { model.accessSettings.isOn(.expandedFileRead) && model.dependencies.access.isEnabled(.expandedFileRead) }
 
     var body: some View {
         Group {
-            if !model.dependencies.access.isEnabled(.expandedFileRead) {
+            if !mayRead {
                 ContentUnavailableView("File Access Disabled", systemImage: "lock",
                     description: Text("Enable expanded filesystem browsing in Capabilities & Access."))
             } else if editing {

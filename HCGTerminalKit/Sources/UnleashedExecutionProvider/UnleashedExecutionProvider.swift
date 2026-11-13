@@ -521,7 +521,7 @@ public struct HostFileSystem: Sendable {
 
     /// Log directories among the permitted roots.
     public var logRoots: [String] {
-        Self.logDirectories.filter { candidate in roots.contains { candidate == $0 || candidate.hasPrefix($0 + "/") } }
+        Self.logDirectories.filter { candidate in roots.contains { $0 == "/" || candidate == $0 || candidate.hasPrefix($0 + "/") } }
     }
 }
 

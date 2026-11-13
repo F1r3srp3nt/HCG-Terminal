@@ -127,6 +127,11 @@ final class HostFileSystemTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: path))
     }
 
+    func testLogRootsUnderDeviceRoot() {
+        XCTAssertEqual(HostFileSystem(roots: ["/"], gate: nil, access: .allEnabled()).logRoots, HostFileSystem.logDirectories)
+        XCTAssertEqual(HostFileSystem(roots: ["/var/jb"], gate: nil, access: .allEnabled()).logRoots, ["/var/jb/var/log"])
+    }
+
     func testExplicitRootAllowsOSReadableDescendants() throws {
         let files = HostFileSystem(roots: ["/"], gate: nil, access: .allEnabled())
         XCTAssertEqual(try files.readText(outside.appendingPathComponent("secret.txt").path), "secret")
