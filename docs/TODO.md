@@ -49,6 +49,11 @@ Legend: ✅ done and covered by automated checks · 🧪 done, verified only in 
 - 📱 Device checklist for both phones: `DEVICE_TESTS.md`.
 - ⬜ **Needed from you:** jailbreak name and version, bootstrap, and whether TrollStore is installed. These decide the `.deb` entitlements for an unsandboxed install, the only route to a working local shell on Phone A.
 
+### HCG Event Horizon reskin (see `DESIGN.md`)
+- ✅ Semantic tokens with Increase Contrast values; background policy, cached geometry, ambient-motion rules and session-header wording are unit tested.
+- 🧪 Background system, edge-lit panels, compact terminal header and frame, themed key row, empty states, document surfaces, reduced iPhone banner, Appearance settings (Event Horizon / Classic, background detail, ambient motion). Checked in Simulator screenshots in CI (both builds, small iPhone, iPad, landscape, large text, Increase Contrast); not on a device.
+- 📱 Device check: Reduce Motion and Reduce Transparency system switches, ambient motion on and off in Low Power Mode, key row feel and pressed states, ProMotion scrolling with long output.
+
 ## Remaining milestones
 
 ### Device verification 📱
