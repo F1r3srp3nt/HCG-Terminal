@@ -10,51 +10,54 @@ struct FileCommandView: View {
 
     var body: some View {
         List {
-            Section {
-                VStack(alignment: .leading, spacing: 8) {
-                    Label("HCG FILE COMMAND", systemImage: "folder.badge.gearshape")
-                        .font(.headline).foregroundStyle(HCGPalette.cyan)
-                    Text("Browse. Inspect. Edit.").font(.title2.bold())
-                    Text("Manage your terminal workspace and the device locations available to this installation.")
-                        .font(.callout).foregroundStyle(.secondary)
-                }.padding(.vertical, 8)
-            }
-            Section("Terminal workspace") {
-                NavigationLink { WorkspaceBrowserView(directory: .root) } label: {
-                    Label("All Workspace Files", systemImage: "folder")
+            Group {
+                Section {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label("HCG FILE COMMAND", systemImage: "folder.badge.gearshape")
+                            .font(.headline).foregroundStyle(HCGPalette.cyan)
+                        Text("Browse. Inspect. Edit.").font(.title2.bold())
+                        Text("Manage your terminal workspace and the device locations available to this installation.")
+                            .font(.callout).foregroundStyle(HCGPalette.textSecondary)
+                    }.padding(.vertical, 8)
                 }
-                NavigationLink { WorkspaceBrowserView(directory: .home) } label: {
-                    Label("Documents & Notes", systemImage: "doc.text")
-                }
-                NavigationLink { WorkspaceBrowserView(directory: .projects) } label: {
-                    Label("Projects", systemImage: "chevron.left.forwardslash.chevron.right")
-                }
-                Text("Open a workspace folder to import from Files, edit UTF-8 text, or export a copy. Workspace / is not the iPhone’s system root.")
-                    .font(.footnote).foregroundStyle(.secondary)
-            }
-            Section("Device filesystem · Unleashed") {
-                if model.dependencies.unleashedTools == nil {
-                    Text("System browsing needs the Unleashed build. Workspace editing and Files import/export remain available.")
-                } else if let reason = model.dependencies.access.denial(.expandedFileRead) {
-                    Text(reason)
-                } else {
-                    if roots.isEmpty {
-                        Text("No readable device locations were found. Recheck after changing the installation or permissions.")
+                Section("Terminal workspace") {
+                    NavigationLink { WorkspaceBrowserView(directory: .root) } label: {
+                        Label("All Workspace Files", systemImage: "folder")
                     }
-                    ForEach(roots, id: \.self) { root in
-                        NavigationLink { HostDirectoryView(path: root) } label: {
-                            Label(root == "/" ? "Device Root /" : root, systemImage: "internaldrive")
+                    NavigationLink { WorkspaceBrowserView(directory: .home) } label: {
+                        Label("Documents & Notes", systemImage: "doc.text")
+                    }
+                    NavigationLink { WorkspaceBrowserView(directory: .projects) } label: {
+                        Label("Projects", systemImage: "chevron.left.forwardslash.chevron.right")
+                    }
+                    Text("Open a workspace folder to import from Files, edit UTF-8 text, or export a copy. Workspace / is not the iPhone’s system root.")
+                        .font(.footnote).foregroundStyle(HCGPalette.textSecondary)
+                }
+                Section("Device filesystem · Unleashed") {
+                    if model.dependencies.unleashedTools == nil {
+                        Text("System browsing needs the Unleashed build. Workspace editing and Files import/export remain available.")
+                    } else if let reason = model.dependencies.access.denial(.expandedFileRead) {
+                        Text(reason)
+                    } else {
+                        if roots.isEmpty {
+                            Text("No readable device locations were found. Recheck after changing the installation or permissions.")
+                        }
+                        ForEach(roots, id: \.self) { root in
+                            NavigationLink { HostDirectoryView(path: root) } label: {
+                                Label(root == "/" ? "Device Root /" : root, systemImage: "internaldrive")
+                            }
                         }
                     }
+                    Text("Read and write access are separate. The device may deny individual folders even when their parent is readable. Encrypted or protected files are not automatically unlocked.")
+                        .font(.footnote).foregroundStyle(HCGPalette.textSecondary)
                 }
-                Text("Read and write access are separate. The device may deny individual folders even when their parent is readable. Encrypted or protected files are not automatically unlocked.")
-                    .font(.footnote).foregroundStyle(.secondary)
-            }
-            Section {
-                NavigationLink { CapabilitiesAccessView() } label: {
-                    Label("Filesystem Access Settings", systemImage: "lock.shield")
+                Section {
+                    NavigationLink { CapabilitiesAccessView() } label: {
+                        Label("Filesystem Access Settings", systemImage: "lock.shield")
+                    }
                 }
             }
+            .hcgRows()
         }
         .navigationTitle("File Command")
         .hcgScreenBackground()

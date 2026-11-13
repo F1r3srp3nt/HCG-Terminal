@@ -23,9 +23,10 @@ struct WorkspaceFileView: View {
                     .navigationTitle(path.name)
                     .navigationBarTitleDisplayMode(.inline)
             } else if let error {
-                ContentUnavailableView("Cannot Preview", systemImage: "doc.questionmark", description: Text(error))
-            } else { ProgressView() }
+                HCGEmptyState("Cannot Preview", systemImage: "doc.questionmark", description: Text(error))
+            } else { ProgressView().tint(HCGPalette.accentPrimary).frame(maxWidth: .infinity, maxHeight: .infinity) }
         }
+        .background { HCGBackdrop() }
         .task {
             guard usesPreview else { return }
             do { previewURL = try model.dependencies.workspace.url(for: path) }

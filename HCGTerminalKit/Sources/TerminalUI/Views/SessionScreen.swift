@@ -3,27 +3,32 @@ import SwiftUI
 import TerminalCapabilityProvider
 import TerminalCore
 
-/// A terminal session: header (target, mode selector, actions), notices and the terminal.
+/// A terminal session: a compact header (name, real state, mode, actions), notices and the
+/// terminal. The terminal surface is opaque and undecorated; the background and frame stay
+/// outside the text area, and no ambient motion runs on this screen.
 struct SessionScreen: View {
     @Environment(TerminalAppModel.self) private var model
     let session: SessionModel
+    /// Back to the session list (iPhone, where the navigation bar is hidden on this screen).
+    var onBack: (() -> Void)?
     @State private var showDetails = false
     @State private var confirmClose = false
 
     var body: some View {
         VStack(spacing: 0) {
-            SessionHeader(session: session, showDetails: $showDetails, confirmClose: $confirmClose)
+            SessionHeader(session: session, showDetails: $showDetails, confirmClose: $confirmClose, onBack: onBack)
             ForEach(session.notices, id: \.self) { notice in
                 NoticeBanner(notice: notice) { session.dismissNotice(notice) }
             }
             if !session.isLive, !session.target.isLocal {
                 EndedRemoteSessionBanner(session: session)
             }
-            TerminalHostView(session: session, accent: ModeAccent.color(session.target), fontSize: CGFloat(model.appearance.terminalFontSize))
-                .id(session.id)
-                .background(Color(hcgHex: 0x05080B))
+            TerminalFrame(accent: ModeAccent.color(session.target)) {
+                TerminalHostView(session: session, accent: ModeAccent.color(session.target), fontSize: CGFloat(model.appearance.terminalFontSize))
+                    .id(session.id)
+            }
         }
-        .background(HCGPalette.canvas)
+        .background { HCGBackdrop(terminalInUse: true) }
         .sheet(isPresented: $showDetails) {
             NavigationStack { SessionDetailsView(session: session) }
                 .presentationDetents([.medium, .large])
@@ -39,55 +44,134 @@ struct SessionScreen: View {
     }
 }
 
+/// Compact header: one row with the session name (full name for VoiceOver), its target badge
+/// and the stop / information / close controls; one row with the compact mode selector and a
+/// short summary of the real state that expands into the capability details.
 struct SessionHeader: View {
     @Environment(TerminalAppModel.self) private var model
     @Environment(\.horizontalSizeClass) private var sizeClass
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @Environment(\.hcgAppearance) private var appearance
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let session: SessionModel
     @Binding var showDetails: Bool
     @Binding var confirmClose: Bool
+    var onBack: (() -> Void)?
+    @State private var expanded = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 10) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(session.title)
-                        .font(.headline)
-                        .foregroundStyle(HCGPalette.ivory)
-                        .lineLimit(1)
-                    HStack(spacing: 6) {
-                        TargetBadge(target: session.target)
-                        Text(session.target.detail)
-                            .font(.caption)
-                            .foregroundStyle(HCGPalette.muted)
-                            .lineLimit(1)
-                    }
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 2) {
+                if let onBack {
+                    HeaderIconButton(systemImage: "chevron.left", label: "Back to sessions", action: onBack)
                 }
-                Spacer(minLength: 8)
-                if sizeClass == .regular { selector }
-                Button { session.interrupt() } label: { Image(systemName: "stop.circle") }
-                    .accessibilityLabel("Interrupt (Control-C)")
+                Text(session.title)
+                    .font(.headline)
+                    .foregroundStyle(HCGPalette.textPrimary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .padding(.leading, onBack == nil ? 4 : 0)
+                    .accessibilityLabel("Session: \(session.title)")
+                    .accessibilityAddTraits(.isHeader)
+                if !typeSize.isAccessibilitySize {
+                    TargetBadge(target: session.target, compact: true)
+                        .fixedSize()
+                        .padding(.leading, 6)
+                }
+                Spacer(minLength: 4)
+                if sizeClass == .regular { selector.fixedSize().padding(.trailing, 6) }
+                HeaderIconButton(systemImage: "stop.circle", label: "Interrupt (Control-C)") { session.interrupt() }
                     .disabled(!session.isLive)
-                Button { showDetails = true } label: { Image(systemName: "info.circle") }
-                    .accessibilityLabel("Session details")
-                Button { confirmClose = true } label: { Image(systemName: "xmark.circle") }
-                    .accessibilityLabel("Close session")
+                HeaderIconButton(systemImage: "info.circle", label: "Session details") { showDetails = true }
+                HeaderIconButton(systemImage: "xmark", label: "Close session") { confirmClose = true }
             }
-            .font(.title3)
-            .foregroundStyle(HCGPalette.silver)
-            .buttonStyle(.borderless)
-            if sizeClass != .regular { selector }
-            ModeStatusLine(mode: model.preferredMode, available: availability(model.preferredMode))
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    if sizeClass != .regular { selector.fixedSize() }
+                    summary
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    if sizeClass != .regular { selector }
+                    summary
+                }
+            }
+            .padding(.horizontal, 4)
+            if expanded { details.padding(.horizontal, 4).padding(.top, 2) }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(HCGPalette.surface)
-        .overlay(alignment: .bottom) { Rectangle().fill(HCGPalette.line).frame(height: 1) }
+        .padding(.horizontal, 6)
+        .padding(.top, 2)
+        .padding(.bottom, 6)
+        .background(HCGPalette.surfaceDeep.opacity(appearance.style == .eventHorizon ? 0.92 : 1))
+        .overlay(alignment: .bottom) { Rectangle().fill(HCGPalette.border).frame(height: 1) }
     }
 
     private var selector: some View {
-        ModeSelector(selection: model.preferredMode, compact: sizeClass != .regular, availability: availability) { mode in
+        ModeSelector(selection: model.preferredMode, compact: true, availability: availability) { mode in
             model.selectMode(mode)
         }
+    }
+
+    private var tone: SessionHeaderSummary.Tone { SessionHeaderSummary.tone(session.state) }
+
+    private var toneColor: Color {
+        switch tone {
+        case .live: HCGPalette.ok
+        case .pending: HCGPalette.accentPrimary
+        case .ended: HCGPalette.warn
+        }
+    }
+
+    private var note: String? {
+        SessionHeaderSummary.modeNote(preferred: model.preferredMode, available: availability(model.preferredMode), target: session.target)
+    }
+
+    private var summary: some View {
+        Button {
+            withAnimation(reduceMotion || appearance.reducedEffects ? nil : .snappy(duration: 0.22)) { expanded.toggle() }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: tone.symbolName)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(toneColor)
+                Text(SessionHeaderSummary.line(state: session.state, target: session.target))
+                    .font(.caption)
+                    .foregroundStyle(HCGPalette.textSecondary)
+                    .lineLimit(1)
+                if let note {
+                    Label(note, systemImage: availability(model.preferredMode) == false ? "lock.fill" : "info.circle")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(availability(model.preferredMode) == false ? HCGPalette.warn : HCGPalette.textSecondary)
+                        .lineLimit(1)
+                        .layoutPriority(1)
+                }
+                Image(systemName: "chevron.down")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(HCGPalette.textSecondary)
+                    .rotationEffect(.degrees(expanded ? 180 : 0))
+            }
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(SessionHeaderSummary.accessibilityText(state: session.state, target: session.target, note: note))
+        .accessibilityValue(expanded ? "Details shown" : "Details hidden")
+        .accessibilityHint("Shows the backend and capability details")
+    }
+
+    private var details: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(session.backend.label, systemImage: "cpu")
+                .font(.footnote)
+                .foregroundStyle(HCGPalette.textSecondary)
+            ModeStatusLine(mode: model.preferredMode, available: availability(model.preferredMode))
+            Button { showDetails = true } label: {
+                Label("Session details", systemImage: "info.circle").font(.footnote.weight(.semibold))
+            }
+            .buttonStyle(.borderless)
+            .frame(minHeight: 44)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func availability(_ mode: ExecutionMode) -> Bool? {
@@ -107,7 +191,7 @@ struct EndedRemoteSessionBanner: View {
             Image(systemName: "bolt.horizontal.circle")
             VStack(alignment: .leading, spacing: 2) {
                 Text(session.state.label).font(.footnote.weight(.semibold))
-                Text("Scrollback is kept. Nothing is re-run automatically.").font(.caption).foregroundStyle(.secondary)
+                Text("Scrollback is kept. Nothing is re-run automatically.").font(.caption).foregroundStyle(HCGPalette.textSecondary)
             }
             Spacer()
             if case .sshCommand = session.backend {
@@ -117,7 +201,8 @@ struct EndedRemoteSessionBanner: View {
         }
         .foregroundStyle(HCGPalette.silver)
         .padding(10)
-        .background(HCGPalette.surface2)
+        .background(HCGPalette.surfaceElevated)
+        .overlay(alignment: .bottom) { Rectangle().fill(HCGPalette.border).frame(height: 1) }
     }
 }
 
@@ -130,11 +215,14 @@ struct NoticeBanner: View {
             Image(systemName: notice.kind == .error ? "exclamationmark.octagon" : notice.kind == .warning ? "exclamationmark.triangle" : "info.circle")
             Text(notice.message).font(.footnote).fixedSize(horizontal: false, vertical: true)
             Spacer()
-            Button(action: dismiss) { Image(systemName: "xmark") }.accessibilityLabel("Dismiss")
+            Button(action: dismiss) { Image(systemName: "xmark").frame(width: 44, height: 44).contentShape(Rectangle()) }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Dismiss")
         }
         .foregroundStyle(notice.kind == .info ? HCGPalette.silver : HCGPalette.warn)
         .padding(10)
-        .background(HCGPalette.surface2)
+        .background(HCGPalette.surfaceElevated)
+        .overlay(alignment: .leading) { Rectangle().fill(notice.kind == .info ? HCGPalette.accentPrimary : HCGPalette.warn).frame(width: 2) }
     }
 }
 
@@ -146,24 +234,28 @@ struct SessionDetailsView: View {
 
     var body: some View {
         List {
-            Section("Execution") {
-                LabeledContent("Target", value: session.target.label)
-                LabeledContent("Where", value: session.target.detail)
-                LabeledContent("Backend", value: session.backend.label)
-                LabeledContent("Session mode", value: sessionMode)
-                LabeledContent("Active local mode", value: model.preferredMode.displayName)
+            Group {
+                Section("Execution") {
+                    LabeledContent("Target", value: session.target.label)
+                    LabeledContent("Where", value: session.target.detail)
+                    LabeledContent("Backend", value: session.backend.label)
+                    LabeledContent("Session mode", value: sessionMode)
+                    LabeledContent("Active local mode", value: model.preferredMode.displayName)
+                }
+                Section("State") {
+                    LabeledContent("Status", value: session.state.label)
+                    LabeledContent("Opened", value: session.createdAt.formatted(date: .abbreviated, time: .standard))
+                    LabeledContent("Last activity", value: session.lastActivity.formatted(date: .omitted, time: .standard))
+                    if let directory = session.workingDirectory { LabeledContent("Directory", value: directory) }
+                    LabeledContent("Session ID", value: session.id.description)
+                }
+                Section {
+                    Text(explanation).font(.footnote).foregroundStyle(HCGPalette.textSecondary)
+                }
             }
-            Section("State") {
-                LabeledContent("Status", value: session.state.label)
-                LabeledContent("Opened", value: session.createdAt.formatted(date: .abbreviated, time: .standard))
-                LabeledContent("Last activity", value: session.lastActivity.formatted(date: .omitted, time: .standard))
-                if let directory = session.workingDirectory { LabeledContent("Directory", value: directory) }
-                LabeledContent("Session ID", value: session.id.description)
-            }
-            Section {
-                Text(explanation).font(.footnote).foregroundStyle(.secondary)
-            }
+            .hcgRows()
         }
+        .hcgScreenBackground()
         .navigationTitle("Session Details")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
@@ -203,7 +295,7 @@ struct CapabilityReportView: View {
                 CapabilityRow(result: result)
             }
             ForEach(report.buildNotes, id: \.self) { note in
-                Text(note).font(.caption).foregroundStyle(.secondary)
+                Text(note).font(.caption).foregroundStyle(HCGPalette.textSecondary)
             }
         } header: {
             Text("\(report.mode.displayName) capabilities")
@@ -221,16 +313,16 @@ struct CapabilityRow: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text(result.summary).font(.footnote)
                 if let detail = result.detail {
-                    Text(detail).font(.footnote).foregroundStyle(.secondary)
+                    Text(detail).font(.footnote).foregroundStyle(HCGPalette.textSecondary)
                 }
                 if !result.scope.isEmpty {
-                    Text("\(result.partial ? "Only in" : "Applies to"): \(result.scope.joined(separator: ", "))").font(.caption).foregroundStyle(.secondary)
+                    Text("\(result.partial ? "Only in" : "Applies to"): \(result.scope.joined(separator: ", "))").font(.caption).foregroundStyle(HCGPalette.textSecondary)
                 }
                 if result.requiresAuthorization {
                     Label("Each use needs your explicit approval.", systemImage: "hand.raised").font(.caption).foregroundStyle(HCGPalette.warn)
                 }
                 if let remedy = result.availability.remedy {
-                    Label(remedy, systemImage: "lightbulb").font(.caption).foregroundStyle(.secondary)
+                    Label(remedy, systemImage: "lightbulb").font(.caption).foregroundStyle(HCGPalette.textSecondary)
                 }
                 if !result.evidence.isEmpty {
                     Text("Checks").font(.caption.weight(.semibold)).padding(.top, 2)
@@ -241,7 +333,7 @@ struct CapabilityRow: View {
                                 .accessibilityHidden(true)
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(check.probe).font(.caption.monospaced()).textSelection(.enabled)
-                                Text(check.observation).font(.caption).foregroundStyle(.secondary)
+                                Text(check.observation).font(.caption).foregroundStyle(HCGPalette.textSecondary)
                                 if let time = check.timestamp {
                                     Text(time.formatted(date: .omitted, time: .standard)).font(.caption2).foregroundStyle(.tertiary)
                                 }

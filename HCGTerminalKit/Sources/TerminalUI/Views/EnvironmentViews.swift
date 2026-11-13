@@ -14,7 +14,7 @@ struct EnvironmentAssessmentSections: View {
             LabeledContent("Variant", value: assessment.build.variant)
             LabeledContent("Unleashed backend", value: assessment.build.backendLinked ? "Linked" : "Not included")
             if !assessment.build.backendComponents.isEmpty {
-                Text(assessment.build.backendComponents.joined(separator: " · ")).font(.footnote).foregroundStyle(.secondary)
+                Text(assessment.build.backendComponents.joined(separator: " · ")).font(.footnote).foregroundStyle(HCGPalette.textSecondary)
             }
         } header: { Text("1 · Build") }
 
@@ -23,29 +23,29 @@ struct EnvironmentAssessmentSections: View {
             LabeledContent("Architecture", value: assessment.device.architecture)
             LabeledContent("System", value: assessment.device.operatingSystem)
             LabeledContent("Kernel", value: assessment.device.kernel)
-            if assessment.device.isSimulator { Text("Running in the iOS Simulator.").font(.footnote).foregroundStyle(.secondary) }
+            if assessment.device.isSimulator { Text("Running in the iOS Simulator.").font(.footnote).foregroundStyle(HCGPalette.textSecondary) }
         } header: { Text("2 · Device") }
 
         Section {
             LabeledContent("Jailbreak indicators", value: assessment.bootstrap.verdict.label)
             switch assessment.bootstrap.verdict {
             case .notChecked(let reason), .notObservable(let reason):
-                Text(reason).font(.footnote).foregroundStyle(.secondary)
+                Text(reason).font(.footnote).foregroundStyle(HCGPalette.textSecondary)
             case .found:
                 Text("Indicators show that bootstrap files exist. They do not show that this app may use them; see “Shell” below.")
-                    .font(.footnote).foregroundStyle(.secondary)
+                    .font(.footnote).foregroundStyle(HCGPalette.textSecondary)
             case .noneFound:
                 Text("None of the checked locations exist. This is not proof that the device is not jailbroken.")
-                    .font(.footnote).foregroundStyle(.secondary)
+                    .font(.footnote).foregroundStyle(HCGPalette.textSecondary)
             }
             ForEach(assessment.bootstrap.roots.filter { $0.probe != .missing }, id: \.path) { root in
                 VStack(alignment: .leading, spacing: 2) {
                     Text(root.layout.label).font(.subheadline.weight(.semibold))
                     Text(root.path.isEmpty ? "/" : root.path).font(.caption.monospaced())
                     if let resolved = root.resolvedPath, resolved != root.path, !root.path.isEmpty {
-                        Text("→ \(resolved)").font(.caption.monospaced()).foregroundStyle(.secondary)
+                        Text("→ \(resolved)").font(.caption.monospaced()).foregroundStyle(HCGPalette.textSecondary)
                     }
-                    Text(root.probe.description).font(.caption).foregroundStyle(.secondary)
+                    Text(root.probe.description).font(.caption).foregroundStyle(HCGPalette.textSecondary)
                 }
             }
             ForEach(assessment.bootstrap.indicators.filter { $0.probe != .missing }, id: \.path) { indicator in
@@ -53,7 +53,7 @@ struct EnvironmentAssessmentSections: View {
                     Text(indicator.probe.description).font(.caption)
                 } label: {
                     Text(indicator.path).font(.caption.monospaced())
-                    Text(indicator.strength == .strong ? "strong indicator" : "weak indicator").font(.caption2).foregroundStyle(.secondary)
+                    Text(indicator.strength == .strong ? "strong indicator" : "weak indicator").font(.caption2).foregroundStyle(HCGPalette.textSecondary)
                 }
             }
             ForEach(assessment.bootstrap.resolvedTools.keys.sorted(), id: \.self) { tool in
@@ -68,7 +68,7 @@ struct EnvironmentAssessmentSections: View {
             LabeledContent("Container", value: assessment.process.containerized ? "App container (sandboxed)" : "Not an app container")
             LabeledContent("Installed via", value: assessment.process.installRoute.label)
             if !assessment.process.deniedProbes.isEmpty {
-                Text("Refused by the system: \(assessment.process.deniedProbes.joined(separator: ", "))").font(.footnote).foregroundStyle(.secondary)
+                Text("Refused by the system: \(assessment.process.deniedProbes.joined(separator: ", "))").font(.footnote).foregroundStyle(HCGPalette.textSecondary)
             }
         } header: { Text("4 · This app's process") }
 
@@ -76,12 +76,12 @@ struct EnvironmentAssessmentSections: View {
             LabeledContent("Shell", value: assessment.shell.label)
             switch assessment.shell {
             case .verified(let s), .permissionDenied(let s), .availableUntested(let s), .toolMissing(let s), .unknown(let s):
-                Text(s).font(.footnote).foregroundStyle(.secondary)
+                Text(s).font(.footnote).foregroundStyle(HCGPalette.textSecondary)
             case .notIncluded, .disabledByUser:
                 EmptyView()
             }
             if assessment.operations.isEmpty {
-                Text("No explicit test has run in this app session.").font(.footnote).foregroundStyle(.secondary)
+                Text("No explicit test has run in this app session.").font(.footnote).foregroundStyle(HCGPalette.textSecondary)
             }
             ForEach(assessment.operations.indices, id: \.self) { index in
                 let operation = assessment.operations[index]
@@ -108,58 +108,61 @@ struct UnleashedEnvironmentView: View {
 
     var body: some View {
         List {
-            Section {
-                Button {
-                    Task { await model.testLocalShell() }
-                } label: { Label("Test local shell", systemImage: "terminal") }
-                .disabled(running || model.isTestingShell || !model.dependencies.access.isEnabled(.localShell))
-                if let test = model.lastShellTest {
-                    Label(test.outcome, systemImage: test.succeeded ? "checkmark.seal" : "xmark.octagon")
-                        .font(.footnote).foregroundStyle(test.succeeded ? HCGPalette.ok : HCGPalette.warn)
-                }
-                NavigationLink { SetupRequirementsView() } label: { Label("View setup requirements", systemImage: "list.bullet.clipboard") }
-                Text("Starts the detected shell once with `printf HCG_SHELL_OK; id -u`, limited to 5 seconds. Nothing else is run.")
-                    .font(.footnote).foregroundStyle(.secondary)
-
-                Picker("Write test location", selection: $writeTarget) {
-                    Text("Choose…").tag("")
-                    ForEach(roots, id: \.self) { Text($0).tag($0) }
-                }
-                Button {
-                    let target = writeTarget
-                    run { _ = await $0.verifyWrite(in: target) }
-                } label: { Label("Run Write Test", systemImage: "square.and.pencil") }
-                .disabled(running || writeTarget.isEmpty || !model.dependencies.access.isEnabled(.expandedFileWrite))
-                Text(model.dependencies.access.isEnabled(.expandedFileWrite)
-                     ? "Creates one hidden test file, reads it back and deletes it. System and jailbreak locations ask first."
-                     : "Turn on “Expanded filesystem: write” in Capabilities & Access to run this test.")
-                    .font(.footnote).foregroundStyle(.secondary)
-            } header: { Text("Explicit tests") } footer: {
-                Text("Detection is read-only. Only these buttons execute or write anything, and only when you tap them.")
-            }
-
-            Section {
-                TextField("/private/preboot/…/procursus", text: $customRoot)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .font(.body.monospaced())
-                Button("Save and Re-check") {
-                    let value = customRoot
-                    Task {
-                        await tools?.setCustomBootstrapRoots(value.isEmpty ? [] : [value])
-                        await model.refreshCapabilities()
-                        await model.refreshAssessment()
+            Group {
+                Section {
+                    Button {
+                        Task { await model.testLocalShell() }
+                    } label: { Label("Test local shell", systemImage: "terminal") }
+                    .disabled(running || model.isTestingShell || !model.dependencies.access.isEnabled(.localShell))
+                    if let test = model.lastShellTest {
+                        Label(test.outcome, systemImage: test.succeeded ? "checkmark.seal" : "xmark.octagon")
+                            .font(.footnote).foregroundStyle(test.succeeded ? HCGPalette.ok : HCGPalette.warn)
                     }
-                }
-            } header: { Text("Custom bootstrap root") } footer: {
-                Text("For relocated installs the scan cannot find. The path is only checked read-only, like the built-in locations.")
-            }
+                    NavigationLink { SetupRequirementsView() } label: { Label("View setup requirements", systemImage: "list.bullet.clipboard") }
+                    Text("Starts the detected shell once with `printf HCG_SHELL_OK; id -u`, limited to 5 seconds. Nothing else is run.")
+                        .font(.footnote).foregroundStyle(HCGPalette.textSecondary)
 
-            if let assessment = model.assessment {
-                EnvironmentAssessmentSections(assessment: assessment)
-            } else {
-                ProgressView()
+                    Picker("Write test location", selection: $writeTarget) {
+                        Text("Choose…").tag("")
+                        ForEach(roots, id: \.self) { Text($0).tag($0) }
+                    }
+                    Button {
+                        let target = writeTarget
+                        run { _ = await $0.verifyWrite(in: target) }
+                    } label: { Label("Run Write Test", systemImage: "square.and.pencil") }
+                    .disabled(running || writeTarget.isEmpty || !model.dependencies.access.isEnabled(.expandedFileWrite))
+                    Text(model.dependencies.access.isEnabled(.expandedFileWrite)
+                         ? "Creates one hidden test file, reads it back and deletes it. System and jailbreak locations ask first."
+                         : "Turn on “Expanded filesystem: write” in Capabilities & Access to run this test.")
+                        .font(.footnote).foregroundStyle(HCGPalette.textSecondary)
+                } header: { Text("Explicit tests") } footer: {
+                    Text("Detection is read-only. Only these buttons execute or write anything, and only when you tap them.")
+                }
+
+                Section {
+                    TextField("/private/preboot/…/procursus", text: $customRoot)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .font(.body.monospaced())
+                    Button("Save and Re-check") {
+                        let value = customRoot
+                        Task {
+                            await tools?.setCustomBootstrapRoots(value.isEmpty ? [] : [value])
+                            await model.refreshCapabilities()
+                            await model.refreshAssessment()
+                        }
+                    }
+                } header: { Text("Custom bootstrap root") } footer: {
+                    Text("For relocated installs the scan cannot find. The path is only checked read-only, like the built-in locations.")
+                }
+
+                if let assessment = model.assessment {
+                    EnvironmentAssessmentSections(assessment: assessment)
+                } else {
+                    ProgressView()
+                }
             }
+            .hcgRows()
         }
         .navigationTitle("Unleashed Environment")
         .hcgScreenBackground()
@@ -193,42 +196,45 @@ struct SetupRequirementsView: View {
 
     var body: some View {
         List {
-            if let assessment = model.assessment {
+            Group {
+                if let assessment = model.assessment {
+                    Section {
+                        LabeledContent("This app", value: assessment.process.containerized ? "Runs in the iOS sandbox" : "Not in an app container")
+                        LabeledContent("Installed via", value: assessment.process.installRoute.label)
+                        LabeledContent("Device", value: "\(assessment.device.model) · \(assessment.device.operatingSystem)")
+                        LabeledContent("Bootstrap", value: assessment.bootstrap.verdict.label)
+                        LabeledContent("Shell", value: assessment.shell.label)
+                    } header: { Text("This device now") }
+                }
+
                 Section {
-                    LabeledContent("This app", value: assessment.process.containerized ? "Runs in the iOS sandbox" : "Not in an app container")
-                    LabeledContent("Installed via", value: assessment.process.installRoute.label)
-                    LabeledContent("Device", value: "\(assessment.device.model) · \(assessment.device.operatingSystem)")
-                    LabeledContent("Bootstrap", value: assessment.bootstrap.verdict.label)
-                    LabeledContent("Shell", value: assessment.shell.label)
-                } header: { Text("This device now") }
+                    Text("A local shell needs the app to be allowed to start programs. Apps installed from Xcode, TestFlight, the App Store or an ad hoc profile run in the iOS sandbox, which refuses this (EPERM) even on a jailbroken device. That is what the checks show here when access(X_OK) or a launch is refused.")
+                    Text("What changes it: installing the Unleashed build so that it runs without the app sandbox, using the installation method your jailbreak provides.")
+                    Text("What does not change it: reinstalling the shell or other tools, rebooting, or turning switches on in HCG Terminal. Switches never grant permissions.")
+                        .foregroundStyle(HCGPalette.textSecondary)
+                } header: { Text("Why the local shell is blocked") }
+                .font(.callout)
+
+                Section {
+                    step(1, "On a Mac with Xcode, build the package (written to disk only):", code: "Scripts/package-ios.sh unleashed dist --deb rootless \\\n  --ldid-entitlements <entitlements.plist>")
+                    step(2, "The entitlements file is your decision. Start from HCGTerminal-Support/Unleashed-optional-entitlements.example.plist; which keys your jailbreak accepts is not verified yet.", code: nil)
+                    step(3, "Copy the .deb to the device and install it with Sileo, Zebra or `dpkg -i` (rootless installs to /var/jb/Applications). HCG Terminal does not install anything.", code: nil)
+                    step(4, "Open the newly installed HCG Terminal Unleashed, then Unleashed checks → Test local shell. Only a successful test shows “Verified working”.", code: nil)
+                } header: { Text("Route to a working local terminal") } footer: {
+                    Text("Details: docs/UNLEASHED.md in the repository. Not yet verified on a device.")
+                }
+
+                Section {
+                    Text("If an SSH server package (for example OpenSSH) is installed and running on this device, Localhost SSH works even from this sandboxed install: sign in with that service's account in Configure connection. It is marked working only after the sign-in and a terminal succeed.")
+                } header: { Text("Alternative that works in the sandbox") }
+                .font(.callout)
+
+                Section {
+                    Text("Directory listing, reading files and the package inventory can work in the sandbox where the jailbreak lets apps read its files; they are reported separately and with their exact scope.")
+                } header: { Text("What already works without a shell") }
+                .font(.callout)
             }
-
-            Section {
-                Text("A local shell needs the app to be allowed to start programs. Apps installed from Xcode, TestFlight, the App Store or an ad hoc profile run in the iOS sandbox, which refuses this (EPERM) even on a jailbroken device. That is what the checks show here when access(X_OK) or a launch is refused.")
-                Text("What changes it: installing the Unleashed build so that it runs without the app sandbox, using the installation method your jailbreak provides.")
-                Text("What does not change it: reinstalling the shell or other tools, rebooting, or turning switches on in HCG Terminal. Switches never grant permissions.")
-                    .foregroundStyle(.secondary)
-            } header: { Text("Why the local shell is blocked") }
-            .font(.callout)
-
-            Section {
-                step(1, "On a Mac with Xcode, build the package (written to disk only):", code: "Scripts/package-ios.sh unleashed dist --deb rootless \\\n  --ldid-entitlements <entitlements.plist>")
-                step(2, "The entitlements file is your decision. Start from HCGTerminal-Support/Unleashed-optional-entitlements.example.plist; which keys your jailbreak accepts is not verified yet.", code: nil)
-                step(3, "Copy the .deb to the device and install it with Sileo, Zebra or `dpkg -i` (rootless installs to /var/jb/Applications). HCG Terminal does not install anything.", code: nil)
-                step(4, "Open the newly installed HCG Terminal Unleashed, then Unleashed checks → Test local shell. Only a successful test shows “Verified working”.", code: nil)
-            } header: { Text("Route to a working local terminal") } footer: {
-                Text("Details: docs/UNLEASHED.md in the repository. Not yet verified on a device.")
-            }
-
-            Section {
-                Text("If an SSH server package (for example OpenSSH) is installed and running on this device, Localhost SSH works even from this sandboxed install: sign in with that service's account in Configure connection. It is marked working only after the sign-in and a terminal succeed.")
-            } header: { Text("Alternative that works in the sandbox") }
-            .font(.callout)
-
-            Section {
-                Text("Directory listing, reading files and the package inventory can work in the sandbox where the jailbreak lets apps read its files; they are reported separately and with their exact scope.")
-            } header: { Text("What already works without a shell") }
-            .font(.callout)
+            .hcgRows()
         }
         .hcgScreenBackground()
         .navigationTitle("Setup requirements")
@@ -258,21 +264,24 @@ struct ProgramsView: View {
 
     var body: some View {
         List {
-            if let refusal = model.dependencies.access.denial(.localShell) {
-                Section { Text(refusal).foregroundStyle(HCGPalette.warn) }
-            } else if loaded && tools.isEmpty {
-                Section { Text("No program folder is visible to this app.").foregroundStyle(.secondary) }
-            }
-            ForEach(tools.filter { filter.isEmpty || $0.name.localizedCaseInsensitiveContains(filter) }.prefix(500)) { tool in
-                NavigationLink {
-                    ToolRunView(tool: tool)
-                } label: {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(tool.name).font(.body.monospaced())
-                        Text(tool.path).font(.caption.monospaced()).foregroundStyle(.secondary)
+            Group {
+                if let refusal = model.dependencies.access.denial(.localShell) {
+                    Section { Text(refusal).foregroundStyle(HCGPalette.warn) }
+                } else if loaded && tools.isEmpty {
+                    Section { Text("No program folder is visible to this app.").foregroundStyle(HCGPalette.textSecondary) }
+                }
+                ForEach(tools.filter { filter.isEmpty || $0.name.localizedCaseInsensitiveContains(filter) }.prefix(500)) { tool in
+                    NavigationLink {
+                        ToolRunView(tool: tool)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(tool.name).font(.body.monospaced())
+                            Text(tool.path).font(.caption.monospaced()).foregroundStyle(HCGPalette.textSecondary)
+                        }
                     }
                 }
             }
+            .hcgRows()
         }
         .searchable(text: $filter, prompt: "Filter programs")
         .navigationTitle("Programs")
@@ -295,33 +304,36 @@ struct ToolRunView: View {
 
     var body: some View {
         List {
-            Section {
-                TextField("Arguments", text: $arguments)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .font(.body.monospaced())
-                Button { Task { await run() } } label: { Label("Run (20 s limit)", systemImage: "play") }
-                    .disabled(running)
-                Button { Task { await openSession() } } label: { Label("Open in Terminal Session", systemImage: "terminal") }
-                    .disabled(running)
-            } header: { Text(tool.path) } footer: {
-                Text("Runs with this app's permissions. Privileged commands are refused or need your approval, depending on Capabilities & Access. Arguments are split on spaces; use a terminal session for quoting.")
-            }
-            if let error {
-                Section { Text(error).foregroundStyle(HCGPalette.warn) }
-            }
-            if let output {
-                Section("Result") {
-                    Label(output.summary, systemImage: output.succeeded ? "checkmark.seal" : "exclamationmark.triangle")
-                        .foregroundStyle(output.succeeded ? HCGPalette.ok : HCGPalette.warn)
-                    if !output.stdout.isEmpty {
-                        Text(output.stdout).font(.caption.monospaced()).textSelection(.enabled)
-                    }
-                    if !output.stderr.isEmpty {
-                        Text(output.stderr).font(.caption.monospaced()).foregroundStyle(HCGPalette.warn).textSelection(.enabled)
+            Group {
+                Section {
+                    TextField("Arguments", text: $arguments)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .font(.body.monospaced())
+                    Button { Task { await run() } } label: { Label("Run (20 s limit)", systemImage: "play") }
+                        .disabled(running)
+                    Button { Task { await openSession() } } label: { Label("Open in Terminal Session", systemImage: "terminal") }
+                        .disabled(running)
+                } header: { Text(tool.path) } footer: {
+                    Text("Runs with this app's permissions. Privileged commands are refused or need your approval, depending on Capabilities & Access. Arguments are split on spaces; use a terminal session for quoting.")
+                }
+                if let error {
+                    Section { Text(error).foregroundStyle(HCGPalette.warn) }
+                }
+                if let output {
+                    Section("Result") {
+                        Label(output.summary, systemImage: output.succeeded ? "checkmark.seal" : "exclamationmark.triangle")
+                            .foregroundStyle(output.succeeded ? HCGPalette.ok : HCGPalette.warn)
+                        if !output.stdout.isEmpty {
+                            Text(output.stdout).font(.caption.monospaced()).textSelection(.enabled)
+                        }
+                        if !output.stderr.isEmpty {
+                            Text(output.stderr).font(.caption.monospaced()).foregroundStyle(HCGPalette.warn).textSelection(.enabled)
+                        }
                     }
                 }
             }
+            .hcgRows()
         }
         .navigationTitle(tool.name)
         .navigationBarTitleDisplayMode(.inline)
@@ -366,25 +378,28 @@ struct ProcessListView: View {
 
     var body: some View {
         List {
-            switch listing {
-            case .listed(let processes, let complete)?:
-                if !complete {
-                    Text("The system shows only part of the process table to this app.").font(.footnote).foregroundStyle(.secondary)
-                }
-                ForEach(processes.filter { filter.isEmpty || $0.name.localizedCaseInsensitiveContains(filter) }.prefix(1000)) { process in
-                    HStack {
-                        Text("\(process.pid)").font(.caption.monospaced()).frame(minWidth: 56, alignment: .leading)
-                        Text(process.name).lineLimit(1)
-                        Spacer()
-                        Text("uid \(process.userID)").font(.caption).foregroundStyle(.secondary)
+            Group {
+                switch listing {
+                case .listed(let processes, let complete)?:
+                    if !complete {
+                        Text("The system shows only part of the process table to this app.").font(.footnote).foregroundStyle(HCGPalette.textSecondary)
                     }
-                    .accessibilityElement(children: .combine)
+                    ForEach(processes.filter { filter.isEmpty || $0.name.localizedCaseInsensitiveContains(filter) }.prefix(1000)) { process in
+                        HStack {
+                            Text("\(process.pid)").font(.caption.monospaced()).frame(minWidth: 56, alignment: .leading)
+                            Text(process.name).lineLimit(1)
+                            Spacer()
+                            Text("uid \(process.userID)").font(.caption).foregroundStyle(HCGPalette.textSecondary)
+                        }
+                        .accessibilityElement(children: .combine)
+                    }
+                case .restricted(let reason)?, .disabled(let reason)?:
+                    Text(reason).foregroundStyle(HCGPalette.textSecondary)
+                case nil:
+                    ProgressView()
                 }
-            case .restricted(let reason)?, .disabled(let reason)?:
-                Text(reason).foregroundStyle(.secondary)
-            case nil:
-                ProgressView()
             }
+            .hcgRows()
         }
         .searchable(text: $filter, prompt: "Filter processes")
         .navigationTitle("Processes")

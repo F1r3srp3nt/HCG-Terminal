@@ -21,6 +21,9 @@ enum TerminalHeroAnimation {
 ///
 /// VoiceOver reads it once, as the heading "HCG Terminal"; the image and video layers are hidden.
 struct TerminalHeroHeader: View {
+    /// The reduced banner for the iPhone home list (compact width), so the mode selector, New
+    /// Session and navigation stay prominent.
+    var reduced = false
     @Environment(TerminalAppModel.self) private var model
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -32,7 +35,7 @@ struct TerminalHeroHeader: View {
     @State private var playback = HeroPlaybackController()
 
     /// Exact colour of the artwork's outer edge, so no rectangle is visible around it.
-    static let edgeColor = Color(hcgHex: 0x010305)
+    static let edgeColor = HCGPalette.heroEdge
 
     private var shouldAnimate: Bool {
         HeroPlaybackPolicy.shouldAnimate(.init(
@@ -66,7 +69,7 @@ struct TerminalHeroHeader: View {
         .mask { if colorScheme == .dark { HeroEdgeFade() } else { Rectangle() } }
         .background { if colorScheme != .dark { Self.edgeColor } }
         .clipShape(RoundedRectangle(cornerRadius: colorScheme == .dark ? 0 : 12, style: .continuous))
-        .frame(maxWidth: CGFloat(TerminalHeroLayout.maxWidth(compactHeight: verticalSizeClass == .compact)))
+        .frame(maxWidth: CGFloat(TerminalHeroLayout.maxWidth(compactHeight: verticalSizeClass == .compact, compactWidth: reduced)))
         .frame(maxWidth: .infinity)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("HCG Terminal")

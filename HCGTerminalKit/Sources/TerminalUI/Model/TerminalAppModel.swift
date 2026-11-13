@@ -219,6 +219,13 @@ public final class TerminalAppModel {
         appearance = dependencies.appearance.settings
     }
 
+    #if DEBUG
+    /// CI screenshots only (Debug builds): shows an appearance without saving it.
+    public func previewAppearance(_ change: (inout AppearanceSettings) -> Void) {
+        change(&appearance)
+    }
+    #endif
+
     // MARK: - Capabilities & Access
 
     /// The detected availability of what a switch governs, ignoring the switch itself

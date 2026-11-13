@@ -38,7 +38,7 @@ struct DashboardView: View {
             .frame(maxWidth: 1100, alignment: .leading)
             .frame(maxWidth: .infinity)
         }
-        .background(HCGPalette.canvas.ignoresSafeArea())
+        .hcgScreenBackground()
         .navigationTitle("Dashboard")
         .navigationBarTitleDisplayMode(showHeader ? .inline : .automatic)
         .task { workspace = await WorkspaceSummary.load(model.dependencies.workspace) }

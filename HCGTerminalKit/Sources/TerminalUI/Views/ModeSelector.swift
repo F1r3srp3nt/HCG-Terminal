@@ -55,8 +55,17 @@ public struct ModeSelector: View {
             }
         }
         .padding(2)
-        .background(HCGPalette.surface2, in: Capsule())
-        .overlay(Capsule().strokeBorder(HCGPalette.line, lineWidth: 1))
+        .background(HCGPalette.surfaceElevated, in: trackShape)
+        .overlay(trackShape.stroke(HCGPalette.border, lineWidth: 1))
+    }
+
+    /// Chamfered in Event Horizon, a capsule in Classic.
+    private var trackShape: AnyShape {
+        appearance.style == .eventHorizon ? AnyShape(ChamferedRectangle(cut: 9)) : AnyShape(Capsule())
+    }
+
+    private var thumbShape: AnyShape {
+        appearance.style == .eventHorizon ? AnyShape(ChamferedRectangle(cut: 7)) : AnyShape(Capsule())
     }
 
     private func segment(_ mode: ExecutionMode, density: Density) -> some View {
@@ -91,13 +100,13 @@ public struct ModeSelector: View {
             .frame(minHeight: 44)
             .background {
                 if selected {
-                    Capsule()
+                    thumbShape
                         .fill(ModeAccent.gradient(mode, accent: appearance.accent))
                         .shadow(color: appearance.reducedEffects ? .clear : ModeAccent.color(mode, accent: appearance.accent).opacity(0.3), radius: 6, y: 1)
                         .matchedGeometryEffect(id: "mode-thumb-\(density)", in: thumbNamespace)
                 }
             }
-            .contentShape(Capsule())
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(selected ? .isSelected : [])

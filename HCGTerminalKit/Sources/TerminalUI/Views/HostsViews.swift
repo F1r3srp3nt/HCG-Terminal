@@ -12,27 +12,36 @@ struct HostsView: View {
 
     var body: some View {
         List {
-            if model.hosts.isEmpty {
-                ContentUnavailableView("No Hosts", systemImage: "server.rack", description: Text("Add your Mac or another SSH host to browse projects, build, test and run Claude Code remotely."))
-            }
-            ForEach(model.hosts) { host in
-                NavigationLink {
-                    HostDetailView(host: host)
-                } label: {
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack {
-                            Text(host.name)
-                            if model.isConnected(host) { Circle().fill(HCGPalette.vanillaGreen).frame(width: 6, height: 6) }
+            Group {
+                if model.hosts.isEmpty {
+                    HCGEmptyState("No Hosts", systemImage: "server.rack", description: Text("Add your Mac or another SSH host to browse projects, build, test and run Claude Code remotely.")) {
+                        Button { editing = HostProfile(name: "", hostname: "", username: "", auth: .password) } label: {
+                            Label("Add Host", systemImage: "plus")
                         }
-                        Text(host.endpoint.address).font(.caption).foregroundStyle(.secondary)
+                        .buttonStyle(.borderedProminent)
                     }
                 }
-                .swipeActions {
-                    Button("Delete", role: .destructive) { Task { await model.deleteHost(host) } }
-                    Button("Edit") { editing = host }
+                ForEach(model.hosts) { host in
+                    NavigationLink {
+                        HostDetailView(host: host)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack {
+                                Text(host.name)
+                                if model.isConnected(host) { Circle().fill(HCGPalette.vanillaGreen).frame(width: 6, height: 6) }
+                            }
+                            Text(host.endpoint.address).font(.caption).foregroundStyle(HCGPalette.textSecondary)
+                        }
+                    }
+                    .swipeActions {
+                        Button("Delete", role: .destructive) { Task { await model.deleteHost(host) } }
+                        Button("Edit") { editing = host }
+                    }
                 }
             }
+            .hcgRows()
         }
+        .hcgScreenBackground()
         .navigationTitle("Hosts & Projects")
         .toolbar {
             Button { editing = HostProfile(name: "", hostname: "", username: "", auth: .password) } label: { Label("Add Host", systemImage: "plus") }
@@ -51,16 +60,20 @@ struct HostPickerView: View {
 
     var body: some View {
         List(model.hosts) { host in
-            Button { onPick(host) } label: {
-                VStack(alignment: .leading) {
-                    Text(host.name)
-                    Text(host.endpoint.address).font(.caption).foregroundStyle(.secondary)
+            Group {
+                Button { onPick(host) } label: {
+                    VStack(alignment: .leading) {
+                        Text(host.name)
+                        Text(host.endpoint.address).font(.caption).foregroundStyle(HCGPalette.textSecondary)
+                    }
                 }
             }
+            .hcgRows()
         }
+        .hcgScreenBackground()
         .overlay {
             if model.hosts.isEmpty {
-                ContentUnavailableView("No Hosts", systemImage: "server.rack", description: Text("Add a host under Hosts & Projects first."))
+                HCGEmptyState("No Hosts", systemImage: "server.rack", description: Text("Add a host under Hosts & Projects first."))
             }
         }
         .navigationTitle("Remote Host Session")
@@ -116,59 +129,63 @@ struct HostEditor: View {
 
     var body: some View {
         Form {
-            Section {
-                field("Name", text: $host.name, prompt: "My Mac", issue: .name)
-                field("Hostname or IP", text: $host.hostname, prompt: "ana-mac.local or 192.168.1.20", issue: .hostname, keyboard: .URL)
-                field("Port", text: $portText, prompt: "22", issue: .port, keyboard: .numberPad)
-                field("Username", text: $host.username, prompt: "ana", issue: .username)
-                field("Projects folder", text: Binding(get: { host.projectsPath ?? "" }, set: { host.projectsPath = $0.isEmpty ? nil : $0 }), prompt: "~/Developer (optional)", issue: nil)
-            } header: { Text("Host") } footer: {
-                Text("On a Mac, turn on System Settings → General → Sharing → Remote Login. Its local hostname is shown there too.")
-            }
+            Group {
+                Section {
+                    field("Name", text: $host.name, prompt: "My Mac", issue: .name)
+                    field("Hostname or IP", text: $host.hostname, prompt: "ana-mac.local or 192.168.1.20", issue: .hostname, keyboard: .URL)
+                    field("Port", text: $portText, prompt: "22", issue: .port, keyboard: .numberPad)
+                    field("Username", text: $host.username, prompt: "ana", issue: .username)
+                    field("Projects folder", text: Binding(get: { host.projectsPath ?? "" }, set: { host.projectsPath = $0.isEmpty ? nil : $0 }), prompt: "~/Developer (optional)", issue: nil)
+                } header: { Text("Host") } footer: {
+                    Text("On a Mac, turn on System Settings → General → Sharing → Remote Login. Its local hostname is shown there too.")
+                }
 
-            Section {
-                Picker("Sign in with", selection: $authChoice) {
-                    ForEach(AuthChoice.allCases, id: \.self) { Text($0.rawValue) }
-                }
-                if authChoice != .key {
-                    VStack(alignment: .leading, spacing: 4) {
-                        LabeledContent("Password") {
-                            SecureField(passwordSaved ? "Saved — leave empty to keep" : "Required", text: $password)
-                                .multilineTextAlignment(.trailing)
-                        }
-                        issueText(.password)
+                Section {
+                    Picker("Sign in with", selection: $authChoice) {
+                        ForEach(AuthChoice.allCases, id: \.self) { Text($0.rawValue) }
                     }
-                }
-                if authChoice != .password {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Picker("Key", selection: $keyID) {
-                            Text("Choose…").tag(UUID?.none)
-                            ForEach(model.keys) { Text($0.comment.isEmpty ? $0.fingerprint : $0.comment).tag(UUID?.some($0.id)) }
+                    if authChoice != .key {
+                        VStack(alignment: .leading, spacing: 4) {
+                            LabeledContent("Password") {
+                                SecureField(passwordSaved ? "Saved — leave empty to keep" : "Required", text: $password)
+                                    .multilineTextAlignment(.trailing)
+                            }
+                            issueText(.password)
                         }
-                        issueText(.key)
                     }
-                    NavigationLink("Manage SSH Keys") { KeysView() }
+                    if authChoice != .password {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Picker("Key", selection: $keyID) {
+                                Text("Choose…").tag(UUID?.none)
+                                ForEach(model.keys) { Text($0.comment.isEmpty ? $0.fingerprint : $0.comment).tag(UUID?.some($0.id)) }
+                            }
+                            issueText(.key)
+                        }
+                        NavigationLink("Manage SSH Keys") { KeysView() }
+                    }
+                } header: { Text("Authentication") } footer: {
+                    Text("Passwords and private keys stay in this device's Keychain. Ed25519 keys are supported; add the public key to ~/.ssh/authorized_keys on the host.")
                 }
-            } header: { Text("Authentication") } footer: {
-                Text("Passwords and private keys stay in this device's Keychain. Ed25519 keys are supported; add the public key to ~/.ssh/authorized_keys on the host.")
-            }
 
-            Section {
-                Button {
-                    Task { await test() }
-                } label: {
-                    HStack {
-                        Text(testing ? "Testing…" : "Test Connection")
-                        Spacer()
-                        if testing { ProgressView() }
+                Section {
+                    Button {
+                        Task { await test() }
+                    } label: {
+                        HStack {
+                            Text(testing ? "Testing…" : "Test Connection")
+                            Spacer()
+                            if testing { ProgressView() }
+                        }
                     }
+                    .disabled(testing || !issues.isEmpty)
+                    if let testResult { TestResultView(result: testResult) }
+                } footer: {
+                    Text("Connects with these settings, checks the shell and installed tools, and disconnects. Nothing is saved. A new host key is shown for you to verify first.")
                 }
-                .disabled(testing || !issues.isEmpty)
-                if let testResult { TestResultView(result: testResult) }
-            } footer: {
-                Text("Connects with these settings, checks the shell and installed tools, and disconnects. Nothing is saved. A new host key is shown for you to verify first.")
             }
+            .hcgRows()
         }
+        .hcgScreenBackground()
         .navigationTitle(host.name.isEmpty ? "New Host" : host.name)
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
@@ -243,7 +260,7 @@ struct TestResultView: View {
                     .foregroundStyle(HCGPalette.vanillaGreen)
                 Text("\(system) · login shell \(shell)").font(.caption)
                 Text(ToolchainProbe.tools.map { "\($0) \(tools[$0] == nil ? "✗" : "✓")" }.joined(separator: "  "))
-                    .font(.caption.monospaced()).foregroundStyle(.secondary)
+                    .font(.caption.monospaced()).foregroundStyle(HCGPalette.textSecondary)
             }
         case .failure(let category, let message):
             VStack(alignment: .leading, spacing: 4) {
@@ -263,28 +280,32 @@ struct HostDetailView: View {
 
     var body: some View {
         List {
-            Section {
-                Button { Task { await model.openRemoteShell(host) } } label: { Label("Open Shell", systemImage: "terminal") }
-                NavigationLink { RemoteBrowserView(host: host, startPath: host.projectsPath ?? "~") } label: {
-                    Label("Browse Projects", systemImage: "folder")
-                }
-                if model.isConnected(host) {
-                    Button(role: .destructive) { Task { await model.disconnect(host) } } label: { Label("Disconnect", systemImage: "bolt.slash") }
-                }
-            } header: { Text(host.endpoint.address) } footer: {
-                Text("Remote sessions run on \(host.name) and are independent of the local mode.")
-            }
-            Section("Toolchains") {
-                if let toolchains {
-                    LabeledContent("System", value: toolchains.operatingSystem)
-                    ForEach(ToolchainProbe.tools, id: \.self) { tool in
-                        LabeledContent(tool, value: toolchains.tools[tool] ?? "not found")
+            Group {
+                Section {
+                    Button { Task { await model.openRemoteShell(host) } } label: { Label("Open Shell", systemImage: "terminal") }
+                    NavigationLink { RemoteBrowserView(host: host, startPath: host.projectsPath ?? "~") } label: {
+                        Label("Browse Projects", systemImage: "folder")
                     }
-                } else {
-                    Button(probing ? "Checking…" : "Check Installed Tools") { Task { await probe() } }.disabled(probing)
+                    if model.isConnected(host) {
+                        Button(role: .destructive) { Task { await model.disconnect(host) } } label: { Label("Disconnect", systemImage: "bolt.slash") }
+                    }
+                } header: { Text(host.endpoint.address) } footer: {
+                    Text("Remote sessions run on \(host.name) and are independent of the local mode.")
+                }
+                Section("Toolchains") {
+                    if let toolchains {
+                        LabeledContent("System", value: toolchains.operatingSystem)
+                        ForEach(ToolchainProbe.tools, id: \.self) { tool in
+                            LabeledContent(tool, value: toolchains.tools[tool] ?? "not found")
+                        }
+                    } else {
+                        Button(probing ? "Checking…" : "Check Installed Tools") { Task { await probe() } }.disabled(probing)
+                    }
                 }
             }
+            .hcgRows()
         }
+        .hcgScreenBackground()
         .navigationTitle(host.name)
     }
 
@@ -307,27 +328,31 @@ struct RemoteBrowserView: View {
 
     var body: some View {
         List {
-            let projects = ProjectDetector.detect(entries)
-            if !projects.isEmpty {
-                Section("Project") {
-                    ForEach(projects, id: \.self) { project in
-                        Button { planning = project } label: { Label(project.label, systemImage: "hammer") }
+            Group {
+                let projects = ProjectDetector.detect(entries)
+                if !projects.isEmpty {
+                    Section("Project") {
+                        ForEach(projects, id: \.self) { project in
+                            Button { planning = project } label: { Label(project.label, systemImage: "hammer") }
+                        }
+                        Button { Task { await model.openClaudeCode(host, projectPath: directory) } } label: {
+                            Label("Claude Code in This Folder", systemImage: "sparkles")
+                        }
                     }
-                    Button { Task { await model.openClaudeCode(host, projectPath: directory) } } label: {
-                        Label("Claude Code in This Folder", systemImage: "sparkles")
+                }
+                Section(directory) {
+                    ForEach(entries) { entry in
+                        if entry.kind == .directory || entry.kind == .symlink {
+                            NavigationLink { RemoteBrowserView(host: host, startPath: entry.path) } label: { row(entry) }
+                        } else {
+                            row(entry)
+                        }
                     }
                 }
             }
-            Section(directory) {
-                ForEach(entries) { entry in
-                    if entry.kind == .directory || entry.kind == .symlink {
-                        NavigationLink { RemoteBrowserView(host: host, startPath: entry.path) } label: { row(entry) }
-                    } else {
-                        row(entry)
-                    }
-                }
-            }
+            .hcgRows()
         }
+        .hcgScreenBackground()
         .overlay { if loading { ProgressView() } }
         .navigationTitle((directory as NSString).lastPathComponent.isEmpty ? "Projects" : (directory as NSString).lastPathComponent)
         .task { await load() }
@@ -348,7 +373,7 @@ struct RemoteBrowserView: View {
                 .foregroundStyle(entry.kind == .directory ? HCGPalette.vanillaBlue : HCGPalette.muted)
             Text(entry.name)
             Spacer()
-            if let size = entry.size { Text(ByteCountFormatter.string(fromByteCount: size, countStyle: .file)).font(.caption).foregroundStyle(.secondary) }
+            if let size = entry.size { Text(ByteCountFormatter.string(fromByteCount: size, countStyle: .file)).font(.caption).foregroundStyle(HCGPalette.textSecondary) }
         }
     }
 

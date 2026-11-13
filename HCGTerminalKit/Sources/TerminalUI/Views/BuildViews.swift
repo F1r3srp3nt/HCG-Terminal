@@ -25,31 +25,35 @@ struct BuildPlanSheet: View {
 
     var body: some View {
         Form {
-            Section("Project") {
-                LabeledContent("Host", value: host.name)
-                LabeledContent("Folder", value: projectPath)
-                LabeledContent("Type", value: project.label)
-            }
-            Section("Run") {
-                Picker("Action", selection: $action) { ForEach(BuildAction.allCases, id: \.self) { Text($0.title) } }
-                    .pickerStyle(.segmented)
-                Picker("Configuration", selection: $configuration) { ForEach(BuildConfiguration.allCases, id: \.self) { Text($0.rawValue) } }
-                if isXcode {
-                    Picker("Scheme", selection: $scheme) { ForEach(schemes, id: \.self) { Text($0) } }
-                    Picker("Destination", selection: $destination) { ForEach(DestinationChoice.allCases, id: \.self) { Text($0.rawValue) } }
-                    if destination == .simulator { TextField("Simulator name", text: $simulatorName) }
+            Group {
+                Section("Project") {
+                    LabeledContent("Host", value: host.name)
+                    LabeledContent("Folder", value: projectPath)
+                    LabeledContent("Type", value: project.label)
+                }
+                Section("Run") {
+                    Picker("Action", selection: $action) { ForEach(BuildAction.allCases, id: \.self) { Text($0.title) } }
+                        .pickerStyle(.segmented)
+                    Picker("Configuration", selection: $configuration) { ForEach(BuildConfiguration.allCases, id: \.self) { Text($0.rawValue) } }
+                    if isXcode {
+                        Picker("Scheme", selection: $scheme) { ForEach(schemes, id: \.self) { Text($0) } }
+                        Picker("Destination", selection: $destination) { ForEach(DestinationChoice.allCases, id: \.self) { Text($0.rawValue) } }
+                        if destination == .simulator { TextField("Simulator name", text: $simulatorName) }
+                    }
+                }
+                Section {
+                    if let plan = try? makePlan() {
+                        Text(plan.commandLine).font(.system(.footnote, design: .monospaced)).textSelection(.enabled)
+                    } else if let error = planError {
+                        Text(error).foregroundStyle(HCGPalette.warn)
+                    }
+                } header: { Text("Command") } footer: {
+                    Text("Runs on \(host.name) over SSH. Never uploads or publishes anything.")
                 }
             }
-            Section {
-                if let plan = try? makePlan() {
-                    Text(plan.commandLine).font(.system(.footnote, design: .monospaced)).textSelection(.enabled)
-                } else if let error = planError {
-                    Text(error).foregroundStyle(HCGPalette.warn)
-                }
-            } header: { Text("Command") } footer: {
-                Text("Runs on \(host.name) over SSH. Never uploads or publishes anything.")
-            }
+            .hcgRows()
         }
+        .hcgScreenBackground()
         .navigationTitle("Build & Test")
         .navigationBarTitleDisplayMode(.inline)
         .task { await loadSchemes() }
@@ -113,36 +117,40 @@ struct BuildsView: View {
     var body: some View {
         let builds = model.builds!
         List {
-            if let plan = builds.activePlan {
-                Section {
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack {
-                            ProgressView()
-                            Text(plan.title).font(.subheadline.weight(.semibold))
-                            Spacer()
-                            Button("Stop", role: .destructive) { builds.cancel() }
+            Group {
+                if let plan = builds.activePlan {
+                    Section {
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                ProgressView()
+                                Text(plan.title).font(.subheadline.weight(.semibold))
+                                Spacer()
+                                Button("Stop", role: .destructive) { builds.cancel() }
+                            }
+                            Text("on \(plan.hostName)").font(.caption).foregroundStyle(HCGPalette.textSecondary)
+                            ScrollView {
+                                Text(builds.liveLog)
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .textSelection(.enabled)
+                            }
+                            .frame(height: 260)
+                            .defaultScrollAnchor(.bottom)
                         }
-                        Text("on \(plan.hostName)").font(.caption).foregroundStyle(.secondary)
-                        ScrollView {
-                            Text(builds.liveLog)
-                                .font(.system(size: 11, design: .monospaced))
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .textSelection(.enabled)
-                        }
-                        .frame(height: 260)
-                        .defaultScrollAnchor(.bottom)
+                    } header: { Text("Running") }
+                }
+                Section("History") {
+                    ForEach(builds.runs) { run in
+                        NavigationLink { BuildRunDetailView(run: run) } label: { BuildRunRow(run: run) }
                     }
-                } header: { Text("Running") }
-            }
-            Section("History") {
-                ForEach(builds.runs) { run in
-                    NavigationLink { BuildRunDetailView(run: run) } label: { BuildRunRow(run: run) }
                 }
             }
+            .hcgRows()
         }
+        .hcgScreenBackground()
         .overlay {
             if builds.runs.isEmpty && builds.activePlan == nil {
-                ContentUnavailableView("No Builds Yet", systemImage: "hammer", description: Text("Open Hosts & Projects, browse to a project and choose Build & Test."))
+                HCGEmptyState("No Builds Yet", systemImage: "hammer", description: Text("Open Hosts & Projects, browse to a project and choose Build & Test."))
             }
         }
         .navigationTitle("Builds & Tests")
@@ -159,7 +167,7 @@ struct BuildRunRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(run.plan.title).lineLimit(1)
                 Text("\(run.plan.hostName) · \(run.status.label) · \(run.startedAt.formatted(date: .abbreviated, time: .shortened))")
-                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    .font(.caption).foregroundStyle(HCGPalette.textSecondary).lineLimit(1)
             }
         }
     }
@@ -191,57 +199,61 @@ struct BuildRunDetailView: View {
     var body: some View {
         let builds = model.builds!
         List {
-            Section("Result") {
-                LabeledContent("Status", value: run.status.label)
-                LabeledContent("Host", value: run.plan.hostName)
-                LabeledContent("Folder", value: run.plan.projectPath)
-                if let finished = run.finishedAt {
-                    LabeledContent("Duration", value: Duration.seconds(finished.timeIntervalSince(run.startedAt)).formatted(.units(allowed: [.minutes, .seconds])))
+            Group {
+                Section("Result") {
+                    LabeledContent("Status", value: run.status.label)
+                    LabeledContent("Host", value: run.plan.hostName)
+                    LabeledContent("Folder", value: run.plan.projectPath)
+                    if let finished = run.finishedAt {
+                        LabeledContent("Duration", value: Duration.seconds(finished.timeIntervalSince(run.startedAt)).formatted(.units(allowed: [.minutes, .seconds])))
+                    }
+                    Text(run.plan.commandLine).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
                 }
-                Text(run.plan.commandLine).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
-            }
-            if let summary = run.testSummary {
-                Section("Tests") {
-                    LabeledContent("Outcome", value: summary.succeeded ? "Passed" : "Failed")
-                    if let total = summary.total { LabeledContent("Total", value: "\(total)") }
-                    if let failed = summary.failed { LabeledContent("Failed", value: "\(failed)") }
-                    if let skipped = summary.skipped { LabeledContent("Skipped", value: "\(skipped)") }
+                if let summary = run.testSummary {
+                    Section("Tests") {
+                        LabeledContent("Outcome", value: summary.succeeded ? "Passed" : "Failed")
+                        if let total = summary.total { LabeledContent("Total", value: "\(total)") }
+                        if let failed = summary.failed { LabeledContent("Failed", value: "\(failed)") }
+                        if let skipped = summary.skipped { LabeledContent("Skipped", value: "\(skipped)") }
+                    }
                 }
-            }
-            if !run.diagnostics.isEmpty {
-                Section("Diagnostics (\(run.errorCount) errors, \(run.warningCount) warnings)") {
-                    ForEach(run.diagnostics) { diagnostic in
-                        VStack(alignment: .leading, spacing: 2) {
-                            Label(diagnostic.message, systemImage: diagnostic.severity == .error ? "xmark.octagon" : "exclamationmark.triangle")
-                                .foregroundStyle(diagnostic.severity == .error ? HCGPalette.loss : HCGPalette.warn)
-                            if let file = diagnostic.file {
-                                Text("\((file as NSString).lastPathComponent):\(diagnostic.line ?? 0)").font(.caption.monospaced()).foregroundStyle(.secondary)
+                if !run.diagnostics.isEmpty {
+                    Section("Diagnostics (\(run.errorCount) errors, \(run.warningCount) warnings)") {
+                        ForEach(run.diagnostics) { diagnostic in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Label(diagnostic.message, systemImage: diagnostic.severity == .error ? "xmark.octagon" : "exclamationmark.triangle")
+                                    .foregroundStyle(diagnostic.severity == .error ? HCGPalette.loss : HCGPalette.warn)
+                                if let file = diagnostic.file {
+                                    Text("\((file as NSString).lastPathComponent):\(diagnostic.line ?? 0)").font(.caption.monospaced()).foregroundStyle(HCGPalette.textSecondary)
+                                }
                             }
                         }
                     }
                 }
-            }
-            Section("Artifacts") {
-                ForEach(builds.discovered[run.id] ?? []) { artifact in
-                    HStack {
-                        Label(artifact.name, systemImage: artifact.isDirectory ? "shippingbox" : "doc.zipper")
-                        Spacer()
-                        if let progress = builds.downloadProgress[artifact.remotePath] {
-                            ProgressView(value: progress).frame(width: 80)
-                        } else {
-                            Button("Download") { Task { await builds.download(artifact, from: run) } }
+                Section("Artifacts") {
+                    ForEach(builds.discovered[run.id] ?? []) { artifact in
+                        HStack {
+                            Label(artifact.name, systemImage: artifact.isDirectory ? "shippingbox" : "doc.zipper")
+                            Spacer()
+                            if let progress = builds.downloadProgress[artifact.remotePath] {
+                                ProgressView(value: progress).frame(width: 80)
+                            } else {
+                                Button("Download") { Task { await builds.download(artifact, from: run) } }
+                            }
                         }
                     }
+                    Button("Find Build Products") { Task { await builds.discover(for: run) } }
                 }
-                Button("Find Build Products") { Task { await builds.discover(for: run) } }
+                Section("Log") {
+                    Text(log.isEmpty ? "Loading…" : String(log.suffix(60_000)))
+                        .font(.system(size: 11, design: .monospaced))
+                        .textSelection(.enabled)
+                    if let logURL { ShareLink("Share Full Log", item: logURL) }
+                }
             }
-            Section("Log") {
-                Text(log.isEmpty ? "Loading…" : String(log.suffix(60_000)))
-                    .font(.system(size: 11, design: .monospaced))
-                    .textSelection(.enabled)
-                if let logURL { ShareLink("Share Full Log", item: logURL) }
-            }
+            .hcgRows()
         }
+        .hcgScreenBackground()
         .navigationTitle(run.plan.action.title)
         .task {
             log = await builds.log(for: run)
@@ -256,25 +268,29 @@ struct ArtifactsView: View {
     var body: some View {
         let builds = model.builds!
         List {
-            ForEach(builds.artifacts) { record in
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack {
-                        Text(record.name).font(.subheadline.weight(.semibold))
-                        Spacer()
-                        if let url = builds.localURL(for: record) { ShareLink(item: url) { Image(systemName: "square.and.arrow.up") } }
+            Group {
+                ForEach(builds.artifacts) { record in
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack {
+                            Text(record.name).font(.subheadline.weight(.semibold))
+                            Spacer()
+                            if let url = builds.localURL(for: record) { ShareLink(item: url) { Image(systemName: "square.and.arrow.up") } }
+                        }
+                        Text("\(ByteCountFormatter.string(fromByteCount: record.size, countStyle: .file)) · from \(record.hostName)")
+                            .font(.caption).foregroundStyle(HCGPalette.textSecondary)
+                        Text(record.verification == .remoteChecksumMatched ? "SHA-256 verified against the remote host" : "SHA-256 of local archive (directory transfer)")
+                            .font(.caption2).foregroundStyle(HCGPalette.textSecondary)
+                        Text(record.sha256).font(.caption2.monospaced()).foregroundStyle(HCGPalette.textSecondary).lineLimit(1).truncationMode(.middle)
                     }
-                    Text("\(ByteCountFormatter.string(fromByteCount: record.size, countStyle: .file)) · from \(record.hostName)")
-                        .font(.caption).foregroundStyle(.secondary)
-                    Text(record.verification == .remoteChecksumMatched ? "SHA-256 verified against the remote host" : "SHA-256 of local archive (directory transfer)")
-                        .font(.caption2).foregroundStyle(.secondary)
-                    Text(record.sha256).font(.caption2.monospaced()).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                    .swipeActions { Button("Delete", role: .destructive) { Task { await builds.delete(record) } } }
                 }
-                .swipeActions { Button("Delete", role: .destructive) { Task { await builds.delete(record) } } }
             }
+            .hcgRows()
         }
+        .hcgScreenBackground()
         .overlay {
             if builds.artifacts.isEmpty {
-                ContentUnavailableView("No Artifacts", systemImage: "shippingbox", description: Text("Download build products from a finished build. Files are stored in the app workspace under /artifacts."))
+                HCGEmptyState("No Artifacts", systemImage: "shippingbox", description: Text("Download build products from a finished build. Files are stored in the app workspace under /artifacts."))
             }
         }
         .navigationTitle("Artifacts")
@@ -288,25 +304,29 @@ struct KeysView: View {
 
     var body: some View {
         List {
-            Section {
-                TextField("Comment", text: $comment)
-                Button("Generate Ed25519 Key") { model.generateKey(comment: comment) }
-            } footer: {
-                Text("The private key is created and kept in the Keychain on this device. Add the public key to ~/.ssh/authorized_keys on your host.")
-            }
-            ForEach(model.keys) { key in
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(key.comment.isEmpty ? "Ed25519 key" : key.comment).font(.subheadline.weight(.semibold))
-                    Text(key.fingerprint).font(.caption.monospaced()).foregroundStyle(.secondary)
-                    HStack {
-                        Button("Copy Public Key") { UIPasteboard.general.string = key.publicKeyLine }
-                        ShareLink(item: key.publicKeyLine) { Text("Share") }
-                    }
-                    .buttonStyle(.borderless)
+            Group {
+                Section {
+                    TextField("Comment", text: $comment)
+                    Button("Generate Ed25519 Key") { model.generateKey(comment: comment) }
+                } footer: {
+                    Text("The private key is created and kept in the Keychain on this device. Add the public key to ~/.ssh/authorized_keys on your host.")
                 }
-                .swipeActions { Button("Delete", role: .destructive) { model.deleteKey(key) } }
+                ForEach(model.keys) { key in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(key.comment.isEmpty ? "Ed25519 key" : key.comment).font(.subheadline.weight(.semibold))
+                        Text(key.fingerprint).font(.caption.monospaced()).foregroundStyle(HCGPalette.textSecondary)
+                        HStack {
+                            Button("Copy Public Key") { UIPasteboard.general.string = key.publicKeyLine }
+                            ShareLink(item: key.publicKeyLine) { Text("Share") }
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                    .swipeActions { Button("Delete", role: .destructive) { model.deleteKey(key) } }
+                }
             }
+            .hcgRows()
         }
+        .hcgScreenBackground()
         .navigationTitle("SSH Keys")
     }
 }
@@ -317,22 +337,26 @@ struct KnownHostsView: View {
 
     var body: some View {
         List {
-            ForEach(entries, id: \.self) { entry in
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(entry.port == 22 ? entry.host : "\(entry.host):\(entry.port)")
-                    Text("\(entry.algorithm) \(entry.fingerprint)").font(.caption.monospaced()).foregroundStyle(.secondary)
-                }
-                .swipeActions {
-                    Button("Forget", role: .destructive) {
-                        Task {
-                            try? await model.dependencies.knownHosts.forget(host: entry.host, port: entry.port)
-                            entries = await model.dependencies.knownHosts.all()
+            Group {
+                ForEach(entries, id: \.self) { entry in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(entry.port == 22 ? entry.host : "\(entry.host):\(entry.port)")
+                        Text("\(entry.algorithm) \(entry.fingerprint)").font(.caption.monospaced()).foregroundStyle(HCGPalette.textSecondary)
+                    }
+                    .swipeActions {
+                        Button("Forget", role: .destructive) {
+                            Task {
+                                try? await model.dependencies.knownHosts.forget(host: entry.host, port: entry.port)
+                                entries = await model.dependencies.knownHosts.all()
+                            }
                         }
                     }
                 }
             }
+            .hcgRows()
         }
-        .overlay { if entries.isEmpty { ContentUnavailableView("No Known Hosts", systemImage: "key") } }
+        .hcgScreenBackground()
+        .overlay { if entries.isEmpty { HCGEmptyState("No Known Hosts", systemImage: "key") } }
         .navigationTitle("Known Hosts")
         .task { entries = await model.dependencies.knownHosts.all() }
     }

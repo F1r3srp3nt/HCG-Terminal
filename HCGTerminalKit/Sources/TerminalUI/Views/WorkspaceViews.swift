@@ -28,29 +28,33 @@ struct WorkspaceBrowserView: View {
 
     var body: some View {
         List {
-            if let status {
-                Text(status).font(.footnote).foregroundStyle(.secondary)
-            }
-            ForEach(items.filter { (showHidden || !$0.name.hasPrefix(".")) && (query.isEmpty || $0.name.localizedCaseInsensitiveContains(query)) }) { item in
-                Group {
-                    if item.isDirectory {
-                        NavigationLink { WorkspaceBrowserView(directory: item.path) } label: { row(item) }
-                    } else {
-                        NavigationLink { WorkspaceFileView(path: item.path) } label: { row(item) }
+            Group {
+                if let status {
+                    Text(status).font(.footnote).foregroundStyle(HCGPalette.textSecondary)
+                }
+                ForEach(items.filter { (showHidden || !$0.name.hasPrefix(".")) && (query.isEmpty || $0.name.localizedCaseInsensitiveContains(query)) }) { item in
+                    Group {
+                        if item.isDirectory {
+                            NavigationLink { WorkspaceBrowserView(directory: item.path) } label: { row(item) }
+                        } else {
+                            NavigationLink { WorkspaceFileView(path: item.path) } label: { row(item) }
+                        }
+                    }
+                    .contextMenu { actions(for: item) }
+                    .swipeActions {
+                        Button("Delete", role: .destructive) { deleting = item }
+                        Button("Rename") { newName = item.name; renaming = item }
                     }
                 }
-                .contextMenu { actions(for: item) }
-                .swipeActions {
-                    Button("Delete", role: .destructive) { deleting = item }
-                    Button("Rename") { newName = item.name; renaming = item }
-                }
             }
+            .hcgRows()
         }
+        .hcgScreenBackground()
         .overlay {
             if let loadError {
-                ContentUnavailableView("Cannot Open Folder", systemImage: "exclamationmark.triangle", description: Text(loadError))
+                HCGEmptyState("Cannot Open Folder", systemImage: "exclamationmark.triangle", description: Text(loadError))
             } else if items.isEmpty {
-                ContentUnavailableView("Empty Folder", systemImage: "folder", description: Text("Create a file or import from the Files app."))
+                HCGEmptyState("Empty Folder", systemImage: "folder", description: Text("Create a file or import from the Files app."))
             }
         }
         .searchable(text: $query, prompt: "Search this folder")
@@ -127,12 +131,12 @@ struct WorkspaceBrowserView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.name)
                 if let modified = item.modified {
-                    Text(modified.formatted(date: .abbreviated, time: .shortened)).font(.caption2).foregroundStyle(.secondary)
+                    Text(modified.formatted(date: .abbreviated, time: .shortened)).font(.caption2).foregroundStyle(HCGPalette.textSecondary)
                 }
             }
             Spacer()
             if !item.isDirectory {
-                Text(ByteCountFormatter.string(fromByteCount: item.size, countStyle: .file)).font(.caption).foregroundStyle(.secondary)
+                Text(ByteCountFormatter.string(fromByteCount: item.size, countStyle: .file)).font(.caption).foregroundStyle(HCGPalette.textSecondary)
             }
         }
     }
@@ -232,16 +236,16 @@ struct TextFileEditor: View {
     var body: some View {
         Group {
             if let loadError {
-                ContentUnavailableView("Cannot Edit", systemImage: "doc.questionmark", description: Text(loadError))
+                HCGEmptyState("Cannot Edit", systemImage: "doc.questionmark", description: Text(loadError))
             } else {
                 TextEditor(text: $text)
                     .font(.system(.body, design: .monospaced))
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
-                    .scrollContentBackground(.hidden)
-                    .background(HCGPalette.canvas)
+                    .hcgDocumentSurface()
             }
         }
+        .background { HCGBackdrop() }
         .navigationTitle(path.name + (hasChanges ? " •" : ""))
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(hasChanges)

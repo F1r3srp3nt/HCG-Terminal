@@ -21,64 +21,67 @@ struct UnleashedToolsView: View {
 
     var body: some View {
         List {
-            if !model.isAvailable(.unleashed) {
+            Group {
+                if !model.isAvailable(.unleashed) {
+                    Section {
+                        Text(CapabilityReport.unleashedUnavailableMessage).foregroundStyle(HCGPalette.warn)
+                    }
+                }
                 Section {
-                    Text(CapabilityReport.unleashedUnavailableMessage).foregroundStyle(HCGPalette.warn)
+                    NavigationLink { ProgramsView() } label: { Label("Programs", systemImage: "apple.terminal") }
+                    NavigationLink { ProcessListView() } label: { Label("Processes", systemImage: "list.bullet.rectangle") }
+                    NavigationLink { UnleashedEnvironmentView() } label: { Label("Environment and Tests", systemImage: "cpu") }
                 }
-            }
-            Section {
-                NavigationLink { ProgramsView() } label: { Label("Programs", systemImage: "apple.terminal") }
-                NavigationLink { ProcessListView() } label: { Label("Processes", systemImage: "list.bullet.rectangle") }
-                NavigationLink { UnleashedEnvironmentView() } label: { Label("Environment and Tests", systemImage: "cpu") }
-            }
-            Section {
-                if let refusal = model.dependencies.access.denial(.packageManagement) {
-                    Text(refusal).foregroundStyle(.secondary)
-                } else if packagesAvailable || inventorySource != nil {
-                    if let inventorySource {
-                        Text("\(packages.count) installed · from \(inventorySource)").font(.footnote).foregroundStyle(.secondary)
-                    }
-                    if let inventoryNote { Text(inventoryNote).font(.footnote).foregroundStyle(HCGPalette.warn) }
-                    if changesUsable {
-                        HStack {
-                            TextField("Package name", text: $packageName)
-                                .textInputAutocapitalization(.never).autocorrectionDisabled()
-                            Button("Install") { request(.install(packageName)) }.disabled(packageName.isEmpty)
+                Section {
+                    if let refusal = model.dependencies.access.denial(.packageManagement) {
+                        Text(refusal).foregroundStyle(HCGPalette.textSecondary)
+                    } else if packagesAvailable || inventorySource != nil {
+                        if let inventorySource {
+                            Text("\(packages.count) installed · from \(inventorySource)").font(.footnote).foregroundStyle(HCGPalette.textSecondary)
                         }
-                        Button("Refresh Package Lists") { request(.refreshIndexes) }
-                    } else if let changes = model.report(for: .unleashed)?[.packageChanges].availability {
-                        Text("Package changes: \(changes.label). \(changes.reason)").font(.footnote).foregroundStyle(.secondary)
-                    }
-                    TextField("Filter installed packages", text: $packageFilter)
-                    ForEach(packages.filter { packageFilter.isEmpty || $0.name.localizedCaseInsensitiveContains(packageFilter) }.prefix(300)) { package in
-                        HStack {
-                            Text(package.name)
-                            Spacer()
-                            Text(package.version).font(.caption).foregroundStyle(.secondary)
+                        if let inventoryNote { Text(inventoryNote).font(.footnote).foregroundStyle(HCGPalette.warn) }
+                        if changesUsable {
+                            HStack {
+                                TextField("Package name", text: $packageName)
+                                    .textInputAutocapitalization(.never).autocorrectionDisabled()
+                                Button("Install") { request(.install(packageName)) }.disabled(packageName.isEmpty)
+                            }
+                            Button("Refresh Package Lists") { request(.refreshIndexes) }
+                        } else if let changes = model.report(for: .unleashed)?[.packageChanges].availability {
+                            Text("Package changes: \(changes.label). \(changes.reason)").font(.footnote).foregroundStyle(HCGPalette.textSecondary)
                         }
-                        .swipeActions { if changesUsable { Button("Remove", role: .destructive) { request(.remove(package.name)) } } }
+                        TextField("Filter installed packages", text: $packageFilter)
+                        ForEach(packages.filter { packageFilter.isEmpty || $0.name.localizedCaseInsensitiveContains(packageFilter) }.prefix(300)) { package in
+                            HStack {
+                                Text(package.name)
+                                Spacer()
+                                Text(package.version).font(.caption).foregroundStyle(HCGPalette.textSecondary)
+                            }
+                            .swipeActions { if changesUsable { Button("Remove", role: .destructive) { request(.remove(package.name)) } } }
+                        }
+                    } else if let inventory = model.report(for: .unleashed)?[.packageManager].availability {
+                        Text("\(inventory.label): \(inventory.reason)").font(.footnote).foregroundStyle(HCGPalette.textSecondary)
+                        if let inventoryNote { Text(inventoryNote).font(.footnote).foregroundStyle(HCGPalette.warn) }
                     }
-                } else if let inventory = model.report(for: .unleashed)?[.packageManager].availability {
-                    Text("\(inventory.label): \(inventory.reason)").font(.footnote).foregroundStyle(.secondary)
-                    if let inventoryNote { Text(inventoryNote).font(.footnote).foregroundStyle(HCGPalette.warn) }
+                } header: { Text("Packages") } footer: {
+                    Text("Listing is read-only. Install, remove and refresh need your approval each time, then run visibly in a new Local Unleashed session with the permissions the device grants. HCG Terminal never adds sudo.")
                 }
-            } header: { Text("Packages") } footer: {
-                Text("Listing is read-only. Install, remove and refresh need your approval each time, then run visibly in a new Local Unleashed session with the permissions the device grants. HCG Terminal never adds sudo.")
-            }
-            Section("Permitted locations") {
-                if let refusal = model.dependencies.access.denial(.expandedFileRead) {
-                    Text(refusal).foregroundStyle(.secondary)
-                } else if roots.isEmpty { Text("No location outside the app sandbox is readable.").foregroundStyle(.secondary) }
-                ForEach(roots, id: \.self) { root in
-                    NavigationLink(root) { HostDirectoryView(path: root) }
+                Section("Permitted locations") {
+                    if let refusal = model.dependencies.access.denial(.expandedFileRead) {
+                        Text(refusal).foregroundStyle(HCGPalette.textSecondary)
+                    } else if roots.isEmpty { Text("No location outside the app sandbox is readable.").foregroundStyle(HCGPalette.textSecondary) }
+                    ForEach(roots, id: \.self) { root in
+                        NavigationLink(root) { HostDirectoryView(path: root) }
+                    }
                 }
-            }
-            Section("Logs") {
-                if logRoots.isEmpty { Text("No readable log directories.").foregroundStyle(.secondary) }
-                ForEach(logRoots, id: \.self) { root in
-                    NavigationLink(root) { HostDirectoryView(path: root) }
+                Section("Logs") {
+                    if logRoots.isEmpty { Text("No readable log directories.").foregroundStyle(HCGPalette.textSecondary) }
+                    ForEach(logRoots, id: \.self) { root in
+                        NavigationLink(root) { HostDirectoryView(path: root) }
+                    }
                 }
             }
+            .hcgRows()
         }
         .navigationTitle("Unleashed Tools")
         .hcgScreenBackground()
@@ -149,30 +152,34 @@ struct HostDirectoryView: View {
 
     var body: some View {
         List {
-            Section {
-                Label(writable ? "This app may change items here." : "Read-only for this app.", systemImage: writable ? "pencil" : "lock")
-                    .font(.footnote).foregroundStyle(.secondary)
-                if let status { Text(status).font(.footnote).foregroundStyle(HCGPalette.warn) }
-            }
-            if rows.isEmpty && status == nil {
-                Text("Empty folder").foregroundStyle(.secondary)
-            }
-            ForEach(rows.filter { (showHidden || !$0.name.hasPrefix(".")) && (query.isEmpty || $0.name.localizedCaseInsensitiveContains(query)) }) { row in
-                Group {
-                    if row.isDirectory {
-                        NavigationLink { HostDirectoryView(path: row.path) } label: { label(row) }
-                    } else {
-                        NavigationLink { HostFileView(path: row.path, writable: row.writable) } label: { label(row) }
+            Group {
+                Section {
+                    Label(writable ? "This app may change items here." : "Read-only for this app.", systemImage: writable ? "pencil" : "lock")
+                        .font(.footnote).foregroundStyle(HCGPalette.textSecondary)
+                    if let status { Text(status).font(.footnote).foregroundStyle(HCGPalette.warn) }
+                }
+                if rows.isEmpty && status == nil {
+                    Text("Empty folder").foregroundStyle(HCGPalette.textSecondary)
+                }
+                ForEach(rows.filter { (showHidden || !$0.name.hasPrefix(".")) && (query.isEmpty || $0.name.localizedCaseInsensitiveContains(query)) }) { row in
+                    Group {
+                        if row.isDirectory {
+                            NavigationLink { HostDirectoryView(path: row.path) } label: { label(row) }
+                        } else {
+                            NavigationLink { HostFileView(path: row.path, writable: row.writable) } label: { label(row) }
+                        }
+                    }
+                    .swipeActions {
+                        if row.writable && writable {
+                            Button("Delete", role: .destructive) { deleting = row }
+                            Button("Rename") { newName = row.name; renaming = row }
+                        }
                     }
                 }
-                .swipeActions {
-                    if row.writable && writable {
-                        Button("Delete", role: .destructive) { deleting = row }
-                        Button("Rename") { newName = row.name; renaming = row }
-                    }
-                }
             }
+            .hcgRows()
         }
+        .hcgScreenBackground()
         .searchable(text: $query, prompt: "Search this folder")
         .navigationTitle(path == "/" ? "Device Root" : (path as NSString).lastPathComponent)
         .safeAreaInset(edge: .bottom) {
@@ -216,9 +223,9 @@ struct HostDirectoryView: View {
         HStack {
             Label(row.name, systemImage: row.isDirectory ? "folder" : "doc.text")
             Spacer()
-            if !row.writable { Image(systemName: "lock").font(.caption2).foregroundStyle(.secondary) }
+            if !row.writable { Image(systemName: "lock").font(.caption2).foregroundStyle(HCGPalette.textSecondary) }
             if !row.isDirectory {
-                Text(ByteCountFormatter.string(fromByteCount: row.size, countStyle: .file)).font(.caption).foregroundStyle(.secondary)
+                Text(ByteCountFormatter.string(fromByteCount: row.size, countStyle: .file)).font(.caption).foregroundStyle(HCGPalette.textSecondary)
             }
         }
     }
@@ -272,7 +279,7 @@ struct HostFileView: View {
     var body: some View {
         Group {
             if !mayRead {
-                ContentUnavailableView("File Access Disabled", systemImage: "lock",
+                HCGEmptyState("File Access Disabled", systemImage: "lock",
                     description: Text("Enable expanded filesystem browsing in Capabilities & Access."))
             } else if editing {
                 TextEditor(text: $text)
@@ -280,13 +287,17 @@ struct HostFileView: View {
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
                     .disabled(busy)
+                    .hcgDocumentSurface()
             } else {
                 ScrollView {
                     Text(text).font(.system(.body, design: .monospaced)).textSelection(.enabled)
+                        .foregroundStyle(HCGPalette.textPrimary)
                         .frame(maxWidth: .infinity, alignment: .leading).padding()
                 }
+                .hcgDocumentSurface()
             }
         }
+        .background { HCGBackdrop() }
         .safeAreaInset(edge: .top) {
             VStack(alignment: .leading) {
                 Text(path).font(.caption.monospaced()).textSelection(.enabled)
@@ -377,35 +388,39 @@ struct LoopbackServiceSheet: View {
 
     var body: some View {
         Form {
-            if let refusal = model.dependencies.access.denial(.localhostSSH) {
-                Section { Text(refusal).foregroundStyle(HCGPalette.warn) }
-            }
-            Section {
-                TextField("Host", text: $host)
-                    .textInputAutocapitalization(.never).autocorrectionDisabled()
-                if !hostValid {
-                    Text("Only this device: 127.0.0.1, localhost or ::1. Use Remote SSH for other hosts.").font(.caption).foregroundStyle(HCGPalette.warn)
+            Group {
+                if let refusal = model.dependencies.access.denial(.localhostSSH) {
+                    Section { Text(refusal).foregroundStyle(HCGPalette.warn) }
                 }
-                TextField("Port", text: $portText).keyboardType(.numberPad)
-                if port == nil { Text("Enter a port from 1 to 65535.").font(.caption).foregroundStyle(HCGPalette.warn) }
-                if !detectedPorts.isEmpty {
-                    HStack {
-                        Text("Answering now:").font(.caption).foregroundStyle(.secondary)
-                        ForEach(detectedPorts, id: \.self) { detected in
-                            Button("\(detected)") { portText = "\(detected)" }.buttonStyle(.bordered).controlSize(.small)
-                        }
+                Section {
+                    TextField("Host", text: $host)
+                        .textInputAutocapitalization(.never).autocorrectionDisabled()
+                    if !hostValid {
+                        Text("Only this device: 127.0.0.1, localhost or ::1. Use Remote SSH for other hosts.").font(.caption).foregroundStyle(HCGPalette.warn)
                     }
-                } else {
-                    Text("Nothing answered on 127.0.0.1:22 or :2222 during the last check. If your SSH service uses another port, enter it.").font(.caption).foregroundStyle(.secondary)
+                    TextField("Port", text: $portText).keyboardType(.numberPad)
+                    if port == nil { Text("Enter a port from 1 to 65535.").font(.caption).foregroundStyle(HCGPalette.warn) }
+                    if !detectedPorts.isEmpty {
+                        HStack {
+                            Text("Answering now:").font(.caption).foregroundStyle(HCGPalette.textSecondary)
+                            ForEach(detectedPorts, id: \.self) { detected in
+                                Button("\(detected)") { portText = "\(detected)" }.buttonStyle(.bordered).controlSize(.small)
+                            }
+                        }
+                    } else {
+                        Text("Nothing answered on 127.0.0.1:22 or :2222 during the last check. If your SSH service uses another port, enter it.").font(.caption).foregroundStyle(HCGPalette.textSecondary)
+                    }
+                } header: { Text("Service") }
+                Section {
+                    TextField("Username", text: $username).textInputAutocapitalization(.never).autocorrectionDisabled()
+                    SecureField("Password", text: $password)
+                } header: { Text("Account") } footer: {
+                    Text("Uses the service's own account. The password is used for this connection only and is not stored. The host key is shown for approval the first time and verified afterwards; a changed key is refused. Commands run on this device (Local Unleashed).")
                 }
-            } header: { Text("Service") }
-            Section {
-                TextField("Username", text: $username).textInputAutocapitalization(.never).autocorrectionDisabled()
-                SecureField("Password", text: $password)
-            } header: { Text("Account") } footer: {
-                Text("Uses the service's own account. The password is used for this connection only and is not stored. The host key is shown for approval the first time and verified afterwards; a changed key is refused. Commands run on this device (Local Unleashed).")
             }
+            .hcgRows()
         }
+        .hcgScreenBackground()
         .navigationTitle("Localhost SSH")
         .navigationBarTitleDisplayMode(.inline)
         .task {
@@ -466,46 +481,49 @@ struct DiagnosticsView: View {
 
     var body: some View {
         List {
-            BuildIdentitySection(identity: model.dependencies.buildIdentity)
-            if let assessment = model.assessment {
-                EnvironmentAssessmentSections(assessment: assessment)
-            }
-            if let snapshot {
-                Section("Device") {
-                    ForEach(snapshot.lines, id: \.0) { row in LabeledContent(row.0, value: row.1) }
+            Group {
+                BuildIdentitySection(identity: model.dependencies.buildIdentity)
+                if let assessment = model.assessment {
+                    EnvironmentAssessmentSections(assessment: assessment)
                 }
-            }
-            Section("Processes") {
-                switch processes {
-                case .listed(let list, let complete)?:
-                    if !complete { Text("The system shows only part of the process table to this app.").font(.footnote).foregroundStyle(.secondary) }
-                    ForEach(list.prefix(400)) { process in
-                        HStack {
-                            Text("\(process.pid)").font(.caption.monospaced()).frame(width: 56, alignment: .leading)
-                            Text(process.name)
-                            Spacer()
-                            Text("uid \(process.userID)").font(.caption).foregroundStyle(.secondary)
-                        }
-                    }
-                case .restricted(let reason)?, .disabled(let reason)?:
-                    Text(reason).foregroundStyle(.secondary)
-                case nil:
-                    ProgressView()
-                }
-            }
-            Section("Log") {
-                ForEach(entries.reversed()) { entry in
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("\(entry.level.label) · \(entry.category)").font(.caption.weight(.semibold))
-                        Text(entry.message).font(.footnote)
-                        if !entry.metadata.isEmpty {
-                            Text(entry.metadata.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: " "))
-                                .font(.caption2.monospaced()).foregroundStyle(.secondary)
-                        }
+                if let snapshot {
+                    Section("Device") {
+                        ForEach(snapshot.lines, id: \.0) { row in LabeledContent(row.0, value: row.1) }
                     }
                 }
-                if !exportText.isEmpty { ShareLink("Export Log", item: exportText) }
+                Section("Processes") {
+                    switch processes {
+                    case .listed(let list, let complete)?:
+                        if !complete { Text("The system shows only part of the process table to this app.").font(.footnote).foregroundStyle(HCGPalette.textSecondary) }
+                        ForEach(list.prefix(400)) { process in
+                            HStack {
+                                Text("\(process.pid)").font(.caption.monospaced()).frame(width: 56, alignment: .leading)
+                                Text(process.name)
+                                Spacer()
+                                Text("uid \(process.userID)").font(.caption).foregroundStyle(HCGPalette.textSecondary)
+                            }
+                        }
+                    case .restricted(let reason)?, .disabled(let reason)?:
+                        Text(reason).foregroundStyle(HCGPalette.textSecondary)
+                    case nil:
+                        ProgressView()
+                    }
+                }
+                Section("Log") {
+                    ForEach(entries.reversed()) { entry in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("\(entry.level.label) · \(entry.category)").font(.caption.weight(.semibold))
+                            Text(entry.message).font(.footnote)
+                            if !entry.metadata.isEmpty {
+                                Text(entry.metadata.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: " "))
+                                    .font(.caption2.monospaced()).foregroundStyle(HCGPalette.textSecondary)
+                            }
+                        }
+                    }
+                    if !exportText.isEmpty { ShareLink("Export Log", item: exportText) }
+                }
             }
+            .hcgRows()
         }
         .navigationTitle("Diagnostics")
         .hcgScreenBackground()

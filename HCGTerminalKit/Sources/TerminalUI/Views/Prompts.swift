@@ -12,22 +12,26 @@ struct AuthorizationSheet: View {
     var body: some View {
         NavigationStack {
             List {
-                Section {
-                    Text(request.commandLine)
-                        .font(.system(.body, design: .monospaced))
-                        .textSelection(.enabled)
-                } header: { Text("Command") }
-                Section("Runs on") {
-                    TargetBadge(target: request.target)
-                    Text("With the permissions this device actually grants. HCG Terminal does not add sudo, does not supply passwords and does not change security settings.")
-                        .font(.footnote).foregroundStyle(.secondary)
-                }
-                if !request.reasons.isEmpty {
-                    Section("Why approval is needed") {
-                        ForEach(request.reasons, id: \.self) { Text($0) }
+                Group {
+                    Section {
+                        Text(request.commandLine)
+                            .font(.system(.body, design: .monospaced))
+                            .textSelection(.enabled)
+                    } header: { Text("Command") }
+                    Section("Runs on") {
+                        TargetBadge(target: request.target)
+                        Text("With the permissions this device actually grants. HCG Terminal does not add sudo, does not supply passwords and does not change security settings.")
+                            .font(.footnote).foregroundStyle(HCGPalette.textSecondary)
+                    }
+                    if !request.reasons.isEmpty {
+                        Section("Why approval is needed") {
+                            ForEach(request.reasons, id: \.self) { Text($0) }
+                        }
                     }
                 }
+                .hcgRows()
             }
+            .hcgScreenBackground()
             .navigationTitle(request.title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -51,16 +55,20 @@ struct HostKeySheet: View {
     var body: some View {
         NavigationStack {
             List {
-                Section {
-                    LabeledContent("Host", value: prompt.port == 22 ? prompt.host : "\(prompt.host):\(prompt.port)")
-                    LabeledContent("Key type", value: prompt.key.algorithm)
-                    Text(prompt.key.fingerprint)
-                        .font(.system(.footnote, design: .monospaced))
-                        .textSelection(.enabled)
-                } footer: {
-                    Text("Compare with `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` on the host (on a Mac: same path). Trust it only if they match. If this key changes later, HCG Terminal refuses to connect.")
+                Group {
+                    Section {
+                        LabeledContent("Host", value: prompt.port == 22 ? prompt.host : "\(prompt.host):\(prompt.port)")
+                        LabeledContent("Key type", value: prompt.key.algorithm)
+                        Text(prompt.key.fingerprint)
+                            .font(.system(.footnote, design: .monospaced))
+                            .textSelection(.enabled)
+                    } footer: {
+                        Text("Compare with `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` on the host (on a Mac: same path). Trust it only if they match. If this key changes later, HCG Terminal refuses to connect.")
+                    }
                 }
+                .hcgRows()
             }
+            .hcgScreenBackground()
             .navigationTitle("Unknown Host Key")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -81,25 +89,29 @@ struct ModeSwitchConfirmationSheet: View {
     var body: some View {
         NavigationStack {
             List {
-                Section {
-                    Text("New local sessions now open in \(confirmation.plan.to.displayName). Your open local sessions keep running in \(confirmation.plan.from.displayName) unless you choose to restart them.")
-                }
-                Section {
-                    ForEach(confirmation.plan.localSessions, id: \.session.id) { entry in
-                        row(entry)
+                Group {
+                    Section {
+                        Text("New local sessions now open in \(confirmation.plan.to.displayName). Your open local sessions keep running in \(confirmation.plan.from.displayName) unless you choose to restart them.")
                     }
-                } header: { Text("Local sessions") } footer: {
-                    Text("Restarting closes the session and opens a fresh one in \(confirmation.plan.to.displayName). No command, input or process is transferred.")
-                }
-                if !confirmation.plan.preservedRemoteSessions.isEmpty {
-                    Section("Remote sessions") {
-                        ForEach(confirmation.plan.preservedRemoteSessions, id: \.id) { session in
-                            Label("\(session.title) — not affected", systemImage: "checkmark.circle")
-                                .foregroundStyle(.secondary)
+                    Section {
+                        ForEach(confirmation.plan.localSessions, id: \.session.id) { entry in
+                            row(entry)
+                        }
+                    } header: { Text("Local sessions") } footer: {
+                        Text("Restarting closes the session and opens a fresh one in \(confirmation.plan.to.displayName). No command, input or process is transferred.")
+                    }
+                    if !confirmation.plan.preservedRemoteSessions.isEmpty {
+                        Section("Remote sessions") {
+                            ForEach(confirmation.plan.preservedRemoteSessions, id: \.id) { session in
+                                Label("\(session.title) — not affected", systemImage: "checkmark.circle")
+                                    .foregroundStyle(HCGPalette.textSecondary)
+                            }
                         }
                     }
                 }
+                .hcgRows()
             }
+            .hcgScreenBackground()
             .navigationTitle("Switched to \(confirmation.plan.to.displayName)")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -125,16 +137,16 @@ struct ModeSwitchConfirmationSheet: View {
             )) {
                 VStack(alignment: .leading) {
                     Text(entry.session.title)
-                    Text("Restart in \(confirmation.plan.to.displayName)").font(.caption).foregroundStyle(.secondary)
+                    Text("Restart in \(confirmation.plan.to.displayName)").font(.caption).foregroundStyle(HCGPalette.textSecondary)
                 }
             }
         case .alreadyInTargetMode:
             Label("\(entry.session.title) — already \(confirmation.plan.to.displayName)", systemImage: "checkmark.circle")
-                .foregroundStyle(.secondary)
+                .foregroundStyle(HCGPalette.textSecondary)
         case .mustStay(let reason):
             VStack(alignment: .leading) {
                 Text(entry.session.title)
-                Text(reason).font(.caption).foregroundStyle(.secondary)
+                Text(reason).font(.caption).foregroundStyle(HCGPalette.textSecondary)
             }
         }
     }
@@ -154,40 +166,43 @@ struct ModeUnavailableSheet: View {
     var body: some View {
         NavigationStack {
             List {
-                Section {
-                    Label(report.bannerText, systemImage: report.level == .available ? "checkmark.circle" : report.level == .partial ? "circle.lefthalf.filled" : "exclamationmark.triangle")
-                        .foregroundStyle(report.level == .unavailable ? HCGPalette.warn : HCGPalette.cyan)
-                    Text("You are still in \(model.preferredMode.displayName). Your open sessions are unchanged.")
-                        .font(.footnote).foregroundStyle(.secondary)
-                    if model.isAvailable(explanation.mode), model.preferredMode != explanation.mode {
-                        Button("Switch to \(explanation.mode.displayName)") { dismiss(); model.selectMode(explanation.mode) }
-                    }
-                }
-                if explanation.distribution == .standard {
-                    Section("Why") {
-                        Text(UnleashedNotIncludedCapabilityProvider.reason)
-                        Text("The Unleashed backend ships only in the separate HCG Terminal Unleashed build (bundle ID ending in .unleashed). See Diagnostics → Build for what is installed.")
-                            .font(.footnote).foregroundStyle(.secondary)
-                    }
-                } else {
-                    actions
-                    let working = local.filter(\.availability.isUsable)
-                    if !working.isEmpty {
-                        Section("Working") {
-                            ForEach(working) { result in resultRow(result) }
+                Group {
+                    Section {
+                        Label(report.bannerText, systemImage: report.level == .available ? "checkmark.circle" : report.level == .partial ? "circle.lefthalf.filled" : "exclamationmark.triangle")
+                            .foregroundStyle(report.level == .unavailable ? HCGPalette.warn : HCGPalette.cyan)
+                        Text("You are still in \(model.preferredMode.displayName). Your open sessions are unchanged.")
+                            .font(.footnote).foregroundStyle(HCGPalette.textSecondary)
+                        if model.isAvailable(explanation.mode), model.preferredMode != explanation.mode {
+                            Button("Switch to \(explanation.mode.displayName)") { dismiss(); model.selectMode(explanation.mode) }
                         }
                     }
-                    Section("Not working") {
-                        ForEach(local.filter { !$0.availability.isUsable }) { result in resultRow(result) }
+                    if explanation.distribution == .standard {
+                        Section("Why") {
+                            Text(UnleashedNotIncludedCapabilityProvider.reason)
+                            Text("The Unleashed backend ships only in the separate HCG Terminal Unleashed build (bundle ID ending in .unleashed). See Diagnostics → Build for what is installed.")
+                                .font(.footnote).foregroundStyle(HCGPalette.textSecondary)
+                        }
+                    } else {
+                        actions
+                        let working = local.filter(\.availability.isUsable)
+                        if !working.isEmpty {
+                            Section("Working") {
+                                ForEach(working) { result in resultRow(result) }
+                            }
+                        }
+                        Section("Not working") {
+                            ForEach(local.filter { !$0.availability.isUsable }) { result in resultRow(result) }
+                        }
+                    }
+                    Section {
+                        NavigationLink("All checks and results") {
+                            List { CapabilityReportView(report: report).hcgRows() }
+                                .hcgScreenBackground()
+                                .navigationTitle("\(explanation.mode.displayName) checks")
+                        }
                     }
                 }
-                Section {
-                    NavigationLink("All checks and results") {
-                        List { CapabilityReportView(report: report) }
-                            .hcgScreenBackground()
-                            .navigationTitle("\(explanation.mode.displayName) checks")
-                    }
-                }
+                .hcgRows()
             }
             .hcgScreenBackground()
             .navigationTitle(title)
@@ -259,10 +274,10 @@ struct ModeUnavailableSheet: View {
                 Spacer()
                 StatusChip(availability: result.availability)
             }
-            if result.partial { Text("Partial: \(result.scope.joined(separator: ", "))").font(.caption).foregroundStyle(.secondary) }
+            if result.partial { Text("Partial: \(result.scope.joined(separator: ", "))").font(.caption).foregroundStyle(HCGPalette.textSecondary) }
             Text(result.availability.reason).font(.footnote).fixedSize(horizontal: false, vertical: true)
             if let remedy = result.availability.remedy, !result.availability.isUsable {
-                Text(remedy).font(.caption).foregroundStyle(.secondary)
+                Text(remedy).font(.caption).foregroundStyle(HCGPalette.textSecondary)
             }
         }
         .padding(.vertical, 2)
@@ -281,24 +296,28 @@ struct HostKeyChangedSheet: View {
     var body: some View {
         NavigationStack {
             List {
-                Section {
-                    Label("HCG Terminal refused to connect to \(notice.host.endpoint.address).", systemImage: "exclamationmark.shield.fill")
-                        .foregroundStyle(HCGPalette.loss)
-                    Text("Its host key is different from the one you trusted before. This happens after the host's system was reinstalled or its SSH keys were regenerated — or if someone is intercepting the connection.")
-                        .font(.footnote)
+                Group {
+                    Section {
+                        Label("HCG Terminal refused to connect to \(notice.host.endpoint.address).", systemImage: "exclamationmark.shield.fill")
+                            .foregroundStyle(HCGPalette.loss)
+                        Text("Its host key is different from the one you trusted before. This happens after the host's system was reinstalled or its SSH keys were regenerated — or if someone is intercepting the connection.")
+                            .font(.footnote)
+                    }
+                    Section("Trusted before") {
+                        Text(notice.expectedFingerprint).font(.system(.footnote, design: .monospaced)).textSelection(.enabled)
+                    }
+                    Section("Presented now") {
+                        Text(notice.presentedFingerprint).font(.system(.footnote, design: .monospaced)).textSelection(.enabled)
+                    }
+                    Section {
+                        Button("Remove Old Key…", role: .destructive) { confirmRemoval = true }
+                    } footer: {
+                        Text("Only if you know why the key changed. On the host, `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` shows the current fingerprint. After removal, the next connection asks you to verify it.")
+                    }
                 }
-                Section("Trusted before") {
-                    Text(notice.expectedFingerprint).font(.system(.footnote, design: .monospaced)).textSelection(.enabled)
-                }
-                Section("Presented now") {
-                    Text(notice.presentedFingerprint).font(.system(.footnote, design: .monospaced)).textSelection(.enabled)
-                }
-                Section {
-                    Button("Remove Old Key…", role: .destructive) { confirmRemoval = true }
-                } footer: {
-                    Text("Only if you know why the key changed. On the host, `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` shows the current fingerprint. After removal, the next connection asks you to verify it.")
-                }
+                .hcgRows()
             }
+            .hcgScreenBackground()
             .navigationTitle("Host Key Changed")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

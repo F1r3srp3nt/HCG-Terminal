@@ -19,31 +19,34 @@ struct CapabilitiesAccessView: View {
 
     var body: some View {
         List {
-            Section {
-                Text(AccessCopy.scope)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            if let outcome = model.accessChangeOutcome {
+            Group {
                 Section {
-                    Label(outcome, systemImage: "info.circle")
+                    Text(AccessCopy.scope)
                         .font(.footnote)
-                    Button("Dismiss") { model.accessChangeOutcome = nil }
-                } header: { Text("Last change") }
-            }
-            ForEach(groups, id: \.0) { group in
+                        .foregroundStyle(HCGPalette.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if let outcome = model.accessChangeOutcome {
+                    Section {
+                        Label(outcome, systemImage: "info.circle")
+                            .font(.footnote)
+                        Button("Dismiss") { model.accessChangeOutcome = nil }
+                    } header: { Text("Last change") }
+                }
+                ForEach(groups, id: \.0) { group in
+                    Section {
+                        ForEach(group.1) { control in
+                            AccessControlRow(control: control)
+                        }
+                    } header: { Text(group.0) }
+                }
                 Section {
-                    ForEach(group.1) { control in
-                        AccessControlRow(control: control)
-                    }
-                } header: { Text(group.0) }
+                    Button("Restore Default Settings") { Task { await model.resetAccessToDefaults() } }
+                } footer: {
+                    Text("Defaults: everything on except expanded filesystem writing and privileged operations.")
+                }
             }
-            Section {
-                Button("Restore Default Settings") { Task { await model.resetAccessToDefaults() } }
-            } footer: {
-                Text("Defaults: everything on except expanded filesystem writing and privileged operations.")
-            }
+            .hcgRows()
         }
         .navigationTitle("Capabilities & Access")
         .hcgScreenBackground()
@@ -107,7 +110,7 @@ struct AccessControlRow: View {
         if !included {
             Text("Not in this build: only the Unleashed app contains it.")
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(HCGPalette.textSecondary)
         } else {
             if control == .unleashedFeatures, let report = model.report(for: .unleashed) {
                 Text(report.level == .available ? "Local terminal possible" : report.level == .partial ? "Partially available on this device" : "Not available on this device")
@@ -119,7 +122,7 @@ struct AccessControlRow: View {
             } else {
                 Text("Uses the system file picker")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(HCGPalette.textSecondary)
             }
             if isOn, let blocker {
                 Label("Inactive: needs \(blocker.title)", systemImage: "link")
@@ -141,55 +144,58 @@ struct AccessControlDetailView: View {
 
     var body: some View {
         List {
-            Section {
-                if !(control.requiresUnleashedBackend && model.dependencies.distribution == .standard) {
-                    Toggle(isOn: Binding(
-                        get: { model.accessSettings.isOn(control) },
-                        set: { newValue in Task { await model.requestAccessChange(control, enabled: newValue) } }
-                    )) { Text("Allow HCG Terminal to use this") }
+            Group {
+                Section {
+                    if !(control.requiresUnleashedBackend && model.dependencies.distribution == .standard) {
+                        Toggle(isOn: Binding(
+                            get: { model.accessSettings.isOn(control) },
+                            set: { newValue in Task { await model.requestAccessChange(control, enabled: newValue) } }
+                        )) { Text("Allow HCG Terminal to use this") }
+                    }
+                    LabeledContent("In this build", value: control.requiresUnleashedBackend && model.dependencies.distribution == .standard ? "Not included" : "Included")
+                    if let availability = model.detectedAvailability(for: control) {
+                        LabeledContent("On this device") { StatusChip(availability: availability) }
+                        Text(availability.reason).font(.footnote).foregroundStyle(HCGPalette.textSecondary)
+                        if let remedy = availability.remedy, !availability.isUsable {
+                            Label(remedy, systemImage: "lightbulb").font(.footnote).foregroundStyle(HCGPalette.textSecondary)
+                        }
+                    }
+                    if let effective = model.effectiveAvailability(for: control) {
+                        LabeledContent("Result") { StatusChip(availability: effective) }
+                    }
+                } header: { Text("Status") } footer: {
+                    Text("“On this device” comes from read-only checks and real use. Your setting can only turn a usable capability off; it never makes an unavailable one usable.")
                 }
-                LabeledContent("In this build", value: control.requiresUnleashedBackend && model.dependencies.distribution == .standard ? "Not included" : "Included")
-                if let availability = model.detectedAvailability(for: control) {
-                    LabeledContent("On this device") { StatusChip(availability: availability) }
-                    Text(availability.reason).font(.footnote).foregroundStyle(.secondary)
-                    if let remedy = availability.remedy, !availability.isUsable {
-                        Label(remedy, systemImage: "lightbulb").font(.footnote).foregroundStyle(.secondary)
+
+                Section("When on") { Text(control.whenOn).font(.callout) }
+                Section("When off") { Text(control.whenOff).font(.callout) }
+
+                Section("Prerequisites") {
+                    if control.prerequisites.isEmpty {
+                        Text("None.").foregroundStyle(HCGPalette.textSecondary)
+                    }
+                    ForEach(control.prerequisites) { prerequisite in
+                        LabeledContent(prerequisite.title, value: model.accessSettings.isOn(prerequisite) ? "On" : "Off")
+                    }
+                    if control.requiresUnleashedBackend {
+                        Text("Also needs the Unleashed build and a device that allows it (see Unleashed environment in Diagnostics).")
+                            .font(.footnote).foregroundStyle(HCGPalette.textSecondary)
                     }
                 }
-                if let effective = model.effectiveAvailability(for: control) {
-                    LabeledContent("Result") { StatusChip(availability: effective) }
+
+                if !control.dependents.isEmpty {
+                    Section {
+                        ForEach(control.dependents) { dependent in Text(dependent.title) }
+                    } header: { Text("Stops working when this is off") }
                 }
-            } header: { Text("Status") } footer: {
-                Text("“On this device” comes from read-only checks and real use. Your setting can only turn a usable capability off; it never makes an unavailable one usable.")
-            }
 
-            Section("When on") { Text(control.whenOn).font(.callout) }
-            Section("When off") { Text(control.whenOff).font(.callout) }
-
-            Section("Prerequisites") {
-                if control.prerequisites.isEmpty {
-                    Text("None.").foregroundStyle(.secondary)
+                Section("Open sessions and builds") {
+                    Text(control.activeSessionEffect).font(.callout)
                 }
-                ForEach(control.prerequisites) { prerequisite in
-                    LabeledContent(prerequisite.title, value: model.accessSettings.isOn(prerequisite) ? "On" : "Off")
-                }
-                if control.requiresUnleashedBackend {
-                    Text("Also needs the Unleashed build and a device that allows it (see Unleashed environment in Diagnostics).")
-                        .font(.footnote).foregroundStyle(.secondary)
-                }
-            }
 
-            if !control.dependents.isEmpty {
-                Section {
-                    ForEach(control.dependents) { dependent in Text(dependent.title) }
-                } header: { Text("Stops working when this is off") }
+                Section { Text(AccessCopy.scope).font(.footnote).foregroundStyle(HCGPalette.textSecondary) }
             }
-
-            Section("Open sessions and builds") {
-                Text(control.activeSessionEffect).font(.callout)
-            }
-
-            Section { Text(AccessCopy.scope).font(.footnote).foregroundStyle(.secondary) }
+            .hcgRows()
         }
         .navigationTitle(control.title)
         .navigationBarTitleDisplayMode(.inline)
@@ -207,38 +213,41 @@ struct AccessChangeSheet: View {
     var body: some View {
         NavigationStack {
             List {
-                Section {
-                    Text(request.enabled ? request.control.whenOn : request.control.whenOff).font(.callout)
-                    if let caution = request.caution {
-                        Label(caution, systemImage: "exclamationmark.shield").font(.footnote).foregroundStyle(HCGPalette.warn)
-                    }
-                }
-                let others = request.newlyDisabled.filter { $0 != request.control }
-                if !others.isEmpty {
+                Group {
                     Section {
-                        ForEach(others) { Text($0.title) }
-                    } header: { Text("Also stops, because it needs this") }
-                }
-                if !request.sessions.isEmpty {
-                    Section {
-                        ForEach(request.sessions) { session in
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(session.title).font(.body.weight(.semibold))
-                                TargetBadge(target: session.target)
-                                Text(session.consequence).font(.footnote).foregroundStyle(.secondary)
-                            }
-                            .padding(.vertical, 2)
+                        Text(request.enabled ? request.control.whenOn : request.control.whenOff).font(.callout)
+                        if let caution = request.caution {
+                            Label(caution, systemImage: "exclamationmark.shield").font(.footnote).foregroundStyle(HCGPalette.warn)
                         }
-                    } header: { Text("Open sessions that will end") } footer: {
-                        Text("Ended sessions stay in the list with their scrollback until you close them.")
                     }
-                }
-                if request.stopsRunningBuild {
-                    Section("Running build") {
-                        Text(AccessControl.remoteBuilds.activeSessionEffect).font(.footnote)
+                    let others = request.newlyDisabled.filter { $0 != request.control }
+                    if !others.isEmpty {
+                        Section {
+                            ForEach(others) { Text($0.title) }
+                        } header: { Text("Also stops, because it needs this") }
                     }
+                    if !request.sessions.isEmpty {
+                        Section {
+                            ForEach(request.sessions) { session in
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(session.title).font(.body.weight(.semibold))
+                                    TargetBadge(target: session.target)
+                                    Text(session.consequence).font(.footnote).foregroundStyle(HCGPalette.textSecondary)
+                                }
+                                .padding(.vertical, 2)
+                            }
+                        } header: { Text("Open sessions that will end") } footer: {
+                            Text("Ended sessions stay in the list with their scrollback until you close them.")
+                        }
+                    }
+                    if request.stopsRunningBuild {
+                        Section("Running build") {
+                            Text(AccessControl.remoteBuilds.activeSessionEffect).font(.footnote)
+                        }
+                    }
+                    Section { Text(AccessCopy.scope).font(.footnote).foregroundStyle(HCGPalette.textSecondary) }
                 }
-                Section { Text(AccessCopy.scope).font(.footnote).foregroundStyle(.secondary) }
+                .hcgRows()
             }
             .navigationTitle(request.enabled ? "Turn On \(request.control.title)?" : "Turn Off \(request.control.title)?")
             .navigationBarTitleDisplayMode(.inline)
