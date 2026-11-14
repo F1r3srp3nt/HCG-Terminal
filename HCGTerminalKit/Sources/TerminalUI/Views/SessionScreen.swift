@@ -64,8 +64,7 @@ struct SessionHeader: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            // Row 1: the name gets all the room the controls leave. Two lines at accessibility
-            // text sizes; VoiceOver always reads the full name.
+            // Row 1: the name gets all the room the controls leave; VoiceOver reads it in full.
             HStack(spacing: 2) {
                 if let onBack {
                     HeaderIconButton(systemImage: "chevron.left", label: "Back to sessions", action: onBack)
@@ -73,10 +72,14 @@ struct SessionHeader: View {
                 Text(session.title)
                     .font(.headline)
                     .foregroundStyle(HCGPalette.textPrimary)
-                    .lineLimit(typeSize.isAccessibilitySize ? 2 : 1)
+                    .lineLimit(1)
                     .truncationMode(.tail)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.leading, onBack == nil ? 6 : 0)
+                    // Like a navigation bar title: it grows with text size up to a point, and a long
+                    // press shows the Large Content Viewer, so the terminal keeps its room.
+                    .dynamicTypeSize(...DynamicTypeSize.accessibility2)
+                    .accessibilityShowsLargeContentViewer()
                     .accessibilityLabel("Session: \(session.title)")
                     .accessibilityAddTraits(.isHeader)
                 HeaderIconButton(systemImage: "stop.circle", label: "Interrupt (Control-C)") { session.interrupt() }
@@ -94,13 +97,12 @@ struct SessionHeader: View {
                 }
                 .padding(.horizontal, 6)
             } else if typeSize.isAccessibilitySize {
-                // Accessibility text sizes: one item per row, nothing truncated.
-                VStack(alignment: .leading, spacing: 6) {
-                    selector
-                    TargetBadge(target: session.target, compact: true)
-                    summary
-                }
-                .padding(.horizontal, 6)
+                // Accessibility text sizes: one short status line, so the terminal keeps its room
+                // even with the keyboard up. The mode selector, target badge and full mode note
+                // are in the details this line expands to; VoiceOver reads everything here.
+                summary
+                    .dynamicTypeSize(...DynamicTypeSize.accessibility2)
+                    .padding(.horizontal, 6)
             } else {
                 HStack(spacing: 10) {
                     selector
@@ -150,14 +152,19 @@ struct SessionHeader: View {
                 Text(SessionHeaderSummary.line(state: session.state, target: session.target))
                     .font(.caption)
                     .foregroundStyle(HCGPalette.textSecondary)
-                    .lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
-                    .fixedSize(horizontal: false, vertical: typeSize.isAccessibilitySize)
-                    .multilineTextAlignment(.leading)
-                if let note {
+                    .lineLimit(1)
+                if let note, typeSize.isAccessibilitySize {
+                    // Shown in full in the details; the icon keeps the state visible here.
+                    Image(systemName: availability(model.preferredMode) == false ? "lock.fill" : "info.circle")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(availability(model.preferredMode) == false ? HCGPalette.warn : HCGPalette.textSecondary)
+                        .accessibilityHidden(true)
+                        .layoutPriority(1)
+                } else if let note {
                     Label(note, systemImage: availability(model.preferredMode) == false ? "lock.fill" : "info.circle")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(availability(model.preferredMode) == false ? HCGPalette.warn : HCGPalette.textSecondary)
-                        .lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
+                        .lineLimit(1)
                         .layoutPriority(1)
                 }
                 Image(systemName: "chevron.down")
@@ -177,6 +184,15 @@ struct SessionHeader: View {
 
     private var details: some View {
         VStack(alignment: .leading, spacing: 8) {
+            if typeSize.isAccessibilitySize {
+                selector
+                TargetBadge(target: session.target, compact: true)
+                if let note {
+                    Label(note, systemImage: availability(model.preferredMode) == false ? "lock.fill" : "info.circle")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(availability(model.preferredMode) == false ? HCGPalette.warn : HCGPalette.textSecondary)
+                }
+            }
             Label(session.backend.label, systemImage: "cpu")
                 .font(.footnote)
                 .foregroundStyle(HCGPalette.textSecondary)

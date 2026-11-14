@@ -77,6 +77,11 @@ particles, falling code or fake telemetry.
 - **Key row:** elevated keys with fine borders, at least 44 × 40 pt. A pressed key lights up in
   the mode accent. When Ctrl is armed it is filled with the accent and VoiceOver reports "On".
   The system keyboard is left to iOS.
+- **Accessibility text sizes:**
+  - The header shrinks to the name and one status line, so the terminal keeps its room with the keyboard up.
+  - The mode selector, target badge and full mode note move into the details that line expands to.
+  - The name and status grow up to the second accessibility size; a long press shows the Large Content Viewer.
+  - VoiceOver reads the full name, state, target and mode note.
 - **No ambient motion** on this screen.
 
 ## Components
