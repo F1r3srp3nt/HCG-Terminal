@@ -75,16 +75,16 @@ public enum OpenSSHKeyImport {
             return try parseOpenSSH(der, passphrase: passphrase)
         case "EC PRIVATE KEY":
             if pem.encryptedHeader { throw SSHKeyImportError.encryptedPEM }
-            return ImportedSSHKey(key: try ecdsaFromPEM(trimmed), comment: "", wasEncrypted: false)
+            guard let der = pem.der else { throw SSHKeyImportError.malformed("not valid base64") }
+            return ImportedSSHKey(key: try ecdsaFromDER(der), comment: "", wasEncrypted: false)
         case "PRIVATE KEY":
             guard let der = pem.der else { throw SSHKeyImportError.malformed("not valid base64") }
-            if let key = try? ecdsaFromPEM(trimmed) { return ImportedSSHKey(key: key, comment: "", wasEncrypted: false) }
             if let seed = ed25519SeedFromPKCS8(der) {
                 _ = try Curve25519.Signing.PrivateKey(rawRepresentation: seed)
                 return ImportedSSHKey(key: .ed25519(Data(seed)), comment: "", wasEncrypted: false)
             }
             if der.containsSubsequence(rsaOID) { throw SSHKeyImportError.unsupportedKeyType("RSA") }
-            throw SSHKeyImportError.malformed("unknown PKCS#8 key")
+            return ImportedSSHKey(key: try ecdsaFromDER(der), comment: "", wasEncrypted: false)
         case "ENCRYPTED PRIVATE KEY":
             throw SSHKeyImportError.encryptedPEM
         case "RSA PRIVATE KEY":
@@ -180,7 +180,7 @@ public enum OpenSSHKeyImport {
         return ImportedSSHKey(key: key, comment: comment, wasEncrypted: encrypted)
     }
 
-    private static func ecdsaKey(type: String, scalar: [UInt8], publicPoint: [UInt8]) throws -> SSHPrivateKey {
+    private static func ecdsaKey(type: String, scalar: [UInt8], publicPoint: [UInt8]?) throws -> SSHPrivateKey {
         func padded(_ length: Int) throws -> Data {
             var bytes = Array(scalar.drop(while: { $0 == 0 }))
             guard bytes.count <= length else { throw SSHKeyImportError.malformed("ECDSA scalar length") }
@@ -190,27 +190,88 @@ public enum OpenSSHKeyImport {
         switch type {
         case "ecdsa-sha2-nistp256":
             let raw = try padded(32)
-            guard Array(try P256.Signing.PrivateKey(rawRepresentation: raw).publicKey.x963Representation) == publicPoint else { throw SSHKeyImportError.malformed("ECDSA public key mismatch") }
+            let derived = Array(try P256.Signing.PrivateKey(rawRepresentation: raw).publicKey.x963Representation)
+            if let publicPoint, derived != publicPoint { throw SSHKeyImportError.malformed("ECDSA public key mismatch") }
             return .p256(raw)
         case "ecdsa-sha2-nistp384":
             let raw = try padded(48)
-            guard Array(try P384.Signing.PrivateKey(rawRepresentation: raw).publicKey.x963Representation) == publicPoint else { throw SSHKeyImportError.malformed("ECDSA public key mismatch") }
+            let derived = Array(try P384.Signing.PrivateKey(rawRepresentation: raw).publicKey.x963Representation)
+            if let publicPoint, derived != publicPoint { throw SSHKeyImportError.malformed("ECDSA public key mismatch") }
             return .p384(raw)
         default:
             let raw = try padded(66)
-            guard Array(try P521.Signing.PrivateKey(rawRepresentation: raw).publicKey.x963Representation) == publicPoint else { throw SSHKeyImportError.malformed("ECDSA public key mismatch") }
+            let derived = Array(try P521.Signing.PrivateKey(rawRepresentation: raw).publicKey.x963Representation)
+            if let publicPoint, derived != publicPoint { throw SSHKeyImportError.malformed("ECDSA public key mismatch") }
             return .p521(raw)
         }
     }
 
     // MARK: PEM
 
-    private static func ecdsaFromPEM(_ pem: String) throws -> SSHPrivateKey {
-        if let key = try? P256.Signing.PrivateKey(pemRepresentation: pem) { return .p256(key.rawRepresentation) }
-        if let key = try? P384.Signing.PrivateKey(pemRepresentation: pem) { return .p384(key.rawRepresentation) }
-        if let key = try? P521.Signing.PrivateKey(pemRepresentation: pem) { return .p521(key.rawRepresentation) }
-        throw SSHKeyImportError.malformed("unsupported EC curve")
+    /// SEC1 (`EC PRIVATE KEY`) or PKCS#8 (`PRIVATE KEY`) EC key, parsed from DER here rather
+    /// than by the platform, so Apple's CryptoKit and swift-crypto on Linux accept exactly the same
+    /// files. The curve comes from its OID (or, without one, from the key length), and an
+    /// embedded public key must match the private one.
+    static func ecdsaFromDER(_ der: [UInt8]) throws -> SSHPrivateKey {
+        var outer = DERReader(der)
+        var sequence = try outer.read(tag: 0x30)
+        let version = try sequence.read(tag: 0x02).allBytes
+        if version == [0x00] {
+            // PKCS#8: AlgorithmIdentifier { id-ecPublicKey, curve }, then the SEC1 key.
+            var algorithm = try sequence.read(tag: 0x30)
+            let algorithmOID = try algorithm.read(tag: 0x06).allBytes
+            guard algorithmOID == Self.ecPublicKeyOID else {
+                if algorithmOID == Self.rsaOID { throw SSHKeyImportError.unsupportedKeyType("RSA") }
+                throw SSHKeyImportError.malformed("not an EC key")
+            }
+            let curveOID = algorithm.isAtEnd ? nil : try algorithm.read(tag: 0x06).allBytes
+            let inner = try sequence.read(tag: 0x04).allBytes
+            return try ecdsaFromSEC1(inner, curveOID: curveOID)
+        }
+        return try ecdsaFromSEC1(der, curveOID: nil)
     }
+
+    private static func ecdsaFromSEC1(_ der: [UInt8], curveOID outerCurve: [UInt8]?) throws -> SSHPrivateKey {
+        var outer = DERReader(der)
+        var sequence = try outer.read(tag: 0x30)
+        guard try sequence.read(tag: 0x02).allBytes == [0x01] else { throw SSHKeyImportError.malformed("SEC1 version") }
+        let scalar = try sequence.read(tag: 0x04).allBytes
+        var curveOID = outerCurve
+        var publicPoint: [UInt8]?
+        while !sequence.isAtEnd {
+            let element = try sequence.readAny()
+            if element.tag == 0xA0 {
+                var parameters = DERReader(element.bytes)
+                curveOID = try parameters.read(tag: 0x06).allBytes
+            } else if element.tag == 0xA1 {
+                var wrapper = DERReader(element.bytes)
+                let bits = try wrapper.read(tag: 0x03).allBytes
+                publicPoint = Array(bits.dropFirst()) // leading "unused bits" byte
+            }
+        }
+        let type: String
+        switch curveOID {
+        case Self.p256OID?: type = "ecdsa-sha2-nistp256"
+        case Self.p384OID?: type = "ecdsa-sha2-nistp384"
+        case Self.p521OID?: type = "ecdsa-sha2-nistp521"
+        case nil:
+            let length = scalar.drop(while: { $0 == 0 }).count
+            type = length <= 32 ? "ecdsa-sha2-nistp256" : length <= 48 ? "ecdsa-sha2-nistp384" : "ecdsa-sha2-nistp521"
+        default:
+            throw SSHKeyImportError.malformed("unsupported EC curve")
+        }
+        let key = try ecdsaKey(type: type, scalar: scalar, publicPoint: nil)
+        if let publicPoint {
+            let derived = try key.publicKeyBlob()
+            guard derived.containsSubsequence(publicPoint) else { throw SSHKeyImportError.malformed("ECDSA public key mismatch") }
+        }
+        return key
+    }
+
+    private static let ecPublicKeyOID: [UInt8] = [0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01]
+    private static let p256OID: [UInt8] = [0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07]
+    private static let p384OID: [UInt8] = [0x2B, 0x81, 0x04, 0x00, 0x22]
+    private static let p521OID: [UInt8] = [0x2B, 0x81, 0x04, 0x00, 0x23]
 
     /// PKCS#8 Ed25519: a fixed 16-byte prefix followed by the 32-byte seed (RFC 8410).
     private static let ed25519PKCS8Prefix: [UInt8] = [0x30, 0x2E, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2B, 0x65, 0x70, 0x04, 0x22, 0x04, 0x20]
@@ -220,6 +281,42 @@ public enum OpenSSHKeyImport {
         guard der.count == ed25519PKCS8Prefix.count + 32, Array(der.prefix(ed25519PKCS8Prefix.count)) == ed25519PKCS8Prefix else { return nil }
         return Array(der.suffix(32))
     }
+}
+
+/// Minimal DER reader (definite lengths only), enough for EC private keys.
+struct DERReader {
+    struct Element { let tag: UInt8; let bytes: [UInt8] }
+    private let bytes: [UInt8]
+    private var offset = 0
+
+    init(_ bytes: [UInt8]) { self.bytes = bytes }
+
+    var isAtEnd: Bool { offset >= bytes.count }
+
+    mutating func readAny() throws -> Element {
+        guard offset + 2 <= bytes.count else { throw SSHKeyImportError.malformed("truncated DER") }
+        let tag = bytes[offset]
+        var length = Int(bytes[offset + 1])
+        offset += 2
+        if length & 0x80 != 0 {
+            let count = length & 0x7F
+            guard count >= 1, count <= 3, offset + count <= bytes.count else { throw SSHKeyImportError.malformed("DER length") }
+            length = 0
+            for _ in 0..<count { length = length << 8 | Int(bytes[offset]); offset += 1 }
+        }
+        guard offset + length <= bytes.count else { throw SSHKeyImportError.malformed("truncated DER") }
+        defer { offset += length }
+        return Element(tag: tag, bytes: Array(bytes[offset..<(offset + length)]))
+    }
+
+    /// Reads one element with `tag`; for a SEQUENCE the result reads its contents.
+    mutating func read(tag: UInt8) throws -> DERReader {
+        let element = try readAny()
+        guard element.tag == tag else { throw SSHKeyImportError.malformed("unexpected DER element") }
+        return DERReader(element.bytes)
+    }
+
+    var allBytes: [UInt8] { bytes }
 }
 
 /// One `-----BEGIN …-----` block.

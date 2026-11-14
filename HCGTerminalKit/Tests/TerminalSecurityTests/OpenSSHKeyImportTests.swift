@@ -50,6 +50,22 @@ final class OpenSSHKeyImportTests: XCTestCase {
         #endif
     }
 
+    /// Runs a tool and reports whether it succeeded (for optional tool features).
+    func runAllowingFailure(_ tool: String, _ arguments: [String]) throws -> Bool {
+        #if os(macOS) || os(Linux)
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: try XCTUnwrap(Self.tool(tool), "\(tool) missing"))
+        process.arguments = arguments
+        process.standardOutput = Pipe()
+        process.standardError = Pipe()
+        try process.run()
+        process.waitUntilExit()
+        return process.terminationStatus == 0
+        #else
+        return false
+        #endif
+    }
+
     struct Generated {
         let privateKey: String
         let publicLine: String   // type + base64, without comment
@@ -133,10 +149,25 @@ final class OpenSSHKeyImportTests: XCTestCase {
         XCTAssertThrowsError(try OpenSSHKeyImport.parse(encrypted.privateKey, passphrase: Self.passphrase)) { XCTAssertEqual($0 as? SSHKeyImportError, .encryptedPEM) }
     }
 
+    /// The same EC key in SEC1 and PKCS#8, made by ssh-keygen, imports to the same key; the
+    /// DER parser does not depend on the platform's PEM support (CryptoKit differs from Linux).
+    func testSEC1AndPKCS8OfTheSameKeyAgree() throws {
+        let sec1 = try keygen("same", type: "ecdsa", bits: 521, extra: ["-m", "PEM"])
+        let path = folder.appendingPathComponent("same").path
+        // Re-export the same private key as PKCS#8 (ssh-keygen -p rewrites it in the chosen format).
+        try run("ssh-keygen", ["-q", "-p", "-N", "", "-P", "", "-m", "PKCS8", "-f", path])
+        let pkcs8 = try String(contentsOfFile: path, encoding: .utf8)
+        let a = try OpenSSHKeyImport.parse(sec1.privateKey, passphrase: nil)
+        let b = try OpenSSHKeyImport.parse(pkcs8, passphrase: nil)
+        XCTAssertEqual(a.key, b.key)
+        XCTAssertEqual(try a.key.fingerprint(), sec1.fingerprint)
+    }
+
     func testPKCS8Ed25519FromOpenSSL() throws {
         try XCTSkipUnless(Self.tool("openssl") != nil, "openssl not available")
         let path = folder.appendingPathComponent("ed-openssl.pem").path
-        try run("openssl", ["genpkey", "-algorithm", "ed25519", "-out", path])
+        // macOS ships LibreSSL as /usr/bin/openssl, which cannot make Ed25519 keys.
+        try XCTSkipUnless(try runAllowingFailure("openssl", ["genpkey", "-algorithm", "ed25519", "-out", path]), "this openssl cannot generate Ed25519 keys")
         let pem = try String(contentsOfFile: path, encoding: .utf8)
         let imported = try OpenSSHKeyImport.parse(pem, passphrase: nil)
         XCTAssertEqual(imported.key.algorithm, "ssh-ed25519")
