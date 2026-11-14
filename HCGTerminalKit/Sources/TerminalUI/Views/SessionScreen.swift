@@ -90,6 +90,14 @@ struct SessionHeader: View {
                     Spacer(minLength: 0)
                 }
                 .padding(.horizontal, 6)
+            } else if typeSize.isAccessibilitySize {
+                // Accessibility text sizes: one item per row, nothing truncated.
+                VStack(alignment: .leading, spacing: 6) {
+                    selector
+                    TargetBadge(target: session.target, compact: true)
+                    summary
+                }
+                .padding(.horizontal, 6)
             } else {
                 HStack(spacing: 10) {
                     selector

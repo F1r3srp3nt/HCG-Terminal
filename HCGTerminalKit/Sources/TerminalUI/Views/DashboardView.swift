@@ -194,12 +194,17 @@ struct DashboardPanel<Content: View>: View {
     let symbol: String
     let value: String
     @ViewBuilder var content: Content
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline) {
+            // Title and value side by side; stacked at accessibility sizes so words never break.
+            let layout = typeSize.isAccessibilitySize
+                ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+                : AnyLayout(HStackLayout(alignment: .firstTextBaseline))
+            layout {
                 Label(title, systemImage: symbol).font(.headline).foregroundStyle(HCGPalette.ivory)
-                Spacer(minLength: 8)
+                if !typeSize.isAccessibilitySize { Spacer(minLength: 8) }
                 Text(value).font(.subheadline.monospacedDigit().weight(.semibold)).foregroundStyle(HCGPalette.cyan)
             }
             .accessibilityElement(children: .combine)

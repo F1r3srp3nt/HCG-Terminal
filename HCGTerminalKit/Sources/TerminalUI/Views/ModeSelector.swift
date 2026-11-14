@@ -34,7 +34,7 @@ public struct ModeSelector: View {
     /// fits (narrow iPad sidebars, small phones, large Dynamic Type), so mode names are never
     /// cut off: icons go first, then padding; scaling text down is the last resort.
     enum Density {
-        case full, noIcons, tight
+        case full, noIcons, tight, stacked
     }
 
     public var body: some View {
@@ -42,6 +42,8 @@ public struct ModeSelector: View {
             track(.full)
             track(.noIcons)
             track(.tight)
+            // Largest accessibility text sizes on narrow screens: one mode per row, full names.
+            stackedTrack
         }
         .sensoryFeedback(.selection, trigger: selection)
         .accessibilityElement(children: .contain)
@@ -52,6 +54,17 @@ public struct ModeSelector: View {
         HStack(spacing: 2) {
             ForEach(ExecutionMode.allCases) { mode in
                 segment(mode, density: density)
+            }
+        }
+        .padding(2)
+        .background(HCGPalette.surfaceElevated, in: trackShape)
+        .overlay(trackShape.stroke(HCGPalette.border, lineWidth: 1))
+    }
+
+    private var stackedTrack: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(ExecutionMode.allCases) { mode in
+                segment(mode, density: .stacked)
             }
         }
         .padding(2)
@@ -84,10 +97,10 @@ public struct ModeSelector: View {
                 }
                 Text(mode.displayName)
                     .font((compact || density == .tight ? Font.footnote : Font.subheadline).weight(.semibold))
-                    .lineLimit(1)
-                    // Only the last layout may shrink text; the others are skipped instead.
+                    .lineLimit(density == .stacked ? nil : 1)
+                    // Only the tight layout may shrink text; the others are skipped instead.
                     .minimumScaleFactor(density == .tight ? 0.8 : 1)
-                    .fixedSize(horizontal: density != .tight, vertical: true)
+                    .fixedSize(horizontal: density != .tight && density != .stacked, vertical: true)
                 if available == false {
                     Image(systemName: "lock.fill")
                         .font(.caption2.weight(.semibold))
@@ -98,6 +111,7 @@ public struct ModeSelector: View {
             .foregroundStyle(selected ? Color.black.opacity(0.85) : HCGPalette.ivory.opacity(0.8))
             .padding(.horizontal, density == .tight ? 8 : (compact ? 12 : 14))
             .frame(minHeight: 44)
+            .frame(maxWidth: density == .stacked ? .infinity : nil, alignment: .leading)
             .background {
                 if selected {
                     thumbShape
