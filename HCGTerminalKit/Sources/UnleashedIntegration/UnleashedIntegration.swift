@@ -72,6 +72,7 @@ actor UnleashedToolsAdapter: UnleashedTools {
     func authorizedPackageCommand(_ request: PackageRequest) async throws -> String {
         let action: PackageAction = switch request {
         case .install(let name): .install(name)
+        case .installFile(let path): .installFile(path)
         case .remove(let name): .remove(name)
         case .refreshIndexes: .refreshIndexes
         }

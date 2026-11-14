@@ -43,9 +43,16 @@ public enum BuildSystem: Codable, Hashable, Sendable {
     case xcodeProject(name: String, scheme: String, destination: XcodeDestination)
     case xcodeWorkspace(name: String, scheme: String, destination: XcodeDestination)
     case dotnet(target: String?)
+    /// `make package` with Theos. HCG Executable Maker has no Theos pipeline, so Terminal runs
+    /// the project's own Makefile.
+    case theos
+    /// A build through HCG Executable Maker's engine (its `mobile-build` CLI) on the host.
+    case executableMaker(ExecutableMakerBuild)
 
     public var label: String {
         switch self {
+        case .theos: "Theos package"
+        case .executableMaker(let build): "Executable Maker · \(build.output.label)" + (build.scheme.map { " · \($0)" } ?? "")
         case .swiftPackage: "Swift package"
         case .xcodeProject(let name, let scheme, _): "\(name) · \(scheme)"
         case .xcodeWorkspace(let name, let scheme, _): "\(name) · \(scheme)"
@@ -133,7 +140,8 @@ public enum BuildPlanner {
         projectPath: String,
         system: BuildSystem,
         action: BuildAction,
-        configuration: BuildConfiguration = .debug
+        configuration: BuildConfiguration = .debug,
+        gnuMake: String? = nil
     ) throws -> BuildPlan {
         let command: String
         switch system {
@@ -162,6 +170,15 @@ public enum BuildPlanner {
             case .test: command = "dotnet test\(targetArgument) -c \(configuration.rawValue)"
             case .clean: command = "dotnet clean\(targetArgument) -c \(configuration.rawValue)"
             }
+        case .theos:
+            let make = ShellQuote.quote(gnuMake ?? "make")
+            switch action {
+            case .build, .test: command = "\(make) package" + (configuration == .release ? " FINALPACKAGE=1" : "")
+            case .clean: command = "\(make) clean"
+            }
+        case .executableMaker(let build):
+            guard action == .build else { throw BuildPlanError.unsupported("HCG Executable Maker builds; it does not run tests or clean.") }
+            command = try ExecutableMakerCLI.command(build, configuration: configuration)
         }
         try PublishingGuard.check(command)
         return BuildPlan(
@@ -169,6 +186,16 @@ public enum BuildPlanner {
             action: action, configuration: configuration, commandLine: command,
             remoteCommand: RemoteProcessMarker.command + RemoteShell.login(RemoteShell.inDirectory(projectPath, command + " 2>&1"))
         )
+    }
+
+    /// The command a detached job runs (inside the login shell, from the project folder).
+    /// `$HCG_JOB_DIR` is the job's folder on the host.
+    public static func jobCommand(for plan: BuildPlan) -> String {
+        if case .executableMaker(let build) = plan.system {
+            // Executable Maker imports the project folder and builds a copy, from its own checkout.
+            return "HCG_PROJECT_DIR=\"$PWD\" && cd \(RemoteShell.quotePath(build.toolPath)) && \(plan.commandLine)"
+        }
+        return plan.commandLine
     }
 
     /// A user-written command (for example a test script). Still goes through the guard.

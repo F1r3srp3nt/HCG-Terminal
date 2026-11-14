@@ -291,6 +291,8 @@ public enum ArtifactDiscovery {
         case .swiftPackage: [".build/\(plan.configuration.rawValue.lowercased())"]
         case .xcodeProject, .xcodeWorkspace: ["\(BuildPlanner.derivedDataPath)/Build/Products"]
         case .dotnet: ["bin/\(plan.configuration.rawValue)", "."]
+        case .theos: ["packages"]
+        case .executableMaker: []
         }
     }
 
@@ -304,6 +306,10 @@ public enum ArtifactDiscovery {
             filter = "-maxdepth 2 \\( -name '*.app' -o -name '*.ipa' -o -name '*.xcarchive' -o -name '*.framework' -o -name '*.appex' \\) -prune"
         case .dotnet:
             filter = "-maxdepth 5 -path '*/bin/*' \\( -name '*.dll' -o -name '*.exe' -o -name '*.nupkg' \\) -type f"
+        case .theos:
+            filter = "-maxdepth 1 -name '*.deb' -type f"
+        case .executableMaker:
+            filter = "-maxdepth 0"
         }
         return RemoteShell.inDirectory(plan.projectPath, "for r in \(roots); do [ -d \"$r\" ] && find -H \"$r\" -mindepth 1 \(filter) -print 2>/dev/null; done | head -200 | while IFS= read -r p; do if [ -d \"$p\" ]; then t=d; else t=f; fi; printf '%s\\t%s\\n' \"$t\" \"$(cd \"$(dirname \"$p\")\" && pwd)/$(basename \"$p\")\"; done")
     }

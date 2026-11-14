@@ -99,6 +99,8 @@ public struct PackageInventoryRows: Hashable, Sendable {
 
 public enum PackageRequest: Hashable, Sendable {
     case install(String)
+    /// Install a .deb file on this device (a downloaded build artifact).
+    case installFile(String)
     case remove(String)
     case refreshIndexes
 }

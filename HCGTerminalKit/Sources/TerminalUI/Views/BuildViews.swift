@@ -96,6 +96,7 @@ struct BuildPlanSheet: View {
             guard !scheme.isEmpty else { throw BuildPlanError.unsupported("Choose a scheme.") }
             system = .xcodeWorkspace(name: name, scheme: scheme, destination: destinationValue)
         case .dotnetSolution(let name), .dotnetProject(let name): system = .dotnet(target: name)
+        case .theos: system = .theos
         }
         return try BuildPlanner.plan(host: host, projectPath: projectPath, system: system, action: action, configuration: configuration)
     }
@@ -140,6 +141,7 @@ struct BuildsView: View {
                         }
                     } header: { Text("Running") }
                 }
+                JobsSection()
                 Section("History") {
                     ForEach(builds.runs) { run in
                         NavigationLink { BuildRunDetailView(run: run) } label: { BuildRunRow(run: run) }
@@ -150,12 +152,13 @@ struct BuildsView: View {
         }
         .hcgScreenBackground()
         .overlay {
-            if builds.runs.isEmpty && builds.activePlan == nil {
-                HCGEmptyState("No Builds Yet", systemImage: "hammer", description: Text("Open Hosts & Projects, browse to a project and choose Build & Test."))
+            if builds.runs.isEmpty && builds.activePlan == nil && model.devTools.jobs.isEmpty {
+                HCGEmptyState("No Builds Yet", systemImage: "hammer", description: Text("Open Hosts & Projects, browse to a project, run Doctor and choose Build & Install."))
             }
         }
         .navigationTitle("Builds & Tests")
-        .refreshable { await builds.reload() }
+        .refreshable { await builds.reload(); await model.devTools.reload() }
+        .task { await model.devTools.reload() }
     }
 }
 

@@ -54,6 +54,20 @@ Legend: ✅ done and covered by automated checks · 🧪 done, verified only in 
 - 🧪 Background system, edge-lit panels, compact terminal header and frame, themed key row, empty states, document surfaces, reduced iPhone banner, Appearance settings (Event Horizon / Classic, background detail, ambient motion). Checked in Simulator screenshots in CI (both builds, small iPhone, iPad, landscape, large text, Increase Contrast); not on a device.
 - 📱 Device check: Reduce Motion and Reduce Transparency system switches, ambient motion on and off in Low Power Mode, key row feel and pressed states, ProMotion scrolling with long output.
 
+### Developer tools: Doctor, Build & Install, Log Console (see `DEV_TOOLS.md`)
+- ✅ Doctor: read-only probe in the login shell; checks for Xcode, SDKs, schemes, effective deployment target, Executable Maker, .NET/global.json, Theos, GNU Make, ldid, dpkg-deb, signing and disk. Distinguishes not installed / not found in this environment / incompatible. Rules are unit tested; the probe runs for real locally and over OpenSSH and is shown to change nothing.
+- ✅ Detached build jobs on the host: idempotent start, one build per project, cancel, resume at the stored offset after a disconnection, outcome only from the host's exit status. Tested locally and over OpenSSH, including dropping the connection mid-build.
+- ✅ iOS builds through HCG Executable Maker's mobile-build CLI (its own engine and history); Theos `make package`; existing direct builds. Artifact manifest with SHA-256, verified downloads.
+- ✅ Log Console: redaction before storage and export, structural severity, first failure with context, bounded buffer, pause, search, filters, copy, export.
+- ✅ Install handoff rules (Simulator, devicectl, `.deb` through Unleashed's approved package workflow, desktop host) unit tested; outcomes reported only from the host's confirmation.
+- 🧪 Screens compiled and screenshotted in the Simulator with synthetic sample data.
+- 📱 **Needs your Mac / devices:**
+  - [ ] An Executable Maker build of a real project, with its artifact downloaded.
+  - [ ] Simulator install and launch from the phone.
+  - [ ] A `devicectl` install on your iPhone through the Mac.
+  - [ ] A Theos build with your toolchain.
+  - [ ] A `.deb` handed to dpkg on your jailbroken device.
+
 ## Remaining milestones
 
 ### Device verification 📱
@@ -65,7 +79,8 @@ Legend: ✅ done and covered by automated checks · 🧪 done, verified only in 
 - [ ] Unleashed `.deb` install (**needs your jailbreak, iOS version and bootstrap**): shell test, PTY, programs, packages, write test, approval prompts, switches turned off while a shell runs.
 
 ### Product
-- [ ] Remote builds against a real Mac (`xcodebuild`, simulators) and Windows / .NET hosts.
+- [ ] Remote builds against a real Mac (`xcodebuild`, simulators) and Windows / .NET hosts. The job runner needs a POSIX shell, so Windows hosts need WSL or a Linux/macOS build host.
+- [ ] Executable Maker: a machine-readable (`--json`) mode for its mobile-build CLI would replace the text parsing in `ExecutableMakerCLI.parse`; desktop, Swift and Electron builds have no CLI there yet.
 - [x] Private-key import (see `REMOTE.md`). ✅ Ed25519 and ECDSA P-256/384/521, in OpenSSH format (unencrypted, or passphrase-protected with aes128/192/256-ctr or aes128/256-gcm) and PEM/PKCS#8. Keys made by `ssh-keygen` are tested, and imported keys sign in to a real OpenSSH server. RSA and DSA keys are refused with an explanation. 🧪 Import sheet compiled in CI; 📱 not tried on a device.
 - [x] SFTP transfers (Remote Files). ✅ Browse, download to the workspace, upload from the workspace, new folder and delete (with confirmation) are tested against OpenSSH. Transfers are pipelined, verified, cancellable and leave nothing behind. 🧪 Screen compiled in CI; 📱 not tried on a device.
 - [x] Per-host "Allow builds and tests" switch. ✅ Enforced by the build orchestrator; a host with builds off is never connected to for a build. Hosts saved earlier keep builds allowed.

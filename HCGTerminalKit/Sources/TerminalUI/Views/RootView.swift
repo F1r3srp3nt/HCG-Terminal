@@ -13,6 +13,7 @@ enum SidebarItem: Hashable {
     case hosts
     case builds
     case artifacts
+    case logConsole
     case unleashedTools
     case preferences
     case diagnostics
@@ -35,6 +36,8 @@ public struct RootView: View {
     #if DEBUG
     @State private var smokeEditorPath: WorkspacePath?
     @State private var smokeKeyImport = false
+    @State private var smokeDoctorHost: HostProfile?
+    @State private var smokeJob: SmokeJobID?
     #endif
 
     public init(model: TerminalAppModel) {
@@ -107,6 +110,16 @@ public struct RootView: View {
             Text(model.errorMessage ?? "")
         }
         #if DEBUG
+        .sheet(item: $smokeDoctorHost) { host in
+            NavigationStack { DoctorView(host: host, projectPath: "~/Developer/Sample App", project: .xcodeProject("SampleApp.xcodeproj")) }
+                .environment(model)
+                .environment(\.hcgAppearance, model.appearance)
+        }
+        .sheet(item: $smokeJob) { item in
+            NavigationStack { JobDetailView(jobID: item.id) }
+                .environment(model)
+                .environment(\.hcgAppearance, model.appearance)
+        }
         .sheet(isPresented: $smokeKeyImport) {
             NavigationStack { KeyImportSheet() }
                 .environment(model)
@@ -180,6 +193,7 @@ public struct RootView: View {
                     NavigationLink(value: SidebarItem.hosts) { Label("Hosts & Projects", systemImage: "server.rack") }
                     NavigationLink(value: SidebarItem.builds) { Label("Builds & Tests", systemImage: "hammer") }
                     NavigationLink(value: SidebarItem.artifacts) { Label("Artifacts", systemImage: "shippingbox") }
+                    NavigationLink(value: SidebarItem.logConsole) { Label("Log Console", systemImage: "text.alignleft") }
                 } header: { Eyebrow("Remote development") }
 
                 Section {
@@ -261,6 +275,7 @@ public struct RootView: View {
         case .hosts: NavigationStack { HostsView() }
         case .builds: NavigationStack { BuildsView() }
         case .artifacts: NavigationStack { ArtifactsView() }
+        case .logConsole: NavigationStack { LogConsoleView() }
         case .unleashedTools: NavigationStack { UnleashedToolsView() }
         case .preferences: NavigationStack { PreferencesView() }
         case .diagnostics: NavigationStack { DiagnosticsView() }
@@ -345,6 +360,17 @@ public struct RootView: View {
             smokeEditorPath = path
         case "new-remote": showNewRemote = true
         case "key-import": smokeKeyImport = true
+        case "doctor", "job", "console":
+            Task {
+                let host = HostProfile(name: "Build Mac (sample)", hostname: "mac.local", username: "dev", auth: .password)
+                await model.saveHost(host, password: nil)
+                let job = await model.devTools.seedSmokeSample(host: host)
+                switch scenario {
+                case "doctor": smokeDoctorHost = host
+                case "job": smokeJob = SmokeJobID(id: job)
+                default: selection = .logConsole
+                }
+            }
         case "no-session":
             selection = .session(SessionID())
             compactColumn = .detail
@@ -364,6 +390,8 @@ public struct RootView: View {
 }
 
 #if DEBUG
+struct SmokeJobID: Identifiable { let id: UUID }
+
 /// Synthetic terminal output for the CI screenshots (Debug builds only).
 enum SmokeTerminalContent {
     private static let esc = "\u{1B}["

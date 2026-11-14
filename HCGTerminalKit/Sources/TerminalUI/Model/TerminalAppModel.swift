@@ -112,6 +112,8 @@ public final class TerminalAppModel {
 
     // MARK: Remote development
     public private(set) var builds: BuildCenter!
+    /// Doctor, detached build jobs, the Log Console and install handoff.
+    public private(set) var devTools: DevToolsCenter!
 
     // MARK: Capabilities & Access
     /// Mirror of the access switches for the interface. The services read the policy itself.
@@ -142,6 +144,22 @@ public final class TerminalAppModel {
             }
             return try await self.connection(for: host)
         }
+        self.devTools = DevToolsCenter(
+            dependencies: dependencies,
+            connect: { [weak self] hostID in
+                guard let self, let host = self.hosts.first(where: { $0.id == hostID }) else { throw RemoteSessionError.unknownHost }
+                return try await self.connection(for: host)
+            },
+            hostFor: { [weak self] hostID in self?.hosts.first { $0.id == hostID } },
+            hostAllowsBuilds: { [weak self] hostID in
+                let saved = await dependencies.hostStore.all().first { $0.id == hostID }
+                return saved?.remoteBuildsAllowed ?? self?.hosts.first { $0.id == hostID }?.remoteBuildsAllowed ?? false
+            },
+            knownSecrets: { hostID in
+                // The host's saved password is removed from any log it appears in.
+                (try? dependencies.credentials.load(.hostPassword(hostID))).flatMap { $0 }.map { [String(decoding: $0, as: UTF8.self)] } ?? []
+            }
+        )
         self.builds.onRunFinished = { @MainActor [weak self] run in
             guard case .failed(let status) = run.status else {
                 if run.status == .succeeded { self?.recordVerification(.buildOrchestration, observation: "\(run.plan.title) on \(run.plan.hostName) finished (exit 0).") }
@@ -159,6 +177,7 @@ public final class TerminalAppModel {
         hosts = await dependencies.hostStore.all()
         keys = dependencies.keyManager.list()
         await builds.reload()
+        await devTools.resumeActiveJobs()
         await refreshCapabilities()
         await refreshAssessment()
         if preferredMode != .vanilla, !isAvailable(preferredMode) {

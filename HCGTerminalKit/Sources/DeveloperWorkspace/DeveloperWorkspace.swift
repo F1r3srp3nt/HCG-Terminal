@@ -26,8 +26,11 @@ public struct HostProfile: Codable, Hashable, Sendable, Identifiable {
     /// addition to the global "Remote builds and tests" switch; shells and file transfers are not
     /// affected.
     public var remoteBuildsAllowed: Bool
+    /// HCG Executable Maker's source checkout on this host, when it is not in a usual place.
+    /// Doctor also looks in ~/HCG-Executable-Maker and similar folders.
+    public var executableMakerPath: String?
 
-    public init(id: UUID = UUID(), name: String, hostname: String, port: Int = 22, username: String, auth: HostAuthMethod, projectsPath: String? = nil, remoteBuildsAllowed: Bool = true) {
+    public init(id: UUID = UUID(), name: String, hostname: String, port: Int = 22, username: String, auth: HostAuthMethod, projectsPath: String? = nil, remoteBuildsAllowed: Bool = true, executableMakerPath: String? = nil) {
         self.id = id
         self.name = name
         self.hostname = hostname
@@ -36,9 +39,10 @@ public struct HostProfile: Codable, Hashable, Sendable, Identifiable {
         self.auth = auth
         self.projectsPath = projectsPath
         self.remoteBuildsAllowed = remoteBuildsAllowed
+        self.executableMakerPath = executableMakerPath
     }
 
-    private enum CodingKeys: String, CodingKey { case id, name, hostname, port, username, auth, projectsPath, remoteBuildsAllowed }
+    private enum CodingKeys: String, CodingKey { case id, name, hostname, port, username, auth, projectsPath, remoteBuildsAllowed, executableMakerPath }
 
     /// Hosts saved by earlier versions (without `remoteBuildsAllowed`) keep builds allowed.
     public init(from decoder: Decoder) throws {
@@ -51,6 +55,7 @@ public struct HostProfile: Codable, Hashable, Sendable, Identifiable {
         auth = try container.decode(HostAuthMethod.self, forKey: .auth)
         projectsPath = try container.decodeIfPresent(String.self, forKey: .projectsPath)
         remoteBuildsAllowed = try container.decodeIfPresent(Bool.self, forKey: .remoteBuildsAllowed) ?? true
+        executableMakerPath = try container.decodeIfPresent(String.self, forKey: .executableMakerPath)
     }
 
     public var endpoint: RemoteEndpoint {
@@ -137,6 +142,8 @@ public enum ProjectKind: Hashable, Sendable {
     case xcodeWorkspace(String)
     case dotnetSolution(String)
     case dotnetProject(String)
+    /// A Theos project: a Makefile next to a Debian `control` file.
+    case theos
 
     public var label: String {
         switch self {
@@ -145,6 +152,7 @@ public enum ProjectKind: Hashable, Sendable {
         case .xcodeWorkspace(let name): "Xcode workspace · \(name)"
         case .dotnetSolution(let name): ".NET solution · \(name)"
         case .dotnetProject(let name): ".NET project · \(name)"
+        case .theos: "Theos project"
         }
     }
 }
@@ -165,6 +173,8 @@ public enum ProjectDetector {
                 break
             }
         }
+        let names = Set(entries.filter { $0.kind != .directory }.map(\.name))
+        if names.contains("Makefile"), names.contains("control") { kinds.append(.theos) }
         return kinds
     }
 }

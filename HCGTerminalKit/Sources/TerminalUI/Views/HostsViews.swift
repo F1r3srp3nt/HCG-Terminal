@@ -142,6 +142,9 @@ struct HostEditor: View {
 
                 Section {
                     Toggle("Allow builds and tests", isOn: $host.remoteBuildsAllowed)
+                    if host.remoteBuildsAllowed {
+                        field("Executable Maker folder", text: Binding(get: { host.executableMakerPath ?? "" }, set: { host.executableMakerPath = $0.isEmpty ? nil : $0 }), prompt: "~/HCG-Executable-Maker (optional)", issue: nil)
+                    }
                 } footer: {
                     Text(host.remoteBuildsAllowed
                         ? "Builds & Tests can run commands on this host (also governed by Remote builds and tests in Capabilities & Access)."
@@ -349,7 +352,13 @@ struct RemoteBrowserView: View {
                 if !projects.isEmpty {
                     Section {
                         ForEach(projects, id: \.self) { project in
-                            Button { planning = project } label: { Label(project.label, systemImage: "hammer") }
+                            NavigationLink { DoctorView(host: host, projectPath: directory, project: project) } label: {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Label("Doctor · Build & Install", systemImage: "stethoscope")
+                                    Text(project.label).font(.caption).foregroundStyle(HCGPalette.textSecondary)
+                                }
+                            }
+                            Button { planning = project } label: { Label("Quick Build & Test · \(project.label)", systemImage: "hammer") }
                                 .disabled(!buildsAllowed)
                         }
                         Button { Task { await model.openClaudeCode(host, projectPath: directory) } } label: {

@@ -133,11 +133,14 @@ let package = Package(
         ),
         .testTarget(
             name: "DeveloperToolsTests",
-            dependencies: ["DeveloperWorkspace", "BuildOrchestrator", "ArtifactManager", "FileWorkspace", "TerminalCore"]
+            dependencies: ["DeveloperWorkspace", "BuildOrchestrator", "ArtifactManager", "FileWorkspace", "TerminalCore", "Diagnostics", "TerminalTestSupport"]
         ),
         .testTarget(
             name: "TerminalUITests",
-            dependencies: ["TerminalUI", "TerminalCore", "TerminalCapabilityProvider", "TerminalSecurity", "FileWorkspace", "LocalCommandEngine"]
+            dependencies: [
+                "TerminalUI", "TerminalCore", "TerminalCapabilityProvider", "TerminalSecurity", "FileWorkspace", "LocalCommandEngine",
+                "BuildOrchestrator", "DeveloperWorkspace", "Diagnostics", "ArtifactManager",
+            ]
         ),
     ],
     swiftLanguageModes: [.v6]
