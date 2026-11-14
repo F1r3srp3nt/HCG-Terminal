@@ -64,9 +64,23 @@ struct TerminalHeroHeader: View {
             }
         }
         .aspectRatio(CGFloat(TerminalHeroLayout.aspectRatio), contentMode: .fit)
-        // Dark theme: the artwork's near-black edges fade into the screen background, so no box
-        // is visible. Light theme: it sits on its own dark plate in the artwork's edge colour.
-        .mask { if colorScheme == .dark { HeroEdgeFade() } else { Rectangle() } }
+        // Dark theme: the artwork's near-black plate is masked away, so no box is visible. Light theme: it sits on its own dark plate in the artwork's edge colour.
+        .mask {
+            if colorScheme != .dark {
+                Rectangle()
+            } else if playback.showsVideo {
+                HeroEdgeFade()
+            } else {
+                // The artwork's own brightness as its opacity: the near-black plate becomes
+                // transparent, so the lettering and its light sit directly on the Event Horizon
+                // background with no visible rectangle.
+                Image("TerminalHero")
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .luminanceToAlpha()
+                    .mask { HeroEdgeFade() }
+            }
+        }
         .background { if colorScheme != .dark { Self.edgeColor } }
         .clipShape(RoundedRectangle(cornerRadius: colorScheme == .dark ? 0 : 12, style: .continuous))
         .frame(maxWidth: CGFloat(TerminalHeroLayout.maxWidth(compactHeight: verticalSizeClass == .compact, compactWidth: reduced)))

@@ -18,7 +18,7 @@ struct HostsView: View {
                         Button { editing = HostProfile(name: "", hostname: "", username: "", auth: .password) } label: {
                             Label("Add Host", systemImage: "plus")
                         }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(.hcgProminent)
                     }
                 }
                 ForEach(model.hosts) { host in

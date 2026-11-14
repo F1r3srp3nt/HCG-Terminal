@@ -53,18 +53,29 @@ struct DashboardView: View {
     private var header: some View {
         VStack(spacing: 10) {
             if showHeader { TerminalHeroHeader() }
-            HStack(spacing: 8) {
+            // Side by side normally; stacked at accessibility text sizes so words never break.
+            stackedAtLargeText(spacing: 8) {
                 Label("\(model.preferredMode.displayName) mode", systemImage: model.preferredMode == .vanilla ? "iphone" : "bolt.shield")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(ModeAccent.color(model.preferredMode, accent: appearance.accent))
-                Text("·").foregroundStyle(HCGPalette.muted).accessibilityHidden(true)
+                if !typeSize.isAccessibilitySize {
+                    Text("·").foregroundStyle(HCGPalette.muted).accessibilityHidden(true)
+                }
                 Text(model.dependencies.distribution == .standard ? "Standard build" : "Unleashed build")
                     .font(.subheadline)
                     .foregroundStyle(HCGPalette.muted)
-                Spacer(minLength: 0)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityElement(children: .combine)
         }
+    }
+
+    /// An HStack, or a leading-aligned VStack at accessibility text sizes.
+    private func stackedAtLargeText<Content: View>(spacing: CGFloat, @ViewBuilder content: () -> Content) -> some View {
+        let layout = typeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: spacing))
+            : AnyLayout(HStackLayout(spacing: spacing))
+        return layout { content() }
     }
 
     // MARK: Panels
@@ -92,7 +103,7 @@ struct DashboardView: View {
                 }
                 .buttonStyle(.plain)
             }
-            HStack {
+            stackedAtLargeText(spacing: 8) {
                 Button {
                     Task { if let session = await model.openLocalSession() { openSession(session.id) } }
                 } label: { Label("Local", systemImage: "plus") }

@@ -161,6 +161,8 @@ final class TerminalKeyBar: UIInputView {
             hairline.heightAnchor.constraint(equalToConstant: 1),
         ])
         build()
+        // Long press shows the key in the Large Content Viewer at accessibility text sizes.
+        addInteraction(UILargeContentViewerInteraction())
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
@@ -260,6 +262,9 @@ final class TerminalKeyBar: UIInputView {
             button.configuration = configuration
         }
         button.accessibilityLabel = label
+        button.showsLargeContentViewer = true
+        button.largeContentTitle = title ?? label
+        if let symbol { button.largeContentImage = UIImage(systemName: symbol) }
         button.widthAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
         buttons.append(button)
         return button

@@ -437,6 +437,35 @@ struct PrimaryActionLabel: View {
     }
 }
 
+/// Prominent button: the current tint as fill with dark text (white on cyan is too faint).
+/// Disabled: elevated surface with secondary text, so it never looks available.
+struct HCGProminentButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.hcgAppearance) private var appearance
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.body.weight(.semibold))
+            .foregroundStyle(isEnabled ? Color.black.opacity(0.88) : HCGPalette.textSecondary)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .frame(minHeight: 44)
+            .background {
+                let shape = appearance.style == .eventHorizon ? AnyShape(ChamferedRectangle(cut: 8)) : AnyShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                if isEnabled {
+                    shape.fill(.tint).opacity(configuration.isPressed ? 0.75 : 1)
+                } else {
+                    shape.fill(HCGPalette.surfaceElevated)
+                }
+            }
+            .contentShape(Rectangle())
+    }
+}
+
+extension ButtonStyle where Self == HCGProminentButtonStyle {
+    static var hcgProminent: HCGProminentButtonStyle { HCGProminentButtonStyle() }
+}
+
 /// Labels with their icon in a small dark tile. Applied only in Event Horizon (`hcgTileLabels()`).
 struct HCGTileLabelStyle: LabelStyle {
     func makeBody(configuration: Configuration) -> some View {
@@ -492,11 +521,17 @@ struct HeaderIconButton: View {
             Image(systemName: systemImage)
                 .font(.title3)
                 .foregroundStyle(isEnabled ? HCGPalette.silver : HCGPalette.textSecondary.opacity(0.5))
+                // Bar icons stay bar-sized; at accessibility text sizes a long press shows
+                // the Large Content Viewer instead.
+                .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
                 .frame(width: 44, height: 44)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.borderless)
         .accessibilityLabel(label)
+        .accessibilityShowsLargeContentViewer {
+            Label(label, systemImage: systemImage)
+        }
     }
 }
 #endif

@@ -61,6 +61,8 @@ struct SessionHeader: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
+            // Row 1: the name gets all the room the controls leave. Two lines at accessibility
+            // text sizes; VoiceOver always reads the full name.
             HStack(spacing: 2) {
                 if let onBack {
                     HeaderIconButton(systemImage: "chevron.left", label: "Back to sessions", action: onBack)
@@ -68,37 +70,38 @@ struct SessionHeader: View {
                 Text(session.title)
                     .font(.headline)
                     .foregroundStyle(HCGPalette.textPrimary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .padding(.leading, onBack == nil ? 4 : 0)
+                    .lineLimit(typeSize.isAccessibilitySize ? 2 : 1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.leading, onBack == nil ? 6 : 0)
                     .accessibilityLabel("Session: \(session.title)")
                     .accessibilityAddTraits(.isHeader)
-                if !typeSize.isAccessibilitySize {
-                    TargetBadge(target: session.target, compact: true)
-                        .fixedSize()
-                        .padding(.leading, 6)
-                }
-                Spacer(minLength: 4)
-                if sizeClass == .regular { selector.fixedSize().padding(.trailing, 6) }
                 HeaderIconButton(systemImage: "stop.circle", label: "Interrupt (Control-C)") { session.interrupt() }
                     .disabled(!session.isLive)
                 HeaderIconButton(systemImage: "info.circle", label: "Session details") { showDetails = true }
                 HeaderIconButton(systemImage: "xmark", label: "Close session") { confirmClose = true }
             }
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 8) {
-                    if sizeClass != .regular { selector.fixedSize() }
+            // Row 2 (and 3): local mode selector, this session's target, and the summary.
+            if sizeClass == .regular && !typeSize.isAccessibilitySize {
+                HStack(spacing: 10) {
+                    selector.fixedSize()
+                    TargetBadge(target: session.target, compact: true).fixedSize()
                     summary
+                    Spacer(minLength: 0)
                 }
-                VStack(alignment: .leading, spacing: 4) {
-                    if sizeClass != .regular { selector }
-                    summary
+                .padding(.horizontal, 6)
+            } else {
+                HStack(spacing: 10) {
+                    selector
+                    TargetBadge(target: session.target, compact: true).fixedSize()
+                    Spacer(minLength: 0)
                 }
+                .padding(.horizontal, 6)
+                summary.padding(.horizontal, 6)
             }
-            .padding(.horizontal, 4)
-            if expanded { details.padding(.horizontal, 4).padding(.top, 2) }
+            if expanded { details.padding(.horizontal, 6).padding(.top, 2) }
         }
-        .padding(.horizontal, 6)
+        .padding(.horizontal, 4)
         .padding(.top, 2)
         .padding(.bottom, 6)
         .background(HCGPalette.surfaceDeep.opacity(appearance.style == .eventHorizon ? 0.92 : 1))
@@ -136,12 +139,12 @@ struct SessionHeader: View {
                 Text(SessionHeaderSummary.line(state: session.state, target: session.target))
                     .font(.caption)
                     .foregroundStyle(HCGPalette.textSecondary)
-                    .lineLimit(1)
+                    .lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
                 if let note {
                     Label(note, systemImage: availability(model.preferredMode) == false ? "lock.fill" : "info.circle")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(availability(model.preferredMode) == false ? HCGPalette.warn : HCGPalette.textSecondary)
-                        .lineLimit(1)
+                        .lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
                         .layoutPriority(1)
                 }
                 Image(systemName: "chevron.down")
@@ -197,7 +200,7 @@ struct EndedRemoteSessionBanner: View {
             if case .sshCommand = session.backend {
                 Button("Run Again") { Task { await model.runAgain(session) } }.buttonStyle(.bordered)
             }
-            Button("Reconnect") { Task { await model.reconnect(session) } }.buttonStyle(.borderedProminent)
+            Button("Reconnect") { Task { await model.reconnect(session) } }.buttonStyle(.hcgProminent)
         }
         .foregroundStyle(HCGPalette.silver)
         .padding(10)

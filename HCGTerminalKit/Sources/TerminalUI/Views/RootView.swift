@@ -142,9 +142,6 @@ public struct RootView: View {
                 } header: { Eyebrow("Local mode") }
 
                 Section {
-                    NavigationLink(value: SidebarItem.dashboard) {
-                        Label { Text("Dashboard") } icon: { HCGMark(size: 24) }
-                    }
                     ForEach(model.sessions) { session in
                         NavigationLink(value: SidebarItem.session(session.id)) {
                             SessionRow(session: session)
@@ -154,6 +151,11 @@ public struct RootView: View {
                             Button(role: .destructive) { Task { await model.closeSession(session.id) } } label: { Label("Close", systemImage: "xmark") }
                         }
                     }
+                    if model.sessions.isEmpty {
+                        Text("No sessions yet. Start one with New Session.")
+                            .font(.footnote)
+                            .foregroundStyle(HCGPalette.textSecondary)
+                    }
                     if model.sessions.contains(where: { !$0.isLive }) {
                         Button(role: .destructive) { Task { await model.closeEndedSessions() } } label: {
                             Label("Close Ended Sessions", systemImage: "xmark.circle")
@@ -162,6 +164,9 @@ public struct RootView: View {
                 } header: { Eyebrow("Sessions") }
 
                 Section {
+                    NavigationLink(value: SidebarItem.dashboard) {
+                        Label { Text("Dashboard") } icon: { HCGMark(size: 24) }
+                    }
                     NavigationLink(value: SidebarItem.files) { Label("File Command", systemImage: "folder.badge.gearshape") }
                 } header: { Eyebrow("Workspace") }
 
@@ -259,7 +264,7 @@ public struct RootView: View {
     private var emptyState: some View {
         HCGEmptyState("No Session Selected", systemImage: nil, description: Text("Open a local \(model.preferredMode.displayName) session or connect to a remote host.")) {
             Button("New Local Session") { Task { await model.openLocalSession() } }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.hcgProminent)
                 .disabled(!model.isAvailable(model.preferredMode))
         }
         .background { HCGBackdrop() }
@@ -312,14 +317,15 @@ public struct RootView: View {
             // Synthetic output fed to the real renderer: long scrollback, then 16/256/true colour
             // foregrounds and backgrounds and text attributes.
             if let session = await model.openLocalSession(mode: .vanilla) {
-                try? await Task.sleep(nanoseconds: 700_000_000)
+                // After the shell's own banner, so the sample is drawn last.
+                try? await Task.sleep(nanoseconds: 1_600_000_000)
                 session.handle(.output(SmokeTerminalContent.ansi()))
             }
         case "fullscreen":
             // A full-screen program's drawing (alternate screen, cursor addressing, background
             // fills to the line end), fed to the real renderer.
             if let session = await model.openLocalSession(mode: .vanilla) {
-                try? await Task.sleep(nanoseconds: 700_000_000)
+                try? await Task.sleep(nanoseconds: 1_600_000_000)
                 session.handle(.output(SmokeTerminalContent.fullScreen()))
             }
         case "unleashed-checks":
@@ -393,8 +399,8 @@ enum SmokeTerminalContent {
             s += "\(esc)\(offset + 3);2H\(style)\(line)\(esc)K\(esc)0m"
         }
         s += "\(esc)10;2H┌──────────────────────────┐"
-        s += "\(esc)11;2H│ \(esc)32m●\(esc)0m alternate screen active │"
-        s += "\(esc)12;2H│ \(esc)41;97m ERR \(esc)0m \(esc)43;30m WARN \(esc)0m \(esc)42;30m OK \(esc)0m     │"
+        s += "\(esc)11;2H│ \(esc)32m*\(esc)0m alternate screen active│"
+        s += "\(esc)12;2H│ \(esc)41;97m ERR \(esc)0m \(esc)43;30m WARN \(esc)0m \(esc)42;30m OK \(esc)0m        │"
         s += "\(esc)13;2H└──────────────────────────┘"
         s += "\(esc)999;1H\(esc)7m q quit  ↑↓ select  / search \(esc)K\(esc)0m"
         return Array(s.utf8)

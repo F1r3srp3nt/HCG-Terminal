@@ -232,6 +232,8 @@ jobs:
           echo "UDID=$UDID" >> "$GITHUB_ENV"
           xcrun simctl boot "$UDID" || true
           xcrun simctl bootstatus "$UDID" -b
+          # Keep the one-time "slide to type" keyboard tip out of the terminal screenshots.
+          xcrun simctl spawn "$UDID" defaults write com.apple.Preferences DidShowContinuousPathIntroduction -bool true || true
 
       - name: Build both apps for the simulator (Debug)
         run: |
@@ -242,6 +244,7 @@ jobs:
           done
 
       - name: Launch smoke (both variants, screenshots)
+        timeout-minutes: 15
         run: |
           mkdir -p shots; status=0
           for scheme in HCGTerminal HCGTerminalUnleashed; do
@@ -265,20 +268,21 @@ jobs:
           exit $status
 
       - name: Event Horizon states (terminal, sheets, appearance, accessibility, landscape)
+        timeout-minutes: 20
         run: |
           mkdir -p shots/eh; status=0
-          # Keep the one-time "slide to type" keyboard tip out of the terminal screenshots.
-          xcrun simctl spawn "$UDID" defaults write com.apple.Preferences DidShowContinuousPathIntroduction -bool true || true
-          xcrun simctl spawn "$UDID" defaults write com.apple.keyboard.preferences DidShowContinuousPathIntroduction -bool true || true
+          # Every simulator command gets a time limit, so one stuck call fails one shot only.
+          t() { local limit=$1; shift; perl -e 'alarm shift; exec @ARGV' "$limit" "$@"; }
           shot() { # shot <scheme> <name> <args...>
             local scheme=$1 name=$2; shift 2
             local app="$RUNNER_TEMP/DDsim/Build/Products/Debug-iphonesimulator/$scheme.app"
             local bundle; bundle=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Info.plist")
-            xcrun simctl terminate "$UDID" "$bundle" 2>/dev/null || true
-            xcrun simctl launch "$UDID" "$bundle" "$@" >/dev/null
+            echo "$(date +%T) $scheme $name"
+            t 30 xcrun simctl terminate "$UDID" "$bundle" 2>/dev/null || true
+            if ! t 60 xcrun simctl launch "$UDID" "$bundle" "$@" >/dev/null; then echo "FAIL: $scheme $name (launch did not return)"; status=1; return; fi
             sleep 7
-            xcrun simctl io "$UDID" screenshot "shots/eh/$scheme-$name.png" >/dev/null
-            if xcrun simctl spawn "$UDID" launchctl list | grep -q "UIKitApplication:$bundle"; then
+            t 30 xcrun simctl io "$UDID" screenshot "shots/eh/$scheme-$name.png" >/dev/null || echo "NOTE: screenshot timed out for $name"
+            if t 30 xcrun simctl spawn "$UDID" launchctl list | grep -q "UIKitApplication:$bundle"; then
               echo "PASS: $scheme $name"
             else
               echo "FAIL: $scheme $name (not running)"; status=1
@@ -292,33 +296,37 @@ jobs:
             shot HCGTerminalUnleashed "$scenario" -HCGSmokeScenario "$scenario"
           done
           shot HCGTerminal session-keyboard-hidden -HCGSmokeScenario session -HCGSmokeKeyboardHidden
-          shot HCGTerminal landscape-launch -HCGSmokeScenario launch -HCGSmokeLandscape
-          shot HCGTerminal landscape-session -HCGSmokeScenario ansi -HCGSmokeLandscape
-          shot HCGTerminalUnleashed landscape-session -HCGSmokeScenario session -HCGSmokeLandscape
 
           # System accessibility settings in the simulator (real system values, not app flags).
-          if xcrun simctl ui "$UDID" content_size accessibility-extra-extra-extra-large; then
+          if t 30 xcrun simctl ui "$UDID" content_size accessibility-extra-extra-extra-large; then
             for scenario in launch session dashboard settings long-name; do
               shot HCGTerminal "ax-text-$scenario" -HCGSmokeScenario "$scenario"
             done
             shot HCGTerminalUnleashed ax-text-unleashed-checks -HCGSmokeScenario unleashed-checks
-            xcrun simctl ui "$UDID" content_size large || true
+            t 30 xcrun simctl ui "$UDID" content_size large || true
           else
             echo "NOTE: content_size is not supported by this simctl; large-text screenshots skipped"
           fi
-          if xcrun simctl ui "$UDID" increase_contrast enabled; then
+          if t 30 xcrun simctl ui "$UDID" increase_contrast enabled; then
             for scenario in launch session dashboard; do
               shot HCGTerminal "contrast-$scenario" -HCGSmokeScenario "$scenario"
             done
-            xcrun simctl ui "$UDID" increase_contrast disabled || true
+            t 30 xcrun simctl ui "$UDID" increase_contrast disabled || true
           else
             echo "NOTE: increase_contrast is not supported by this simctl; contrast screenshots skipped"
           fi
+
+          # Landscape last: the simulator stays rotated afterwards.
+          shot HCGTerminal landscape-launch -HCGSmokeScenario launch -HCGSmokeLandscape
+          shot HCGTerminal landscape-session -HCGSmokeScenario ansi -HCGSmokeLandscape
+          shot HCGTerminalUnleashed landscape-session -HCGSmokeScenario session -HCGSmokeLandscape
           exit $status
 
       - name: Small iPhone and iPad (header layout, terminal, editor; both variants)
+        timeout-minutes: 20
         run: |
           mkdir -p shots; status=0
+          t() { local limit=$1; shift; perl -e 'alarm shift; exec @ARGV' "$limit" "$@"; }
           pick() { xcrun simctl list devices available -j | python3 -c "
           import json,sys,re
           d=json.load(sys.stdin)['devices']
@@ -333,29 +341,28 @@ jobs:
             read -r udid name < <(pick $kind) || true
             [ -n "${udid:-}" ] || { echo "No $kind simulator available"; continue; }
             echo "== $kind: $name"
-            xcrun simctl boot "$udid" || true; xcrun simctl bootstatus "$udid" -b >/dev/null
+            t 120 xcrun simctl boot "$udid" || true; t 300 xcrun simctl bootstatus "$udid" -b >/dev/null || true
+            t 30 xcrun simctl spawn "$udid" defaults write com.apple.Preferences DidShowContinuousPathIntroduction -bool true || true
             for scheme in HCGTerminal HCGTerminalUnleashed; do
               app="$RUNNER_TEMP/DDsim/Build/Products/Debug-iphonesimulator/$scheme.app"
               bundle=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Info.plist")
-              xcrun simctl install "$udid" "$app"
-              xcrun simctl spawn "$udid" defaults write com.apple.Preferences DidShowContinuousPathIntroduction -bool true || true
-              for scenario in launch session long-name dashboard editor; do
-                [ "$scheme" = HCGTerminalUnleashed ] && [ "$scenario" != launch ] && [ "$scenario" != session ] && continue
-                xcrun simctl terminate "$udid" "$bundle" 2>/dev/null || true
-                xcrun simctl launch "$udid" "$bundle" -HCGSmokeScenario $scenario >/dev/null; sleep 7
-                suffix=$([ "$scenario" = launch ] && echo home || echo "$scenario")
-                xcrun simctl io "$udid" screenshot "shots/$name-$scheme-$suffix.png" >/dev/null
-                if xcrun simctl spawn "$udid" launchctl list | grep -q "UIKitApplication:$bundle"; then echo "PASS: $scheme $scenario on $name"; else echo "FAIL: $scheme $scenario not running on $name"; status=1; fi
+              t 120 xcrun simctl install "$udid" "$app"
+              runs="launch session long-name dashboard editor"
+              [ "$scheme" = HCGTerminalUnleashed ] && runs="launch session"
+              [ "$kind" = ipad ] && [ "$scheme" = HCGTerminal ] && runs="$runs landscape"
+              for run in $runs; do
+                echo "$(date +%T) $scheme $run on $name"
+                t 30 xcrun simctl terminate "$udid" "$bundle" 2>/dev/null || true
+                if [ "$run" = landscape ]; then args="-HCGSmokeScenario ansi -HCGSmokeLandscape"; suffix=landscape-session
+                else args="-HCGSmokeScenario $run"; suffix=$([ "$run" = launch ] && echo home || echo "$run"); fi
+                if ! t 60 xcrun simctl launch "$udid" "$bundle" $args >/dev/null; then echo "FAIL: $scheme $run on $name (launch did not return)"; status=1; continue; fi
+                sleep 7
+                t 30 xcrun simctl io "$udid" screenshot "shots/$name-$scheme-$suffix.png" >/dev/null || echo "NOTE: screenshot timed out ($run on $name)"
+                if t 30 xcrun simctl spawn "$udid" launchctl list | grep -q "UIKitApplication:$bundle"; then echo "PASS: $scheme $run on $name"; else echo "FAIL: $scheme $run not running on $name"; status=1; fi
               done
-              if [ "$kind" = ipad ] && [ "$scheme" = HCGTerminal ]; then
-                xcrun simctl terminate "$udid" "$bundle" 2>/dev/null || true
-                xcrun simctl launch "$udid" "$bundle" -HCGSmokeScenario ansi -HCGSmokeLandscape >/dev/null; sleep 7
-                xcrun simctl io "$udid" screenshot "shots/$name-$scheme-landscape-session.png" >/dev/null
-                if xcrun simctl spawn "$udid" launchctl list | grep -q "UIKitApplication:$bundle"; then echo "PASS: $scheme landscape on $name"; else echo "FAIL: $scheme landscape on $name"; status=1; fi
-              fi
-              xcrun simctl terminate "$udid" "$bundle" || true
+              t 30 xcrun simctl terminate "$udid" "$bundle" || true
             done
-            xcrun simctl shutdown "$udid" || true
+            t 60 xcrun simctl shutdown "$udid" || true
           done
           exit $status
 
