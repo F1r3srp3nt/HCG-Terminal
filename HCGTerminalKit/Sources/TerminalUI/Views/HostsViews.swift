@@ -141,6 +141,14 @@ struct HostEditor: View {
                 }
 
                 Section {
+                    Toggle("Allow builds and tests", isOn: $host.remoteBuildsAllowed)
+                } footer: {
+                    Text(host.remoteBuildsAllowed
+                        ? "Builds & Tests can run commands on this host (also governed by Remote builds and tests in Capabilities & Access)."
+                        : "Builds & Tests will not run on this host; nothing is sent. Shells and Remote Files still work.")
+                }
+
+                Section {
                     Picker("Sign in with", selection: $authChoice) {
                         ForEach(AuthChoice.allCases, id: \.self) { Text($0.rawValue) }
                     }
@@ -286,6 +294,9 @@ struct HostDetailView: View {
                     NavigationLink { RemoteBrowserView(host: host, startPath: host.projectsPath ?? "~") } label: {
                         Label("Browse Projects", systemImage: "folder")
                     }
+                    NavigationLink { RemoteFilesView(host: host) } label: {
+                        Label("Remote Files (SFTP)", systemImage: "arrow.up.arrow.down.circle")
+                    }
                     if model.isConnected(host) {
                         Button(role: .destructive) { Task { await model.disconnect(host) } } label: { Label("Disconnect", systemImage: "bolt.slash") }
                     }
@@ -326,17 +337,27 @@ struct RemoteBrowserView: View {
     @State private var loading = false
     @State private var planning: ProjectKind?
 
+    /// The saved host's current setting (the profile passed in may be older).
+    private var buildsAllowed: Bool {
+        (model.hosts.first { $0.id == host.id } ?? host).remoteBuildsAllowed
+    }
+
     var body: some View {
         List {
             Group {
                 let projects = ProjectDetector.detect(entries)
                 if !projects.isEmpty {
-                    Section("Project") {
+                    Section {
                         ForEach(projects, id: \.self) { project in
                             Button { planning = project } label: { Label(project.label, systemImage: "hammer") }
+                                .disabled(!buildsAllowed)
                         }
                         Button { Task { await model.openClaudeCode(host, projectPath: directory) } } label: {
                             Label("Claude Code in This Folder", systemImage: "sparkles")
+                        }
+                    } header: { Text("Project") } footer: {
+                        if !buildsAllowed {
+                            Text("Builds and tests are turned off for \(host.name). Change this in the host's settings.")
                         }
                     }
                 }

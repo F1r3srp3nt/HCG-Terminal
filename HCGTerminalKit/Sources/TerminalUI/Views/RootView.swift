@@ -34,6 +34,7 @@ public struct RootView: View {
     @State private var renameTitle = ""
     #if DEBUG
     @State private var smokeEditorPath: WorkspacePath?
+    @State private var smokeKeyImport = false
     #endif
 
     public init(model: TerminalAppModel) {
@@ -106,6 +107,11 @@ public struct RootView: View {
             Text(model.errorMessage ?? "")
         }
         #if DEBUG
+        .sheet(isPresented: $smokeKeyImport) {
+            NavigationStack { KeyImportSheet() }
+                .environment(model)
+                .environment(\.hcgAppearance, model.appearance)
+        }
         .sheet(isPresented: Binding(get: { smokeEditorPath != nil }, set: { if !$0 { smokeEditorPath = nil } })) {
             if let path = smokeEditorPath {
                 NavigationStack { TextFileEditor(path: path) }
@@ -338,6 +344,7 @@ public struct RootView: View {
             try? model.dependencies.workspace.write("# My workspace\n\nProjects, scripts and notes.\n\nThis file was written by the CI screenshot run.\n", to: path)
             smokeEditorPath = path
         case "new-remote": showNewRemote = true
+        case "key-import": smokeKeyImport = true
         case "no-session":
             selection = .session(SessionID())
             compactColumn = .detail

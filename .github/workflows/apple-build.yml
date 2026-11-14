@@ -6,6 +6,8 @@
 # - Simulator: both apps built for the iOS Simulator and launched into several states (crash check
 #   and screenshots), and the package tests run on the iOS Simulator runtime.
 # - macOS: the HCGTerminalKit package (Darwin code paths) builds and its tests run.
+# - Linux: SSH, SFTP, private-key import and Remote Files tests against a real OpenSSH server
+#   in a disposable container (Scripts/start-test-sshd.sh).
 #
 # No signing identities, profiles or secrets are used, nothing is exported to an IPA, and
 # nothing is uploaded anywhere except these logs as workflow artifacts.
@@ -288,7 +290,7 @@ jobs:
               echo "FAIL: $scheme $name (not running)"; status=1
             fi
           }
-          for scenario in long-name ansi fullscreen editor new-remote no-session hosts builds artifacts tools \
+          for scenario in long-name ansi fullscreen editor new-remote key-import no-session hosts builds artifacts tools \
                           classic-launch classic-session enhanced-launch enhanced-dashboard reduced-launch reduced-session detailoff-session; do
             shot HCGTerminal "$scenario" -HCGSmokeScenario "$scenario"
           done
@@ -430,3 +432,35 @@ jobs:
         with:
           name: logs-macos-package
           path: macos-package-*.log
+
+  linux-ssh:
+    name: Linux · SSH, SFTP and key import against OpenSSH
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    # Root inside the container: the script creates the disposable test user and sshd.
+    container: swift:6.0.3-jammy
+    steps:
+      - uses: actions/checkout@v4
+      - name: OpenSSH server (127.0.0.1:2222, SFTP on), ssh-keygen and openssl
+        run: |
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq openssh-server openssh-client openssl >/dev/null
+          bash Scripts/start-test-sshd.sh
+          ssh -V
+      - name: Build tests
+        working-directory: HCGTerminalKit
+        run: swift build --build-tests -Xlinker --allow-shlib-undefined 2>&1 | tail -3
+      - name: SSH, SFTP, key import and Remote Files tests (real OpenSSH)
+        working-directory: HCGTerminalKit
+        env:
+          HCG_SSH_TEST: "1"
+        run: |
+          set -o pipefail
+          swift test --skip-build --filter "RemoteSSHTests|TerminalSecurityTests|RemoteFilesModelTests|BuildAccessTests" 2>&1 \
+            | tee ../linux-ssh-tests.log | grep -E "Test Case .*(passed|failed|skipped)|error:|Executed [0-9]+ tests" | tail -80
+          if grep -q "skipped" ../linux-ssh-tests.log; then echo "::warning::some SSH tests were skipped"; grep "skipped" ../linux-ssh-tests.log | head; fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: logs-linux-ssh
+          path: linux-ssh-tests.log

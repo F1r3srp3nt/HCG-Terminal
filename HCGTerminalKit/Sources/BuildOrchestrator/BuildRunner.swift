@@ -159,7 +159,9 @@ public actor BuildOrchestrator {
 
     /// Runs `plan`. `onOutput` receives log text as it arrives. Cancelling the calling task
     /// closes the remote channel.
-    public func run(_ plan: BuildPlan, on executor: any RemoteCommandExecuting, onOutput: @escaping @Sendable (String) -> Void = { _ in }) async -> BuildRun {
+    /// `hostAllowsBuilds` is the host's own "Allow builds and tests" setting; a refused run is
+    /// recorded and nothing is sent to the host.
+    public func run(_ plan: BuildPlan, on executor: any RemoteCommandExecuting, hostAllowsBuilds: Bool = true, onOutput: @escaping @Sendable (String) -> Void = { _ in }) async -> BuildRun {
         let id = UUID()
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withFullDate, .withTime, .withColonSeparatorInTime]
@@ -169,6 +171,13 @@ public actor BuildOrchestrator {
         // Nothing is sent to the host while remote builds (or SSH) are turned off.
         if let refusal = access.denial(.remoteBuilds) {
             run.status = .couldNotStart(refusal)
+            run.finishedAt = Date()
+            record(run)
+            return run
+        }
+
+        guard hostAllowsBuilds else {
+            run.status = .couldNotStart("Builds and tests are turned off for \(plan.hostName) in its host settings. Nothing was sent to the host.")
             run.finishedAt = Date()
             record(run)
             return run

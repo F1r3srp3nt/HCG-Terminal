@@ -132,7 +132,11 @@ public final class TerminalAppModel {
         self.preferredMode = dependencies.preferences.preferredMode
         self.accessSettings = dependencies.access.settings
         self.appearance = dependencies.appearance.settings
-        self.builds = BuildCenter(dependencies: dependencies) { [weak self] hostID in
+        self.builds = BuildCenter(dependencies: dependencies, hostAllowsBuilds: { [weak self] hostID in
+            // Read the saved profile, so a change made since the plan was drawn up applies.
+            let saved = await dependencies.hostStore.all().first { $0.id == hostID }
+            return saved?.remoteBuildsAllowed ?? self?.hosts.first { $0.id == hostID }?.remoteBuildsAllowed ?? false
+        }) { [weak self] hostID in
             guard let self, let host = self.hosts.first(where: { $0.id == hostID }) else {
                 throw RemoteSessionError.unknownHost
             }

@@ -66,8 +66,9 @@ Legend: ✅ done and covered by automated checks · 🧪 done, verified only in 
 
 ### Product
 - [ ] Remote builds against a real Mac (`xcodebuild`, simulators) and Windows / .NET hosts.
-- [ ] Private-key import; SFTP transfers.
-- [ ] Per-host "remote builds allowed" switch (today a single global switch).
+- [x] Private-key import (see `REMOTE.md`). ✅ Ed25519 and ECDSA P-256/384/521, in OpenSSH format (unencrypted, or passphrase-protected with aes128/192/256-ctr or aes128/256-gcm) and PEM/PKCS#8. Keys made by `ssh-keygen` are tested, and imported keys sign in to a real OpenSSH server. RSA and DSA keys are refused with an explanation. 🧪 Import sheet compiled in CI; 📱 not tried on a device.
+- [x] SFTP transfers (Remote Files). ✅ Browse, download to the workspace, upload from the workspace, new folder and delete (with confirmation) are tested against OpenSSH. Transfers are pipelined, verified, cancellable and leave nothing behind. 🧪 Screen compiled in CI; 📱 not tried on a device.
+- [x] Per-host "Allow builds and tests" switch. ✅ Enforced by the build orchestrator; a host with builds off is never connected to for a build. Hosts saved earlier keep builds allowed.
 - [ ] Snapshot or UI tests for the new screens (XCUITest in the Simulator job).
 - [ ] App Store Connect: rename the record for `…hcgterminal` to "HCG Terminal"; create a separate record only if an Unleashed TestFlight is wanted (it would still be sandboxed).
 

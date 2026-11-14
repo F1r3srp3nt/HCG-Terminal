@@ -22,8 +22,12 @@ public struct HostProfile: Codable, Hashable, Sendable, Identifiable {
     public var auth: HostAuthMethod
     /// Where project browsing starts, e.g. `~/Developer`.
     public var projectsPath: String?
+    /// Whether builds and tests may run on this host. Checked by the build orchestrator in
+    /// addition to the global "Remote builds and tests" switch; shells and file transfers are not
+    /// affected.
+    public var remoteBuildsAllowed: Bool
 
-    public init(id: UUID = UUID(), name: String, hostname: String, port: Int = 22, username: String, auth: HostAuthMethod, projectsPath: String? = nil) {
+    public init(id: UUID = UUID(), name: String, hostname: String, port: Int = 22, username: String, auth: HostAuthMethod, projectsPath: String? = nil, remoteBuildsAllowed: Bool = true) {
         self.id = id
         self.name = name
         self.hostname = hostname
@@ -31,6 +35,22 @@ public struct HostProfile: Codable, Hashable, Sendable, Identifiable {
         self.username = username
         self.auth = auth
         self.projectsPath = projectsPath
+        self.remoteBuildsAllowed = remoteBuildsAllowed
+    }
+
+    private enum CodingKeys: String, CodingKey { case id, name, hostname, port, username, auth, projectsPath, remoteBuildsAllowed }
+
+    /// Hosts saved by earlier versions (without `remoteBuildsAllowed`) keep builds allowed.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        hostname = try container.decode(String.self, forKey: .hostname)
+        port = try container.decode(Int.self, forKey: .port)
+        username = try container.decode(String.self, forKey: .username)
+        auth = try container.decode(HostAuthMethod.self, forKey: .auth)
+        projectsPath = try container.decodeIfPresent(String.self, forKey: .projectsPath)
+        remoteBuildsAllowed = try container.decodeIfPresent(Bool.self, forKey: .remoteBuildsAllowed) ?? true
     }
 
     public var endpoint: RemoteEndpoint {

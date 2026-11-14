@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Starts a disposable OpenSSH server on 127.0.0.1:2222 for the RemoteSSH integration tests.
+# Starts a disposable OpenSSH server on 127.0.0.1:2222 (with SFTP) for the RemoteSSH integration tests.
 # Linux only, needs root (creates the user `hcgtest`). Never run this on a machine you care about.
 #
 #   sudo Scripts/start-test-sshd.sh
@@ -26,6 +26,7 @@ PubkeyAuthentication yes
 StrictModes no
 AllowUsers hcgtest
 AuthorizedKeysFile /home/hcgtest/.ssh/authorized_keys
+Subsystem sftp internal-sftp
 CONF
 [ -f "$DIR/sshd.pid" ] && kill "$(cat "$DIR/sshd.pid")" 2>/dev/null || true
 /usr/sbin/sshd -f "$DIR/sshd_config"
