@@ -116,6 +116,9 @@ final class RemoteSSHIntegrationTests: XCTestCase {
     /// A key made by ssh-keygen, protected by a passphrase, imported and used to sign in. Covers
     /// every ECDSA curve the app accepts, plus Ed25519.
     func testImportedPassphraseKeysSignIn() async throws {
+        #if os(iOS) || os(tvOS) || os(watchOS) || os(visionOS)
+        throw XCTSkip("ssh-keygen cannot be run from the iOS Simulator test runner")
+        #else
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("import-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -139,6 +142,7 @@ final class RemoteSSHIntegrationTests: XCTestCase {
             XCTAssertEqual(result.stdoutText, "signed-in-with-\(type)\(bits)\n", record.algorithm)
             await connection.close()
         }
+        #endif
     }
 
     func testPTYShellSessionSizeResizeAndIndependentClose() async throws {
