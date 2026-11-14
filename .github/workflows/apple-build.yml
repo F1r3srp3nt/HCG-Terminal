@@ -438,7 +438,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     # Root inside the container: the script creates the disposable test user and sshd.
-    container: swift:6.0.3-jammy
+    # Ubuntu 24.04 (glibc 2.39): the Unleashed backend uses posix_spawn_file_actions_addchdir_np.
+    container: swift:6.0.3-noble
     # Container steps default to sh; the steps use bash features (pipefail).
     defaults:
       run:
