@@ -323,7 +323,7 @@ jobs:
           exit $status
 
       - name: Small iPhone and iPad (header layout, terminal, editor; both variants)
-        timeout-minutes: 30
+        timeout-minutes: 45
         run: |
           mkdir -p shots; status=0
           t() { local limit=$1; shift; perl -e 'alarm shift; exec @ARGV' "$limit" "$@"; }
@@ -337,16 +337,29 @@ jobs:
               m=[x for x in devs if x['name'].startswith(p)]
               if m: print(m[-1]['udid'], m[-1]['name'].replace(' ','_')); break
           " "$1"; }
+          # Free the runner for the next simulators: the main iPhone simulator is not needed again
+          # until the package tests, which boot it themselves.
+          t 60 xcrun simctl shutdown "$UDID" >/dev/null 2>&1 || true
           for kind in small ipad; do
             read -r udid name < <(pick $kind) || true
             [ -n "${udid:-}" ] || { echo "No $kind simulator available"; continue; }
             echo "== $kind: $name"
-            t 120 xcrun simctl boot "$udid" || true; t 300 xcrun simctl bootstatus "$udid" -b >/dev/null || true
+            # The runner sometimes cannot boot a second simulator. Try twice; if it still is not
+            # booted, record the device as skipped (a runner problem, not an app result) instead
+            # of letting every following command run into its time limit.
+            booted() { xcrun simctl list devices | grep "$udid" | grep -q "(Booted)"; }
+            for attempt in 1 2; do
+              t 120 xcrun simctl boot "$udid" >/dev/null 2>&1 || true
+              t 240 xcrun simctl bootstatus "$udid" -b >/dev/null 2>&1 || true
+              booted && break
+              echo "NOTE: $name did not boot (attempt $attempt)"; t 60 xcrun simctl shutdown "$udid" >/dev/null 2>&1 || true
+            done
+            if ! booted; then echo "SKIPPED: $name (simulator did not boot on this runner)"; continue; fi
             t 30 xcrun simctl spawn "$udid" defaults write com.apple.Preferences DidShowContinuousPathIntroduction -bool true || true
             for scheme in HCGTerminal HCGTerminalUnleashed; do
               app="$RUNNER_TEMP/DDsim/Build/Products/Debug-iphonesimulator/$scheme.app"
               bundle=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Info.plist")
-              t 120 xcrun simctl install "$udid" "$app"
+              if ! t 180 xcrun simctl install "$udid" "$app"; then echo "FAIL: $scheme could not be installed on $name"; status=1; continue; fi
               # Warm-up launch (not checked): the first launch on a freshly booted simulator can
               # take over a minute on a busy runner. Every screenshot below is still checked.
               t 180 xcrun simctl launch "$udid" "$bundle" >/dev/null || echo "NOTE: warm-up launch did not return on $name"
