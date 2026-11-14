@@ -84,7 +84,16 @@ final class OpenSSHKeyImportTests: XCTestCase {
     }
 
     func assertImports(_ generated: Generated, passphrase: String?, algorithm: String, comment: String, encrypted: Bool, file: StaticString = #filePath, line: UInt = #line) throws {
-        let imported = try OpenSSHKeyImport.parse(generated.privateKey, passphrase: passphrase)
+        let imported: ImportedSSHKey
+        do {
+            imported = try OpenSSHKeyImport.parse(generated.privateKey, passphrase: passphrase)
+        } catch {
+            // Show the file's structure (tags and lengths only) so an unusual encoding can be
+            // understood from the CI log.
+            let outline = PEMBlock(generated.privateKey).flatMap { $0.der }.map { DERReader.outline($0) } ?? "not PEM"
+            XCTFail("\(error)\n\(PEMBlock(generated.privateKey)?.label ?? "?")\n\(outline)", file: file, line: line)
+            throw error
+        }
         XCTAssertEqual(imported.key.algorithm, algorithm, file: file, line: line)
         XCTAssertEqual(imported.comment, comment, file: file, line: line)
         XCTAssertEqual(imported.wasEncrypted, encrypted, file: file, line: line)
@@ -157,6 +166,10 @@ final class OpenSSHKeyImportTests: XCTestCase {
         // Re-export the same private key as PKCS#8 (ssh-keygen -p rewrites it in the chosen format).
         try run("ssh-keygen", ["-q", "-p", "-N", "", "-P", "", "-m", "PKCS8", "-f", path])
         let pkcs8 = try String(contentsOfFile: path, encoding: .utf8)
+        for text in [sec1.privateKey, pkcs8] where (try? OpenSSHKeyImport.parse(text, passphrase: nil)) == nil {
+            let outline = PEMBlock(text).flatMap { $0.der }.map { DERReader.outline($0) } ?? "not PEM"
+            XCTFail("\(PEMBlock(text)?.label ?? "?")\n\(outline)")
+        }
         let a = try OpenSSHKeyImport.parse(sec1.privateKey, passphrase: nil)
         let b = try OpenSSHKeyImport.parse(pkcs8, passphrase: nil)
         XCTAssertEqual(a.key, b.key)
@@ -200,6 +213,29 @@ final class OpenSSHKeyImportTests: XCTestCase {
         let legacy = try manager.generateEd25519(comment: "device")
         XCTAssertFalse(legacy.isImported)
         if case .ed25519 = try manager.privateKey(for: legacy.id) {} else { XCTFail("generated key is Ed25519") }
+    }
+
+    /// SEC1 keys whose `[0]` parameters are explicit (a SEQUENCE, not a curve name), as some
+    /// OpenSSL/LibreSSL builds write them, and SEC1 keys without parameters, are still read; the
+    /// curve comes from the public point or the key length.
+    func testSEC1WithExplicitOrMissingParameters() throws {
+        let key = P384.Signing.PrivateKey()
+        let scalar = Array(key.rawRepresentation)
+        let point = Array(key.publicKey.x963Representation)
+        func tlv(_ tag: UInt8, _ body: [UInt8]) -> [UInt8] {
+            precondition(body.count < 0x10000)
+            let length: [UInt8] = body.count < 0x80 ? [UInt8(body.count)] : body.count < 0x100 ? [0x81, UInt8(body.count)] : [0x82, UInt8(body.count >> 8), UInt8(body.count & 0xFF)]
+            return [tag] + length + body
+        }
+        let explicitParameters = tlv(0x30, tlv(0x02, [0x01]) + tlv(0x30, tlv(0x06, [0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x01, 0x01])))
+        let withExplicit = tlv(0x30, tlv(0x02, [0x01]) + tlv(0x04, scalar) + tlv(0xA0, explicitParameters) + tlv(0xA1, tlv(0x03, [0x00] + point)))
+        let withNothing = tlv(0x30, tlv(0x02, [0x01]) + tlv(0x04, scalar))
+        XCTAssertEqual(try OpenSSHKeyImport.ecdsaFromDER(withExplicit), .p384(Data(scalar)))
+        XCTAssertEqual(try OpenSSHKeyImport.ecdsaFromDER(withNothing), .p384(Data(scalar)))
+        // A public key that does not belong to the private key is refused.
+        let other = Array(P384.Signing.PrivateKey().publicKey.x963Representation)
+        let mismatched = tlv(0x30, tlv(0x02, [0x01]) + tlv(0x04, scalar) + tlv(0xA1, tlv(0x03, [0x00] + other)))
+        XCTAssertThrowsError(try OpenSSHKeyImport.ecdsaFromDER(mismatched))
     }
 
     /// bcrypt_pbkdf known-answer test: the vector from OpenBSD's regression tests

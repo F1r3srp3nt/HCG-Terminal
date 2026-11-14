@@ -224,7 +224,10 @@ public enum OpenSSHKeyImport {
                 if algorithmOID == Self.rsaOID { throw SSHKeyImportError.unsupportedKeyType("RSA") }
                 throw SSHKeyImportError.malformed("not an EC key")
             }
-            let curveOID = algorithm.isAtEnd ? nil : try algorithm.read(tag: 0x06).allBytes
+            // Named curve (OID), or explicit parameters (a SEQUENCE), which some OpenSSL/LibreSSL
+            // builds write; then the curve is recognised from the key sizes below.
+            let parameters = algorithm.isAtEnd ? nil : try algorithm.readAny()
+            let curveOID = parameters?.tag == 0x06 ? parameters?.bytes : nil
             let inner = try sequence.read(tag: 0x04).allBytes
             return try ecdsaFromSEC1(inner, curveOID: curveOID)
         }
@@ -242,7 +245,8 @@ public enum OpenSSHKeyImport {
             let element = try sequence.readAny()
             if element.tag == 0xA0 {
                 var parameters = DERReader(element.bytes)
-                curveOID = try parameters.read(tag: 0x06).allBytes
+                let named = try parameters.readAny()
+                if named.tag == 0x06 { curveOID = named.bytes }
             } else if element.tag == 0xA1 {
                 var wrapper = DERReader(element.bytes)
                 let bits = try wrapper.read(tag: 0x03).allBytes
@@ -255,8 +259,19 @@ public enum OpenSSHKeyImport {
         case Self.p384OID?: type = "ecdsa-sha2-nistp384"
         case Self.p521OID?: type = "ecdsa-sha2-nistp521"
         case nil:
-            let length = scalar.drop(while: { $0 == 0 }).count
-            type = length <= 32 ? "ecdsa-sha2-nistp256" : length <= 48 ? "ecdsa-sha2-nistp384" : "ecdsa-sha2-nistp521"
+            // No named curve: the uncompressed public point (65/97/133 bytes) or the private
+            // value's encoded length (32/48/66 bytes) identifies it.
+            switch publicPoint?.count ?? 0 {
+            case 65: type = "ecdsa-sha2-nistp256"
+            case 97: type = "ecdsa-sha2-nistp384"
+            case 133: type = "ecdsa-sha2-nistp521"
+            default:
+                switch scalar.count {
+                case ...32: type = "ecdsa-sha2-nistp256"
+                case ...48: type = "ecdsa-sha2-nistp384"
+                default: type = "ecdsa-sha2-nistp521"
+                }
+            }
         default:
             throw SSHKeyImportError.malformed("unsupported EC curve")
         }
@@ -317,6 +332,19 @@ struct DERReader {
     }
 
     var allBytes: [UInt8] { bytes }
+
+    /// The element tree as tags and lengths only (no contents), for diagnosing unusual files.
+    static func outline(_ der: [UInt8], depth: Int = 0) -> String {
+        var reader = DERReader(der)
+        var lines: [String] = []
+        while !reader.isAtEnd, let element = try? reader.readAny() {
+            lines.append(String(repeating: "  ", count: depth) + String(format: "tag 0x%02X, %d bytes", element.tag, element.bytes.count))
+            if [0x30, 0xA0, 0xA1].contains(element.tag), depth < 4 {
+                lines.append(outline(element.bytes, depth: depth + 1))
+            }
+        }
+        return lines.filter { !$0.isEmpty }.joined(separator: "\n")
+    }
 }
 
 /// One `-----BEGIN …-----` block.
