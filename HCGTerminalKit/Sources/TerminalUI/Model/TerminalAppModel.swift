@@ -522,9 +522,9 @@ public final class TerminalAppModel {
         }
         switch host.auth {
         case .password: return .password(try password())
-        case .key(let id): return .ed25519(try dependencies.keyManager.privateKey(for: id))
+        case .key(let id): return .key(try dependencies.keyManager.privateKey(for: id))
         case .keyThenPassword(let id):
-            return .keyThenPassword(rawKey: try dependencies.keyManager.privateKey(for: id).rawRepresentation, password: try password())
+            return .keyThenPassword(try dependencies.keyManager.privateKey(for: id), password: try password())
         }
     }
 
@@ -734,6 +734,21 @@ public final class TerminalAppModel {
             errorMessage = error.localizedDescription
             return nil
         }
+    }
+
+    /// Imports a private key file's text. Decryption (bcrypt, deliberately slow) runs off the
+    /// main actor. The passphrase is used once and not stored. Errors are returned to the caller
+    /// (the import sheet shows them in place).
+    @discardableResult
+    public func importKey(text: String, passphrase: String?, name: String?) async throws -> SSHKeyRecord {
+        let imported = try await Task.detached(priority: .userInitiated) {
+            try OpenSSHKeyImport.parse(text, passphrase: passphrase)
+        }.value
+        let chosen = name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let comment = !chosen.isEmpty ? chosen : (!imported.comment.isEmpty ? imported.comment : "imported \(imported.key.displayName) key")
+        let record = try dependencies.keyManager.importKey(imported, comment: comment)
+        keys = dependencies.keyManager.list()
+        return record
     }
 
     public func deleteKey(_ record: SSHKeyRecord) {

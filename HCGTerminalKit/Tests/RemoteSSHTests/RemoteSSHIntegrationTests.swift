@@ -107,10 +107,38 @@ final class RemoteSSHIntegrationTests: XCTestCase {
         try handle.write(contentsOf: Data((record.publicKeyLine + "\n").utf8))
         try handle.close()
 
-        let connection = try await connect(authentication: .ed25519(try manager.privateKey(for: record.id)))
+        let connection = try await connect(authentication: .key(try manager.privateKey(for: record.id)))
         let result = try await connection.run("whoami")
         XCTAssertEqual(result.stdoutText, "hcgtest\n")
         await connection.close()
+    }
+
+    /// A key made by ssh-keygen, protected by a passphrase, imported and used to sign in. Covers
+    /// every ECDSA curve the app accepts, plus Ed25519.
+    func testImportedPassphraseKeysSignIn() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("import-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let manager = SSHKeyManager(credentials: InMemoryCredentialStore(), metadataURL: folder.appendingPathComponent("keys.json"))
+        for (type, bits) in [("ecdsa", "256"), ("ecdsa", "384"), ("ecdsa", "521"), ("ed25519", "")] {
+            let path = folder.appendingPathComponent("\(type)\(bits)").path
+            let keygen = Process()
+            keygen.executableURL = URL(fileURLWithPath: "/usr/bin/ssh-keygen")
+            keygen.arguments = ["-q", "-t", type, "-N", "import pass", "-a", "4", "-C", "imported@test", "-f", path] + (bits.isEmpty ? [] : ["-b", bits])
+            try keygen.run()
+            keygen.waitUntilExit()
+            let imported = try OpenSSHKeyImport.parse(try String(contentsOfFile: path, encoding: .utf8), passphrase: "import pass")
+            let record = try manager.importKey(imported, comment: imported.comment)
+            let handle = try FileHandle(forWritingTo: URL(fileURLWithPath: "/home/hcgtest/.ssh/authorized_keys"))
+            try handle.seekToEnd()
+            try handle.write(contentsOf: Data((record.publicKeyLine + "\n").utf8))
+            try handle.close()
+
+            let connection = try await connect(authentication: .key(try manager.privateKey(for: record.id)))
+            let result = try await connection.run("echo signed-in-with-\(type)\(bits)")
+            XCTAssertEqual(result.stdoutText, "signed-in-with-\(type)\(bits)\n", record.algorithm)
+            await connection.close()
+        }
     }
 
     func testPTYShellSessionSizeResizeAndIndependentClose() async throws {

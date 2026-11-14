@@ -53,7 +53,12 @@ let package = Package(
         .target(name: "Diagnostics", dependencies: ["TerminalCore"]),
         .target(
             name: "TerminalSecurity",
-            dependencies: ["TerminalCore", .product(name: "Crypto", package: "swift-crypto")]
+            dependencies: [
+                "TerminalCore", .product(name: "Crypto", package: "swift-crypto"),
+                // AES-CTR for passphrase-protected keys on Linux only; Apple platforms use
+                // CommonCrypto, so the app does not link BoringSSL.
+                .product(name: "_CryptoExtras", package: "swift-crypto", condition: .when(platforms: [.linux])),
+            ]
         ),
         .target(name: "TerminalCapabilityProvider", dependencies: ["TerminalCore"]),
         .target(name: "FileWorkspace", dependencies: ["TerminalCore"]),

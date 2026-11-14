@@ -25,16 +25,32 @@ public enum SSHWire {
     }
 }
 
-/// Metadata for a key generated on the device. The private key itself lives only in the
-/// credential store (Keychain on iOS).
+/// Metadata for a key made on the device or imported. The private key itself lives only in
+/// the credential store (Keychain on iOS).
 public struct SSHKeyRecord: Codable, Hashable, Sendable, Identifiable {
     public var id: UUID
     public var comment: String
+    /// OpenSSH algorithm name (`ssh-ed25519`, `ecdsa-sha2-nistp256`, …).
     public var algorithm: String
     /// OpenSSH `authorized_keys` line.
     public var publicKeyLine: String
     public var fingerprint: String
     public var createdAt: Date
+    /// True for keys imported from a file; `nil`/false for keys made on this device.
+    public var imported: Bool? = nil
+
+    public var isImported: Bool { imported == true }
+
+    /// "Ed25519", "ECDSA P-256", …
+    public var algorithmDisplayName: String {
+        switch algorithm {
+        case "ssh-ed25519": "Ed25519"
+        case "ecdsa-sha2-nistp256": "ECDSA P-256"
+        case "ecdsa-sha2-nistp384": "ECDSA P-384"
+        case "ecdsa-sha2-nistp521": "ECDSA P-521"
+        default: algorithm
+        }
+    }
 }
 
 public enum SSHKeyError: Error, LocalizedError {
@@ -49,7 +65,7 @@ public enum SSHKeyError: Error, LocalizedError {
     }
 }
 
-/// Generates and stores Ed25519 SSH keys.
+/// Generates, imports and stores SSH keys.
 public struct SSHKeyManager: Sendable {
     private let credentials: any CredentialStore
     private let metadataURL: URL
@@ -74,9 +90,33 @@ public struct SSHKeyManager: Sendable {
         return (try? JSONDecoder().decode([SSHKeyRecord].self, from: data)) ?? []
     }
 
-    public func privateKey(for id: UUID) throws -> Curve25519.Signing.PrivateKey {
+    /// The private key for a stored record (any supported algorithm).
+    public func privateKey(for id: UUID) throws -> SSHPrivateKey {
         guard let raw = try credentials.load(.privateKey(id)) else { throw SSHKeyError.missingPrivateKey(id) }
-        do { return try Curve25519.Signing.PrivateKey(rawRepresentation: raw) } catch { throw SSHKeyError.corruptPrivateKey }
+        // Records written before imports existed are Ed25519.
+        let algorithm = list().first { $0.id == id }?.algorithm ?? "ssh-ed25519"
+        do { return try SSHPrivateKey(algorithm: algorithm, rawRepresentation: raw) } catch { throw SSHKeyError.corruptPrivateKey }
+    }
+
+    /// Stores an imported key under `comment` (the file's comment, or one the user chose).
+    /// Refuses a key that is already stored (same fingerprint). The passphrase that protected the
+    /// file is not kept: the decrypted key is held in secure storage like a generated key.
+    @discardableResult
+    public func importKey(_ imported: ImportedSSHKey, comment: String) throws -> SSHKeyRecord {
+        let fingerprint = try imported.key.fingerprint()
+        if list().contains(where: { $0.fingerprint == fingerprint }) {
+            throw SSHKeyImportError.alreadyImported(fingerprint: fingerprint)
+        }
+        let record = SSHKeyRecord(
+            id: UUID(), comment: comment, algorithm: imported.key.algorithm,
+            publicKeyLine: try imported.key.publicKeyLine(comment: comment), fingerprint: fingerprint,
+            createdAt: Date(), imported: true
+        )
+        try credentials.save(imported.key.rawRepresentation, for: .privateKey(record.id))
+        var all = list()
+        all.append(record)
+        try persist(all)
+        return record
     }
 
     public func delete(_ id: UUID) throws {

@@ -5,6 +5,7 @@ import DeveloperWorkspace
 import SwiftUI
 import TerminalCore
 import TerminalSecurity
+import UniformTypeIdentifiers
 
 /// Chooses action, configuration, scheme and destination, shows the exact command, then runs it.
 struct BuildPlanSheet: View {
@@ -301,6 +302,7 @@ struct ArtifactsView: View {
 struct KeysView: View {
     @Environment(TerminalAppModel.self) private var model
     @State private var comment = "hcg-terminal"
+    @State private var showImport = false
 
     var body: some View {
         List {
@@ -308,19 +310,30 @@ struct KeysView: View {
                 Section {
                     TextField("Comment", text: $comment)
                     Button("Generate Ed25519 Key") { model.generateKey(comment: comment) }
+                    Button { showImport = true } label: { Label("Import Private Key…", systemImage: "square.and.arrow.down") }
                 } footer: {
-                    Text("The private key is created and kept in the Keychain on this device. Add the public key to ~/.ssh/authorized_keys on your host.")
+                    Text("Keys are kept in the Keychain on this device. Add the public key to ~/.ssh/authorized_keys on your host. You can import an existing Ed25519 or ECDSA key (OpenSSH or PEM format, with or without a passphrase).")
                 }
                 ForEach(model.keys) { key in
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(key.comment.isEmpty ? "Ed25519 key" : key.comment).font(.subheadline.weight(.semibold))
-                        Text(key.fingerprint).font(.caption.monospaced()).foregroundStyle(HCGPalette.textSecondary)
+                        HStack(spacing: 6) {
+                            Text(key.comment.isEmpty ? "\(key.algorithmDisplayName) key" : key.comment).font(.subheadline.weight(.semibold))
+                            Text(key.algorithmDisplayName)
+                                .font(.caption2.weight(.semibold))
+                                .padding(.horizontal, 6).padding(.vertical, 2)
+                                .background(HCGPalette.surfaceElevated, in: Capsule())
+                            if key.isImported {
+                                Text("Imported").font(.caption2.weight(.semibold)).foregroundStyle(HCGPalette.textSecondary)
+                            }
+                        }
+                        Text(key.fingerprint).font(.caption.monospaced()).foregroundStyle(HCGPalette.textSecondary).textSelection(.enabled)
                         HStack {
                             Button("Copy Public Key") { UIPasteboard.general.string = key.publicKeyLine }
                             ShareLink(item: key.publicKeyLine) { Text("Share") }
                         }
                         .buttonStyle(.borderless)
                     }
+                    .accessibilityElement(children: .contain)
                     .swipeActions { Button("Delete", role: .destructive) { model.deleteKey(key) } }
                 }
             }
@@ -328,6 +341,143 @@ struct KeysView: View {
         }
         .hcgScreenBackground()
         .navigationTitle("SSH Keys")
+        .sheet(isPresented: $showImport) {
+            NavigationStack { KeyImportSheet() }
+                .environment(model)
+        }
+    }
+}
+
+/// Import a private key from a file or the clipboard. The key text is never displayed; the
+/// passphrase is asked for only when the file needs one and is not stored.
+struct KeyImportSheet: View {
+    @Environment(TerminalAppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    @State private var keyText: String?
+    @State private var source = ""
+    @State private var name = ""
+    @State private var passphrase = ""
+    @State private var showPicker = false
+    @State private var importing = false
+    @State private var errorText: String?
+
+    /// Private key files are small; anything larger is not one.
+    private static let sizeLimit = 64 * 1024
+
+    private var needsPassphrase: Bool { keyText.map(OpenSSHKeyImport.needsPassphrase) ?? false }
+
+    var body: some View {
+        List {
+            Group {
+                Section {
+                    Button { showPicker = true } label: { Label("Choose Key File…", systemImage: "doc") }
+                    Button { loadFromClipboard() } label: { Label("Paste from Clipboard", systemImage: "doc.on.clipboard") }
+                    if keyText != nil {
+                        Label(source, systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(HCGPalette.ok)
+                            .font(.footnote)
+                    }
+                } header: { Text("Private key") } footer: {
+                    Text("For example ~/.ssh/id_ed25519 (not the .pub file). The key's contents are not shown.")
+                }
+                Section {
+                    TextField("Name (optional)", text: $name)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    if needsPassphrase {
+                        SecureField("Passphrase", text: $passphrase)
+                            .textContentType(.password)
+                    }
+                } footer: {
+                    Text(needsPassphrase
+                        ? "This key is protected by a passphrase. It is used once to decrypt the key and is not stored."
+                        : "The name defaults to the comment stored in the key file.")
+                }
+                if let errorText {
+                    Section {
+                        Label(errorText, systemImage: "exclamationmark.triangle")
+                            .foregroundStyle(HCGPalette.warn)
+                            .font(.footnote)
+                    }
+                }
+            }
+            .hcgRows()
+        }
+        .hcgScreenBackground()
+        .navigationTitle("Import Key")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) { Button("Cancel") { clear(); dismiss() } }
+            ToolbarItem(placement: .confirmationAction) {
+                if importing {
+                    ProgressView().accessibilityLabel("Decrypting key")
+                } else {
+                    Button("Import") { Task { await runImport() } }
+                        .disabled(keyText == nil || (needsPassphrase && passphrase.isEmpty))
+                }
+            }
+        }
+        .fileImporter(isPresented: $showPicker, allowedContentTypes: [.item]) { result in
+            switch result {
+            case .success(let url): load(url)
+            case .failure(let error): errorText = error.localizedDescription
+            }
+        }
+        .interactiveDismissDisabled(importing)
+    }
+
+    private func load(_ url: URL) {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        do {
+            let data = try Data(contentsOf: url)
+            guard data.count <= Self.sizeLimit else { errorText = SSHKeyImportError.notAPrivateKey.localizedDescription; return }
+            accept(String(decoding: data, as: UTF8.self), source: "Loaded \(url.lastPathComponent)")
+        } catch {
+            errorText = error.localizedDescription
+        }
+    }
+
+    private func loadFromClipboard() {
+        guard let text = UIPasteboard.general.string, !text.isEmpty else {
+            errorText = "The clipboard has no text."
+            return
+        }
+        accept(text, source: "Key text pasted from the clipboard")
+    }
+
+    private func accept(_ text: String, source: String) {
+        errorText = nil
+        passphrase = ""
+        // Recognise problems that need no passphrase straight away (public key, RSA, …).
+        if !OpenSSHKeyImport.needsPassphrase(text) {
+            do { _ = try OpenSSHKeyImport.parse(text, passphrase: nil) } catch {
+                keyText = nil
+                errorText = error.localizedDescription
+                return
+            }
+        }
+        keyText = text
+        self.source = source
+    }
+
+    private func runImport() async {
+        guard let keyText else { return }
+        importing = true
+        errorText = nil
+        defer { importing = false }
+        do {
+            try await model.importKey(text: keyText, passphrase: needsPassphrase ? passphrase : nil, name: name)
+            clear()
+            dismiss()
+        } catch {
+            errorText = error.localizedDescription
+        }
+    }
+
+    private func clear() {
+        keyText = nil
+        passphrase = ""
     }
 }
 

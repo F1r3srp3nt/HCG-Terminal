@@ -10,13 +10,25 @@ import TerminalSecurity
 /// Credentials resolved for one connection attempt. Never persisted by this module.
 public enum SSHAuthentication: Sendable {
     case password(String)
-    /// Raw Ed25519 private key bytes (kept as bytes so the value is `Sendable` on every platform).
-    case ed25519(rawKey: Data)
+    /// An Ed25519 or ECDSA private key (raw bytes, so the value is `Sendable` everywhere).
+    case key(SSHPrivateKey)
     /// Try the key first, then the password.
-    case keyThenPassword(rawKey: Data, password: String)
+    case keyThenPassword(SSHPrivateKey, password: String)
 
     public static func ed25519(_ key: Curve25519.Signing.PrivateKey) -> SSHAuthentication {
-        .ed25519(rawKey: key.rawRepresentation)
+        .key(.ed25519(key.rawRepresentation))
+    }
+}
+
+extension SSHPrivateKey {
+    /// The SwiftNIO SSH key used to sign the authentication request.
+    func nioKey() throws -> NIOSSHPrivateKey {
+        switch self {
+        case .ed25519(let raw): NIOSSHPrivateKey(ed25519Key: try Curve25519.Signing.PrivateKey(rawRepresentation: raw))
+        case .p256(let raw): NIOSSHPrivateKey(p256Key: try P256.Signing.PrivateKey(rawRepresentation: raw))
+        case .p384(let raw): NIOSSHPrivateKey(p384Key: try P384.Signing.PrivateKey(rawRepresentation: raw))
+        case .p521(let raw): NIOSSHPrivateKey(p521Key: try P521.Signing.PrivateKey(rawRepresentation: raw))
+        }
     }
 }
 
@@ -192,16 +204,16 @@ final class UserAuthDelegate: NIOSSHClientUserAuthenticationDelegate {
         availableMethods: NIOSSHAvailableUserAuthenticationMethods,
         nextChallengePromise: EventLoopPromise<NIOSSHUserAuthenticationOffer?>
     ) {
-        var key: Curve25519.Signing.PrivateKey?
+        var key: NIOSSHPrivateKey?
         var password: String?
         switch authentication {
-        case .ed25519(let raw): key = try? Curve25519.Signing.PrivateKey(rawRepresentation: raw)
+        case .key(let privateKey): key = try? privateKey.nioKey()
         case .password(let p): password = p
-        case .keyThenPassword(let raw, let p): key = try? Curve25519.Signing.PrivateKey(rawRepresentation: raw); password = p
+        case .keyThenPassword(let privateKey, let p): key = try? privateKey.nioKey(); password = p
         }
         if let key, !triedKey, availableMethods.contains(.publicKey) {
             triedKey = true
-            let offer = NIOSSHUserAuthenticationOffer.Offer.PrivateKey(privateKey: NIOSSHPrivateKey(ed25519Key: key))
+            let offer = NIOSSHUserAuthenticationOffer.Offer.PrivateKey(privateKey: key)
             nextChallengePromise.succeed(NIOSSHUserAuthenticationOffer(username: username, serviceName: "", offer: .privateKey(offer)))
             return
         }
