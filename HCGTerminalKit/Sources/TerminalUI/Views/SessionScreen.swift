@@ -17,6 +17,9 @@ struct SessionScreen: View {
     var body: some View {
         VStack(spacing: 0) {
             SessionHeader(session: session, showDetails: $showDetails, confirmClose: $confirmClose, onBack: onBack)
+                // The header always gets its full height; the terminal takes what is left.
+                // Without this, large text was squeezed and wrapped lines overlapped.
+                .fixedSize(horizontal: false, vertical: true)
             ForEach(session.notices, id: \.self) { notice in
                 NoticeBanner(notice: notice) { session.dismissNotice(notice) }
             }
