@@ -453,7 +453,13 @@ jobs:
           ssh -V
       - name: Build tests
         working-directory: HCGTerminalKit
-        run: swift build --build-tests -Xlinker --allow-shlib-undefined 2>&1 | tail -3
+        run: |
+          if ! swift build --build-tests -Xlinker --allow-shlib-undefined > ../linux-build.log 2>&1; then
+            grep -E "error:|undefined reference|ld: " -B3 -A6 ../linux-build.log | head -150
+            tail -20 ../linux-build.log
+            exit 1
+          fi
+          tail -2 ../linux-build.log
       - name: SSH, SFTP, key import and Remote Files tests (real OpenSSH)
         working-directory: HCGTerminalKit
         env:
@@ -467,4 +473,4 @@ jobs:
         if: always()
         with:
           name: logs-linux-ssh
-          path: linux-ssh-tests.log
+          path: linux-*.log

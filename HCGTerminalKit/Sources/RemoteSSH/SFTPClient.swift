@@ -217,7 +217,7 @@ public actor SFTPClient {
         let expected = attributes.size
         let handle = try expectHandle(try await call { SFTP.open(id: $0, path: remotePath, flags: .read) }, path: remotePath)
         let partial = destination.deletingLastPathComponent().appendingPathComponent(".hcg-partial-\(UUID().uuidString)")
-        FileManager.default.createFile(atPath: partial.path, contents: nil)
+        guard FileManager.default.createFile(atPath: partial.path, contents: nil) else { throw SFTPError.failure("could not create a file in the download folder") }
         var keep = false
         defer { if !keep { try? FileManager.default.removeItem(at: partial) } }
         let file = try FileHandle(forWritingTo: partial)
