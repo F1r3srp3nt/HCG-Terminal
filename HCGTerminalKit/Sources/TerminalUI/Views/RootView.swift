@@ -14,6 +14,7 @@ enum SidebarItem: Hashable {
     case builds
     case artifacts
     case unleashedTools
+    case connectedDevices
     case preferences
     case diagnostics
 }
@@ -181,6 +182,7 @@ public struct RootView: View {
                         NavigationLink(value: SidebarItem.unleashedTools) { Label("Unleashed Tools", systemImage: "wrench.and.screwdriver") }
                     }
                     NavigationLink(value: SidebarItem.access) { Label("Capabilities & Access", systemImage: "switch.2") }
+                    NavigationLink(value: SidebarItem.connectedDevices) { Label("Connected Devices", systemImage: "point.3.connected.trianglepath.dotted") }
                     NavigationLink(value: SidebarItem.diagnostics) { Label("Diagnostics", systemImage: "stethoscope") }
                     NavigationLink(value: SidebarItem.preferences) { Label("Settings", systemImage: "gearshape") }
                 } header: { Eyebrow("Device") }
@@ -256,6 +258,7 @@ public struct RootView: View {
         case .builds: NavigationStack { BuildsView() }
         case .artifacts: NavigationStack { ArtifactsView() }
         case .unleashedTools: NavigationStack { UnleashedToolsView() }
+        case .connectedDevices: NavigationStack { ConnectedDevicesView() }
         case .preferences: NavigationStack { PreferencesView() }
         case .diagnostics: NavigationStack { DiagnosticsView() }
         }
@@ -346,6 +349,7 @@ public struct RootView: View {
         case "dashboard": selection = .dashboard
         case "files": selection = .files
         case "diagnostics": selection = .diagnostics
+        case "devices": selection = .connectedDevices
         case "hosts": selection = .hosts
         case "builds": selection = .builds
         case "artifacts": selection = .artifacts

@@ -1,4 +1,5 @@
 import FileWorkspace
+import HCGDeviceLink
 import Foundation
 import TerminalCapabilityProvider
 import TerminalCore
@@ -67,6 +68,21 @@ final class TerminalAppModelTests: XCTestCase {
         let unleashed = await model.openLocalSession(mode: .unleashed)
         XCTAssertNil(unleashed)
         XCTAssertEqual(model.errorMessage, CapabilityReport.unleashedUnavailableMessage)
+    }
+
+    func testStandardBuildAdvertisesNoUnleashedCapabilityOverDeviceLink() async throws {
+        let model = try makeModel()
+        await model.bootstrap()
+        let advertised = Dictionary(uniqueKeysWithValues: model.advertisedLinkCapabilities.map { ($0.id, $0) })
+        XCTAssertEqual(advertised[LinkCapabilityID.reportReceive]?.state, .available)
+        XCTAssertEqual(advertised[LinkCapabilityID.terminalWorkspace]?.state, .available)
+        for id in [LinkCapabilityID.terminalLocalShell, LinkCapabilityID.terminalExpandedFiles, LinkCapabilityID.terminalPrivileged] {
+            XCTAssertEqual(advertised[id]?.state, .unavailable, id)
+            XCTAssertEqual(advertised[id]?.reason, "Vanilla build", id)
+        }
+        #if os(Linux)
+        XCTAssertNil(model.deviceLink, "no Keychain or pinned transport on Linux")
+        #endif
     }
 
     func testUnavailableSavedPreferenceFallsBackToVanilla() async throws {

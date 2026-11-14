@@ -4,7 +4,15 @@
 <dict>
 	<!-- Merged with the keys Xcode generates (GENERATE_INFOPLIST_FILE = YES). -->
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>HCG Terminal connects to SSH hosts on your local network, such as your Mac, only when you open a session.</string>
+	<string>HCG Terminal connects to SSH hosts on your local network, such as your Mac, only when you open a session, and to an HCG Server you pair with in Connected Devices.</string>
+	<!-- HCG Device Link: HCG Server is reached on the local network with a self-signed certificate
+	     whose key is pinned from the invitation code (PinnedSessionTransport). ATS is relaxed for
+	     local addresses only; every other connection keeps the default ATS rules. -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
 	<key>UIFileSharingEnabled</key>
 	<true/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>

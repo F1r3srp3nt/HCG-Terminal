@@ -1,4 +1,5 @@
 #if canImport(UIKit) && canImport(SwiftUI)
+import DeviceLinkIntegration
 import FileWorkspace
 import SwiftUI
 import TerminalCapabilityProvider
@@ -31,6 +32,7 @@ struct DashboardView: View {
                     workspacePanel
                     hostsPanel
                     buildsPanel
+                    devicesPanel
                 }
                 capabilitiesPanel
             }
@@ -167,6 +169,31 @@ struct DashboardView: View {
             Button { openItem(.builds) } label: { Label("Builds & Tests", systemImage: "hammer") }
                 .buttonStyle(.bordered)
         }
+    }
+
+    /// HCG Device Link summary. Shown only where Device Link exists; local features never depend on it.
+    @ViewBuilder
+    private var devicesPanel: some View {
+        if let link = model.deviceLink {
+            DashboardPanel(title: "Connected devices", symbol: "point.3.connected.trianglepath.dotted", value: link.hasLoaded ? link.state.title : "—") {
+                Text(verbatim: devicesSummary(link))
+                    .font(.callout)
+                    .foregroundStyle(HCGPalette.muted)
+                    .lineLimit(4)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button { openItem(.connectedDevices) } label: { Label("Connected Devices", systemImage: "point.3.connected.trianglepath.dotted") }
+                    .buttonStyle(.bordered)
+            }
+        }
+    }
+
+    private func devicesSummary(_ link: DeviceLinkController) -> String {
+        guard link.hasLoaded else { return "Pair with an HCG Server to see your other HCG devices and the reports they share." }
+        if link.state.isLinked {
+            let unread = link.inbox.filter { $0.status != "opened" }.count
+            return "\(link.remoteDevices.count) other device\(link.remoteDevices.count == 1 ? "" : "s") · \(unread) unread report\(unread == 1 ? "" : "s")"
+        }
+        return link.state.detail
     }
 
     private var capabilitiesPanel: some View {

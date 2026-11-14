@@ -1,6 +1,7 @@
 import ArtifactManager
 import BuildOrchestrator
 import DeveloperWorkspace
+import DeviceLinkIntegration
 import FileWorkspace
 import Foundation
 import TerminalCapabilityProvider
@@ -19,6 +20,14 @@ public enum DistributionBuild: String, Sendable {
         switch self {
         case .standard: "Standard build"
         case .unleashed: "Unleashed build"
+        }
+    }
+
+    /// The Device Link `variant` of this build (from what is linked, never from a name).
+    public var linkVariant: TerminalLinkVariant {
+        switch self {
+        case .standard: .vanilla
+        case .unleashed: .unleashed
         }
     }
 }
@@ -176,6 +185,9 @@ public struct AppDependencies: Sendable {
     /// Layered environment assessment for Diagnostics (standard build: build, device and
     /// process layers only).
     public var environmentAssessment: @Sendable () async -> EnvironmentAssessment
+    /// HCG Device Link (Connected Devices): Keychain identity, pinned transport and the HCG
+    /// Connect file. `nil` where the platform has neither (Linux); local features never depend on it.
+    public var deviceLink: DeviceLinkEnvironment?
 
     public init(
         distribution: DistributionBuild, workspace: FileWorkspace, vanilla: any LocalExecutionProvider,
@@ -207,6 +219,7 @@ public struct AppDependencies: Sendable {
         self.orchestrator = orchestrator
         self.artifactIndex = artifactIndex
         self.preferences = preferences
+        self.deviceLink = DeviceLinkEnvironment.platformDefault(variant: distribution.linkVariant, appVersion: self.buildIdentity.version)
     }
 
     /// Standard (Vanilla) composition. The Unleashed build replaces `unleashed`,

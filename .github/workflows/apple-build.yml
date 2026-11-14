@@ -5,7 +5,8 @@
 #   and the app icon metadata of every built app (Scripts/verify_app_icons.py).
 # - Simulator: both apps built for the iOS Simulator and launched into several states (crash check
 #   and screenshots), and the package tests run on the iOS Simulator runtime.
-# - macOS: the HCGTerminalKit package (Darwin code paths) builds and its tests run.
+# - macOS: the vendored HCGDeviceLink copy matches its checksums, and the HCGTerminalKit package
+#   (Darwin code paths, including DeviceLinkIntegration) builds and its tests run.
 #
 # No signing identities, profiles or secrets are used, nothing is exported to an IPA, and
 # nothing is uploaded anywhere except these logs as workflow artifacts.
@@ -30,6 +31,9 @@ jobs:
         scheme: [HCGTerminal, HCGTerminalUnleashed]
     steps:
       - uses: actions/checkout@v4
+
+      - name: Vendored HCGDeviceLink checksum
+        run: cd HCGDeviceLink && shasum -a 256 -c VENDORED.sha256
 
       - name: Select newest Xcode
         run: |
@@ -253,7 +257,7 @@ jobs:
             echo "== $scheme ($bundle, variant $(/usr/libexec/PlistBuddy -c 'Print :HCGBuildVariant' "$app/Info.plist"))"
             Scripts/verify-build-variant.sh "$app"
             xcrun simctl install "$UDID" "$app"
-            for scenario in launch dashboard unleashed-tap unleashed-checks session capabilities settings files diagnostics; do
+            for scenario in launch dashboard unleashed-tap unleashed-checks session capabilities settings files diagnostics devices; do
               xcrun simctl terminate "$UDID" "$bundle" 2>/dev/null || true
               xcrun simctl launch "$UDID" "$bundle" -HCGSmokeScenario "$scenario" >/dev/null
               sleep 7
@@ -413,6 +417,18 @@ jobs:
         run: |
           sudo xcode-select -s "$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
           xcodebuild -version
+      - name: Vendored HCGDeviceLink is an unmodified copy
+        # HCGDeviceLink/ is copied from HCG-Server (clients/swift/HCGDeviceLink); it is never edited here.
+        working-directory: HCGDeviceLink
+        run: |
+          shasum -a 256 -c VENDORED.sha256
+          # No file may be added next to the vendored sources either.
+          listed=$(awk '{print $2}' VENDORED.sha256 | sort)
+          present=$(git ls-files . | grep -v -E '^(VENDORED\.(md|sha256)|\.gitignore)$' | sort)
+          if [ "$listed" != "$present" ]; then
+            echo "FAIL: files in HCGDeviceLink/ differ from VENDORED.sha256"; diff <(echo "$listed") <(echo "$present"); exit 1
+          fi
+          echo "PASS: HCGDeviceLink matches VENDORED.sha256"
       - name: Build (macOS)
         working-directory: HCGTerminalKit
         run: |

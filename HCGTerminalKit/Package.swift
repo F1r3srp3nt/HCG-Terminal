@@ -19,6 +19,9 @@ import PackageDescription
 //   ArtifactManager              artifact index and verified downloads.
 //   TerminalUI                   SwiftUI interface. Views compile on Apple platforms only.
 //   UnleashedIntegration         wires the Unleashed backend into TerminalUI (Unleashed app target only).
+//   DeviceLinkIntegration        HCG Device Link (connected devices): capability advertising from this app's
+//                                own verified reports, connection state, sync. Uses the vendored HCGDeviceLink
+//                                client (../HCGDeviceLink, an unmodified copy from HCG-Server).
 //
 // The module the request calls "Security" is named `TerminalSecurity` so it does not shadow
 // Apple's Security framework (which it imports for Keychain access).
@@ -38,6 +41,7 @@ let package = Package(
         .library(name: "DeveloperWorkspace", targets: ["DeveloperWorkspace"]),
         .library(name: "BuildOrchestrator", targets: ["BuildOrchestrator"]),
         .library(name: "ArtifactManager", targets: ["ArtifactManager"]),
+        .library(name: "DeviceLinkIntegration", targets: ["DeviceLinkIntegration"]),
         .library(name: "TerminalUI", targets: ["TerminalUI"]),
         // Linked only by the Unleashed app target.
         .library(name: "UnleashedIntegration", targets: ["UnleashedIntegration"]),
@@ -47,6 +51,8 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-nio-ssh.git", from: "0.9.0"),
         .package(url: "https://github.com/apple/swift-crypto.git", "3.0.0"..<"4.0.0"),
         .package(url: "https://github.com/migueldeicaza/SwiftTerm.git", exact: "1.5.1"),
+        // Vendored HCG Device Link client. Do not edit; CI checks HCGDeviceLink/VENDORED.sha256.
+        .package(path: "../HCGDeviceLink"),
     ],
     targets: [
         .target(name: "TerminalCore"),
@@ -86,11 +92,19 @@ let package = Package(
             dependencies: ["TerminalCore", "FileWorkspace", .product(name: "Crypto", package: "swift-crypto")]
         ),
         .target(
+            name: "DeviceLinkIntegration",
+            dependencies: [
+                "TerminalCore", "TerminalCapabilityProvider",
+                .product(name: "HCGDeviceLink", package: "HCGDeviceLink"),
+            ]
+        ),
+        .target(
             name: "TerminalUI",
             dependencies: [
                 "TerminalCore", "TerminalCapabilityProvider", "TerminalSecurity", "Diagnostics", "FileWorkspace",
                 "LocalCommandEngine", "VanillaExecutionProvider", "RemoteSSH", "DeveloperWorkspace",
-                "BuildOrchestrator", "ArtifactManager",
+                "BuildOrchestrator", "ArtifactManager", "DeviceLinkIntegration",
+                .product(name: "HCGDeviceLink", package: "HCGDeviceLink"),
                 .product(name: "SwiftTerm", package: "SwiftTerm", condition: .when(platforms: [.iOS, .macOS])),
             ]
         ),
@@ -131,8 +145,18 @@ let package = Package(
             dependencies: ["DeveloperWorkspace", "BuildOrchestrator", "ArtifactManager", "FileWorkspace", "TerminalCore"]
         ),
         .testTarget(
+            name: "DeviceLinkIntegrationTests",
+            dependencies: [
+                "DeviceLinkIntegration", "TerminalCapabilityProvider", "TerminalCore",
+                .product(name: "HCGDeviceLink", package: "HCGDeviceLink"),
+            ]
+        ),
+        .testTarget(
             name: "TerminalUITests",
-            dependencies: ["TerminalUI", "TerminalCore", "TerminalCapabilityProvider", "TerminalSecurity", "FileWorkspace", "LocalCommandEngine"]
+            dependencies: [
+                "TerminalUI", "TerminalCore", "TerminalCapabilityProvider", "TerminalSecurity", "FileWorkspace", "LocalCommandEngine",
+                .product(name: "HCGDeviceLink", package: "HCGDeviceLink"),
+            ]
         ),
     ],
     swiftLanguageModes: [.v6]

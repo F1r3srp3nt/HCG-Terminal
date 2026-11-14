@@ -45,6 +45,11 @@ Linux note: Ubuntu's packaged `libswiftObservation.so` needs `-Xlinker --allow-s
   - appearance settings persist.
 - **Fixed race:** a PTY descriptor could be reused while its reader thread still held it. This intermittently caused empty process output (1 in 12 runs before the fix, 0 in 20 after).
 
+### HCG Device Link (Connected Devices)
+
+- **Linux, Swift 6.0.3:** 221 tests, 12 skipped (the SSH-server tests), 0 failures. 184 before this change; the 37 new tests are in `DeviceLinkIntegrationTests` (36) and `TerminalAppModelTests` (1). They cover capability advertising for both builds, the connection-state reducer and back-off, the `hcg-connect.json` rules (the shipped file has no client ID), and pairing, sync, report viewing and removal against a scripted server.
+- **Not verified yet:** the Connected Devices screen has not been compiled or run by this project (it is SwiftUI, iOS only; CI builds it). Nothing has been tested against a real HCG Server, and HCG Connect sign-in cannot be tested until HCG issues a client. See `CONNECTED_DEVICES.md`.
+
 ## iOS builds in CI (`.github/workflows/apple-build.yml`, run 43143412406, commit a9e7e38)
 
 | Check | HCGTerminal | HCGTerminalUnleashed |

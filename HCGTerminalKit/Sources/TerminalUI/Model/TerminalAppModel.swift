@@ -1,8 +1,10 @@
 import ArtifactManager
 import BuildOrchestrator
 import DeveloperWorkspace
+import DeviceLinkIntegration
 import Diagnostics
 import Foundation
+import HCGDeviceLink
 import Observation
 import RemoteSSH
 import TerminalCapabilityProvider
@@ -127,11 +129,17 @@ public final class TerminalAppModel {
     public private(set) var isTestingShell = false
     public private(set) var appearance: AppearanceSettings
 
+    // MARK: Connected devices
+    /// HCG Device Link. `nil` where the platform has no Keychain or pinned transport. Nothing
+    /// it receives changes what this app may do locally.
+    public let deviceLink: DeviceLinkController?
+
     public init(dependencies: AppDependencies) {
         self.dependencies = dependencies
         self.preferredMode = dependencies.preferences.preferredMode
         self.accessSettings = dependencies.access.settings
         self.appearance = dependencies.appearance.settings
+        self.deviceLink = dependencies.deviceLink.map { DeviceLinkController(environment: $0) }
         self.builds = BuildCenter(dependencies: dependencies) { [weak self] hostID in
             guard let self, let host = self.hosts.first(where: { $0.id == hostID }) else {
                 throw RemoteSessionError.unknownHost
@@ -145,6 +153,13 @@ public final class TerminalAppModel {
             }
             self?.recordVerification(.buildOrchestration, observation: "\(run.plan.title) on \(run.plan.hostName) ran to completion (exit \(status)).")
         }
+        self.deviceLink?.capabilityProvider = { [weak self] in self?.advertisedLinkCapabilities ?? [] }
+    }
+
+    /// What this installation advertises over Device Link: computed from this app's own
+    /// capability reports and switches only (`TerminalLinkCapabilities`).
+    public var advertisedLinkCapabilities: [LinkCapability] {
+        TerminalLinkCapabilities.advertised(distribution: dependencies.distribution.linkVariant, reports: reports, access: dependencies.access)
     }
 
     /// Wires prompts and loads persisted state. Call once from the root view.

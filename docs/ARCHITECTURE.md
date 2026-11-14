@@ -29,6 +29,8 @@ ArtifactManager      ArtifactDownloader (SHA-256 verified), ArtifactIndex  â”€â”
 TerminalUI           TerminalAppModel, SessionModel, BuildCenter (Observation, testable on Linux)
                      SwiftUI views + SwiftTerm terminal view (Apple platforms only)
 UnleashedIntegration wires UnleashedExecutionProvider into TerminalUI (Unleashed target only)
+DeviceLinkIntegration HCG Device Link: advertised capabilities (from this app's own reports), connection
+                     state, DeviceLinkController. Uses the vendored ../HCGDeviceLink package.
 ```
 
 TerminalUI depends on the `LocalExecutionProvider` and `TerminalCapabilityProvider` protocols and on an `UnleashedTools` protocol it defines itself. It never imports `UnleashedExecutionProvider`; only `UnleashedIntegration` does, and only the Unleashed app target links that.

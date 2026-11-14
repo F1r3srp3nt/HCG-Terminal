@@ -30,11 +30,12 @@ HCGTerminal/                 app entry point, assets (shared by both targets)
 Variants/Standard|Unleashed/ per-target composition: decides which backend is linked
 HCGTerminal-Support/         Info.plist additions, entitlements
 HCGTerminalKit/              Swift package with all modules and tests
+HCGDeviceLink/               vendored HCG Device Link client (unmodified copy from HCG-Server; never edited here)
 Scripts/                     test SSH server, project generator, packaging, build-variant check
 docs/                        architecture, distribution, status
 ```
 
-Modules (in `HCGTerminalKit/Sources`): TerminalCore, TerminalUI, LocalCommandEngine, VanillaExecutionProvider, UnleashedExecutionProvider, TerminalCapabilityProvider, RemoteSSH, FileWorkspace, DeveloperWorkspace, BuildOrchestrator, ArtifactManager, TerminalSecurity (the requested "Security" module; renamed so it does not shadow Apple's Security framework), Diagnostics, and UnleashedIntegration. Details in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+Modules (in `HCGTerminalKit/Sources`): TerminalCore, TerminalUI, LocalCommandEngine, VanillaExecutionProvider, UnleashedExecutionProvider, TerminalCapabilityProvider, RemoteSSH, FileWorkspace, DeveloperWorkspace, BuildOrchestrator, ArtifactManager, TerminalSecurity (the requested "Security" module; renamed so it does not shadow Apple's Security framework), Diagnostics, UnleashedIntegration, and DeviceLinkIntegration (HCG Device Link). Details in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Build and install
 
@@ -49,6 +50,8 @@ Requirements: Xcode 16 or later (CI uses Xcode 26.6), iOS / iPadOS 17 or later. 
 | Jailbroken device (`.deb`) | `Scripts/package-ios.sh unleashed dist --deb rootless --ldid-entitlements <file>`; you install it with the device's package manager. See [`docs/UNLEASHED.md`](docs/UNLEASHED.md). |
 
 **Settings → Capabilities & Access** lets you turn each area on or off (enforced in the services). A switch only limits HCG Terminal; it never grants anything. See [`docs/CAPABILITIES_AND_ACCESS.md`](docs/CAPABILITIES_AND_ACCESS.md). Remaining work: [`docs/TODO.md`](docs/TODO.md).
+
+**Connected Devices** (sidebar → Device) pairs this app with an HCG Server through HCG Device Link, lists your other paired HCG devices and shows reports they share, as plain text only. HCG has not issued an HCG Connect client for HCG Terminal yet, so sign-in is shown as not configured and nothing is contacted. See [`docs/CONNECTED_DEVICES.md`](docs/CONNECTED_DEVICES.md).
 
 Check what is installed in **Diagnostics → Build**: variant (from the linked code), version, build number, source revision and bundle ID. [`docs/BUILD_VARIANTS.md`](docs/BUILD_VARIANTS.md) explains the two variants and why the first TestFlight build was the standard one.
 
