@@ -148,6 +148,8 @@ struct SessionHeader: View {
                     .font(.caption)
                     .foregroundStyle(HCGPalette.textSecondary)
                     .lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
+                    .fixedSize(horizontal: false, vertical: typeSize.isAccessibilitySize)
+                    .multilineTextAlignment(.leading)
                 if let note {
                     Label(note, systemImage: availability(model.preferredMode) == false ? "lock.fill" : "info.circle")
                         .font(.caption.weight(.semibold))

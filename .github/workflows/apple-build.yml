@@ -323,7 +323,7 @@ jobs:
           exit $status
 
       - name: Small iPhone and iPad (header layout, terminal, editor; both variants)
-        timeout-minutes: 20
+        timeout-minutes: 30
         run: |
           mkdir -p shots; status=0
           t() { local limit=$1; shift; perl -e 'alarm shift; exec @ARGV' "$limit" "$@"; }
@@ -347,6 +347,11 @@ jobs:
               app="$RUNNER_TEMP/DDsim/Build/Products/Debug-iphonesimulator/$scheme.app"
               bundle=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Info.plist")
               t 120 xcrun simctl install "$udid" "$app"
+              # Warm-up launch (not checked): the first launch on a freshly booted simulator can
+              # take over a minute on a busy runner. Every screenshot below is still checked.
+              t 180 xcrun simctl launch "$udid" "$bundle" >/dev/null || echo "NOTE: warm-up launch did not return on $name"
+              sleep 15
+              t 30 xcrun simctl terminate "$udid" "$bundle" 2>/dev/null || true
               runs="launch session long-name dashboard editor"
               [ "$scheme" = HCGTerminalUnleashed ] && runs="launch session"
               [ "$kind" = ipad ] && [ "$scheme" = HCGTerminal ] && runs="$runs landscape"
@@ -355,9 +360,9 @@ jobs:
                 t 30 xcrun simctl terminate "$udid" "$bundle" 2>/dev/null || true
                 if [ "$run" = landscape ]; then args="-HCGSmokeScenario ansi -HCGSmokeLandscape"; suffix=landscape-session
                 else args="-HCGSmokeScenario $run"; suffix=$([ "$run" = launch ] && echo home || echo "$run"); fi
-                if ! t 60 xcrun simctl launch "$udid" "$bundle" $args >/dev/null; then echo "FAIL: $scheme $run on $name (launch did not return)"; status=1; continue; fi
-                sleep 7
-                t 30 xcrun simctl io "$udid" screenshot "shots/$name-$scheme-$suffix.png" >/dev/null || echo "NOTE: screenshot timed out ($run on $name)"
+                if ! t 120 xcrun simctl launch "$udid" "$bundle" $args >/dev/null; then echo "FAIL: $scheme $run on $name (launch did not return)"; status=1; continue; fi
+                sleep 9
+                t 60 xcrun simctl io "$udid" screenshot "shots/$name-$scheme-$suffix.png" >/dev/null || echo "NOTE: screenshot timed out ($run on $name)"
                 if t 30 xcrun simctl spawn "$udid" launchctl list | grep -q "UIKitApplication:$bundle"; then echo "PASS: $scheme $run on $name"; else echo "FAIL: $scheme $run not running on $name"; status=1; fi
               done
               t 30 xcrun simctl terminate "$udid" "$bundle" || true
