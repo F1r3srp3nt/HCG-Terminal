@@ -439,6 +439,10 @@ jobs:
     timeout-minutes: 40
     # Root inside the container: the script creates the disposable test user and sshd.
     container: swift:6.0.3-jammy
+    # Container steps default to sh; the steps use bash features (pipefail).
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       - name: OpenSSH server (127.0.0.1:2222, SFTP on), ssh-keygen and openssl
