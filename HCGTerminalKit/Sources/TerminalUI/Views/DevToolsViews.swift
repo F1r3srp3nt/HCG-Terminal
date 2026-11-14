@@ -607,7 +607,7 @@ struct ArtifactRow: View {
     let onInstall: () -> Void
 
     var body: some View {
-        let tools = model.devTools
+        let tools: DevToolsCenter = model.devTools
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text(artifact.name).font(.subheadline.weight(.semibold)).lineLimit(2)

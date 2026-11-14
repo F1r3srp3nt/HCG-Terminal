@@ -1,4 +1,5 @@
 #if canImport(UIKit) && canImport(SwiftUI)
+import DeveloperWorkspace
 import FileWorkspace
 import SwiftUI
 import TerminalCapabilityProvider
