@@ -69,7 +69,7 @@ final class TerminalAppModelTests: XCTestCase {
         XCTAssertEqual(model.errorMessage, CapabilityReport.unleashedUnavailableMessage)
     }
 
-    func testStandardBuildHasNoHCGRepoPage() throws {
+    func testStandardBuildHasNoHCGRepoPage() async throws {
         // The HCG Repo row is Unleashed-only; the standard composition never sets a page.
         let model = try makeModel()
         XCTAssertEqual(model.dependencies.distribution, .standard)
