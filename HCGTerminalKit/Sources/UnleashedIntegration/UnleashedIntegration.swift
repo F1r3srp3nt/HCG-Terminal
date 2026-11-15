@@ -27,6 +27,7 @@ public enum UnleashedIntegration {
         var identity = BuildIdentity.current(linkedBackend: .unleashed)
         identity.backendMarker = UnleashedBackend.marker
         dependencies.buildIdentity = identity
+        dependencies.hcgRepoPage = HCGRepoPage.url
         dependencies.unleashedCapabilities = capabilities
         dependencies.unleashed = UnleashedExecutionProvider(capabilities: capabilities, observations: observations, gate: dependencies.gate, access: access)
         let tools = UnleashedToolsAdapter(capabilities: capabilities, observations: observations, gate: dependencies.gate, access: access)
