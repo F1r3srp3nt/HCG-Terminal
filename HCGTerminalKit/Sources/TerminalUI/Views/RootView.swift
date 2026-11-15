@@ -498,6 +498,23 @@ struct PreferencesView: View {
                 } header: { Text("Distribution") }
                 .font(.footnote)
                 .foregroundStyle(HCGPalette.textSecondary)
+
+                // Unleashed build only (the standard build has no page set). Opened by the system
+                // like links in the terminal; HCG Terminal itself makes no request.
+                if model.dependencies.distribution == .unleashed, let page = model.dependencies.hcgRepoPage {
+                    Section {
+                        Button {
+                            if page.scheme?.lowercased() == "https" { UIApplication.shared.open(page) }
+                        } label: {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Label("HCG Repo", systemImage: "safari")
+                                Text("Product page (opens in Safari)")
+                                    .font(.footnote)
+                                    .foregroundStyle(HCGPalette.textSecondary)
+                            }
+                        }
+                    }
+                }
             }
             .hcgRows()
         }

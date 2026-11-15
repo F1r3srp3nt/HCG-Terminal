@@ -176,6 +176,9 @@ public struct AppDependencies: Sendable {
     /// Layered environment assessment for Diagnostics (standard build: build, device and
     /// process layers only).
     public var environmentAssessment: @Sendable () async -> EnvironmentAssessment
+    /// HCG Repo product page, shown in Settings and opened in Safari only when tapped. `nil` in
+    /// the standard build: only the Unleashed composition sets it.
+    public var hcgRepoPage: URL? = nil
 
     public init(
         distribution: DistributionBuild, workspace: FileWorkspace, vanilla: any LocalExecutionProvider,
