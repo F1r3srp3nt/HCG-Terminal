@@ -92,7 +92,12 @@ saved connection's ID: no hostname, address, user name, key or secret.
 ## Verification
 
 Unit tests cover every accept and refuse rule above for both schemes, the variant mismatch, and
-that a copied link round-trips through the parser. CI also opens `open`, an unknown `connection`
-and a `command=` link in the iOS Simulator for each variant and checks the app keeps running
-(screenshots in `simulator-screenshots/handoff`). Opening links from HCG Nexus on a device has
-not been tested.
+that a copied link round-trips through the parser; model tests check that `open` changes
+nothing, that `connection` only shows the saved host (no session, no connection), and that refused
+links only set the notice. CI checks each built Info.plist for its one scheme and
+`HCGNexusHandoff = 1`, and opens `open`, an unknown `connection` and a `command=` link with
+`simctl openurl` for each variant. In the Simulator iOS shows its own "Open in "HCG Terminal"?"
+confirmation, which nothing taps, so that step shows the scheme is registered to the right app
+and nothing crashes; it does not exercise the in-app handling (screenshots in
+`simulator-screenshots/handoff`). Opening links from HCG Nexus on a device, the Connect sheet
+and the notice banner have not been tested on a device or seen in a screenshot.

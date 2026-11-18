@@ -284,6 +284,9 @@ jobs:
         if: always()
         timeout-minutes: 10
         run: |
+          # iOS answers simctl openurl with its own "Open in …?" confirmation, which nothing taps
+          # here: this shows each scheme is registered to its own app and nothing crashes. The
+          # in-app routing is covered by NexusHandoffTests and NexusHandoffModelTests.
           mkdir -p shots/handoff; status=0
           t() { local limit=$1; shift; perl -e 'alarm shift; exec @ARGV' "$limit" "$@"; }
           id=00000000-0000-4000-8000-000000000000   # not a saved connection: the notice is shown
