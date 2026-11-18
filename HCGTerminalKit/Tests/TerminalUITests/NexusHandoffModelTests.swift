@@ -44,7 +44,7 @@ final class NexusHandoffModelTests: XCTestCase {
         for host in model.hosts { XCTAssertFalse(model.isConnected(host), "a handoff link connected", file: file, line: line) }
     }
 
-    func testVariantFollowsTheBuild() throws {
+    func testVariantFollowsTheBuild() async throws {
         XCTAssertEqual(try makeModel(.standard).handoffVariant, .standard)
         XCTAssertEqual(try makeModel(.unleashed).handoffVariant, .unleashed)
     }
