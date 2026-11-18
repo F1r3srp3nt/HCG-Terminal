@@ -7,6 +7,9 @@ connections so the user can tap **Connect**. Nothing else is accepted.
 HCG Terminal keeps owning credentials, host keys and sessions. Nexus never reads Terminal's
 data, and no session state is shared with Nexus in either direction.
 
+First in HCG Terminal **0.1.1** (build 2), for both variants; 0.1.0 has no URL scheme. HCG Nexus 0.3.2~beta1
+reads `HCGNexusHandoff` from the installed app and offers *Open Saved Connection…* only when it is 1.
+
 ## Detecting support
 
 | Info.plist key | Type | Value |

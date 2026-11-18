@@ -88,9 +88,12 @@ public enum DoctorProbe {
         }
         // .NET
         s += """
-        if command -v dotnet >/dev/null 2>&1; then
-          blk dotnet.version; lim dotnet --version 2>&1 | head -12; endblk dotnet.version
-          blk dotnet.sdks; lim dotnet --list-sdks 2>&1 | head -30; endblk dotnet.sdks
+        if command -v dotnet >/dev/null 2>&1 && dh=$(mktemp -d "${TMPDIR:-/tmp}/hcg-doctor-dotnet.XXXXXX"); then
+          # Read-only: newer .NET SDKs write first-run files under $HOME/.dotnet; point them at a throwaway
+          # folder (removed below) and turn the first-run experience and telemetry off.
+          blk dotnet.version; lim env DOTNET_CLI_HOME="$dh" DOTNET_NOLOGO=1 DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 DOTNET_GENERATE_ASPNET_CERTIFICATE=false dotnet --version 2>&1 | head -12; endblk dotnet.version
+          blk dotnet.sdks; lim env DOTNET_CLI_HOME="$dh" DOTNET_NOLOGO=1 DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 DOTNET_GENERATE_ASPNET_CERTIFICATE=false dotnet --list-sdks 2>&1 | head -30; endblk dotnet.sdks
+          rm -rf "$dh"
         fi
         if [ -f global.json ]; then blk dotnet.global_json; head -c 4000 global.json; endblk dotnet.global_json; fi
         blk dotnet.frameworks; for f in *.csproj */*.csproj */*/*.csproj *.fsproj */*.fsproj; do [ -f "$f" ] && grep -hoE '<TargetFrameworks?>[^<]*</TargetFrameworks?>' "$f" | sed "s|^|$f	|"; done 2>/dev/null | head -50; endblk dotnet.frameworks
