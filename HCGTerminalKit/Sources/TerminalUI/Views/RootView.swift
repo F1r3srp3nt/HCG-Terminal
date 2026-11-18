@@ -96,6 +96,13 @@ public struct RootView: View {
         .sheet(isPresented: $showLoopback) {
             NavigationStack { LoopbackServiceSheet() }.environment(model)
         }
+        // HCG Nexus handoff: shows the saved connection; the user taps Connect.
+        .sheet(item: $model.handoffConnection) { host in
+            NavigationStack { NexusHandoffSheet(host: host) }
+                .environment(model)
+                .environment(\.hcgAppearance, model.appearance)
+        }
+        .handoffNoticeOverlay(model)
         .alert("Rename Session", isPresented: Binding(get: { renamingSession != nil }, set: { if !$0 { renamingSession = nil } })) {
             TextField("Name", text: $renameTitle)
             Button("Rename") {

@@ -12,9 +12,11 @@ PROJECT, MAINGROUP, PRODUCTS, SYNC, PKGREF = oid(), oid(), oid(), oid(), oid()
 targets = [
     dict(name="HCGTerminal", display="HCG Terminal", bundle="com.hakmicapitalgroup.hcgterminal",
          ent="HCGTerminal-Support/HCGTerminal.entitlements", cond="$(inherited)", variant="standard", folder="Variants/Standard",
+         scheme="hcgterminal",
          products=["TerminalUI", "FileWorkspace"]),
     dict(name="HCGTerminalUnleashed", display="HCG Terminal Unleashed", bundle="com.hakmicapitalgroup.hcgterminal.unleashed",
          ent="HCGTerminal-Support/HCGTerminalUnleashed.entitlements", cond="HCG_UNLEASHED_BUILD $(inherited)", variant="unleashed", folder="Variants/Unleashed",
+         scheme="hcgterminal-unleashed",
          products=["TerminalUI", "FileWorkspace", "UnleashedIntegration"]),
 ]
 for t in targets:
@@ -81,6 +83,7 @@ def target_cfg(t, id_, name):
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				HCG_BUILD_VARIANT = {t['variant']};
+				HCG_URL_SCHEME = "{t['scheme']}";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "HCGTerminal-Support/Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = "{t['display']}";

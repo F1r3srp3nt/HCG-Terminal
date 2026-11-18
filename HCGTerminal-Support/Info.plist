@@ -16,5 +16,24 @@
 	<string>$(HCG_BUILD_VARIANT)</string>
 	<key>HCGSourceRevision</key>
 	<string>unknown</string>
+	<!-- HCG Nexus handoff, contract version 1 (docs/NEXUS-HANDOFF.md). HCG_URL_SCHEME is set
+	     per target: "hcgterminal" (standard) or "hcgterminal-unleashed" (Unleashed), so the two
+	     apps never claim the same scheme. Links can only bring the app forward or show a saved
+	     connection; they never connect, run a command or start a session. -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>CFBundleURLName</key>
+			<string>com.hakmicapitalgroup.hcgterminal.nexus-handoff</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>$(HCG_URL_SCHEME)</string>
+			</array>
+		</dict>
+	</array>
+	<key>HCGNexusHandoff</key>
+	<integer>1</integer>
 </dict>
 </plist>

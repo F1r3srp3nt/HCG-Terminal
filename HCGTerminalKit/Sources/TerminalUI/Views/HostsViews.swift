@@ -37,6 +37,11 @@ struct HostsView: View {
                         Button("Delete", role: .destructive) { Task { await model.deleteHost(host) } }
                         Button("Edit") { editing = host }
                     }
+                    .contextMenu {
+                        Button { copyNexusLink(for: host, model: model) } label: {
+                            Label("Copy Link for HCG Nexus", systemImage: "link")
+                        }
+                    }
                 }
             }
             .hcgRows()
@@ -305,6 +310,13 @@ struct HostDetailView: View {
                     }
                 } header: { Text(host.endpoint.address) } footer: {
                     Text("Remote sessions run on \(host.name) and are independent of the local mode.")
+                }
+                Section {
+                    Button { copyNexusLink(for: host, model: model) } label: {
+                        Label("Copy Link for HCG Nexus", systemImage: "link")
+                    }
+                } footer: {
+                    Text("HCG Nexus can open this link to show this connection here. It contains only an ID: no address, user name, password or key. Opening it never connects by itself.")
                 }
                 Section("Toolchains") {
                     if let toolchains {

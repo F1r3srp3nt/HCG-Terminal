@@ -110,6 +110,13 @@ public final class TerminalAppModel {
     public private(set) var keys: [SSHKeyRecord] = []
     @ObservationIgnored private var connections: [UUID: SSHConnection] = [:]
 
+    // MARK: HCG Nexus handoff (docs/NEXUS-HANDOFF.md)
+    /// A saved connection a handoff link asked to show. Shown with a Connect button; nothing
+    /// connects, runs or starts until the user taps it.
+    public var handoffConnection: HostProfile?
+    /// A short, non-blocking notice about the last handoff link (or a copied link).
+    public var handoffNotice: HandoffNotice?
+
     // MARK: Remote development
     public private(set) var builds: BuildCenter!
     /// Doctor, detached build jobs, the Log Console and install handoff.
@@ -726,6 +733,43 @@ public final class TerminalAppModel {
         if selectedSessionID == id { selectedSessionID = sessions.last?.id }
     }
 
+    // MARK: - HCG Nexus handoff
+
+    /// This build's handoff variant. Each build accepts only its own scheme.
+    public var handoffVariant: NexusHandoff.Variant {
+        switch dependencies.distribution {
+        case .standard: .standard
+        case .unleashed: .unleashed
+        }
+    }
+
+    /// The link "Copy Link for HCG Nexus" copies. Contains only the saved connection's ID.
+    public func nexusLink(for host: HostProfile) -> String {
+        NexusHandoff.connectionLink(id: host.id, variant: handoffVariant)
+    }
+
+    /// Routes a URL the app was opened with. The only effects are bringing the app forward
+    /// (`open`) and showing a saved connection for the user to connect to (`connection`).
+    /// Never connects, runs a command or starts a session.
+    public func handleOpenURL(_ url: URL) async {
+        switch NexusHandoff.parse(url, variant: handoffVariant) {
+        case .success(.open):
+            return
+        case .success(.connection(let id)):
+            // Read the store too: a link can arrive before bootstrap has loaded the hosts.
+            var saved = hosts.first { $0.id == id }
+            if saved == nil { saved = await dependencies.hostStore.all().first { $0.id == id } }
+            guard let host = saved else {
+                handoffNotice = HandoffNotice(HandoffNotice.unknownConnectionMessage, kind: .warning)
+                return
+            }
+            handoffConnection = host
+        case .failure(let refusal):
+            handoffNotice = HandoffNotice("Link ignored. \(refusal.message) Nothing was run.", kind: .warning)
+            await DiagnosticLog.shared.record(.notice, "handoff", "Refused a handoff link", metadata: ["reason": refusal.code])
+        }
+    }
+
     // MARK: - Hosts and keys
 
     public func saveHost(_ host: HostProfile, password: String?) async {
@@ -810,6 +854,21 @@ public final class TerminalAppModel {
 
     public func answerAuthorization(_ granted: Bool) { authorizationPrompt?.resolve(granted) }
     public func answerHostKey(_ approved: Bool) { hostKeyPrompt?.resolve(approved) }
+}
+
+/// A short notice about a handoff link, shown as a dismissible banner that does not block.
+public struct HandoffNotice: Identifiable, Equatable, Sendable {
+    public enum Kind: Sendable { case info, warning }
+    public static let unknownConnectionMessage = "This saved connection isn't on this device."
+
+    public let id = UUID()
+    public var message: String
+    public var kind: Kind
+
+    public init(_ message: String, kind: Kind = .info) {
+        self.message = message
+        self.kind = kind
+    }
 }
 
 public enum RemoteSessionError: Error, LocalizedError, Equatable {

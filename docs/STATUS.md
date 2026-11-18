@@ -70,6 +70,7 @@ Both apps were installed and launched in an iPhone simulator. Each was driven in
 - **Unleashed on a jailbroken device**: a sandboxed install (expected *Permission denied* / *not observable*) and an install from the `.deb` (shell, programs, packages, write test, prompts). The required jailbreak, iOS version and bootstrap are not yet known.
 - **Whether a jailbreak accepts the `.deb`'s ldid pseudo-signature and the example entitlements.**
 - **Signed archive and IPA export**: nothing has been signed or exported with a team. HCG Terminal never uploads.
+- **HCG Nexus handoff on a device** (`docs/NEXUS-HANDOFF.md`): the parser and model routing are unit tested and the links are opened in the Simulator in CI; opening them from HCG Nexus, and the Connect sheet with a real saved host, have not been tried on a device.
 - **Remote builds against a Mac** (`xcodebuild`) or a .NET host: command construction is tested; only SwiftPM ran end to end.
 
 See `TODO.md` for the milestones that close these gaps.

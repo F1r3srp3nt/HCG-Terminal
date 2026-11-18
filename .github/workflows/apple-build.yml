@@ -78,6 +78,17 @@ jobs:
             HCGTerminalUnleashed) expected=unleashed; [ "$backend" -gt 0 ] || { echo "FAIL: Unleashed build lacks the Unleashed backend"; exit 1; } ;;
           esac
           [ "$variant" = "$expected" ] || { echo "FAIL: HCGBuildVariant is $variant, expected $expected"; exit 1; }
+          # HCG Nexus handoff (docs/NEXUS-HANDOFF.md): one URL scheme per variant, contract version 1.
+          case "$expected" in standard) want_scheme=hcgterminal ;; unleashed) want_scheme=hcgterminal-unleashed ;; esac
+          url_name=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleURLTypes:0:CFBundleURLName' "$plist" 2>/dev/null || echo missing)
+          url_scheme=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleURLTypes:0:CFBundleURLSchemes:0' "$plist" 2>/dev/null || echo missing)
+          url_count=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleURLTypes:0:CFBundleURLSchemes' "$plist" 2>/dev/null | grep -c '^ ' || true)
+          handoff=$(/usr/libexec/PlistBuddy -c 'Print :HCGNexusHandoff' "$plist" 2>/dev/null || echo missing)
+          echo "URL scheme:          $url_scheme ($url_name, $url_count scheme(s)) · HCGNexusHandoff=$handoff"
+          [ "$url_scheme" = "$want_scheme" ] && [ "$url_count" = "1" ] || { echo "FAIL: URL scheme is $url_scheme ($url_count), expected only $want_scheme"; exit 1; }
+          [ "$url_name" = "com.hakmicapitalgroup.hcgterminal.nexus-handoff" ] || { echo "FAIL: CFBundleURLName is $url_name"; exit 1; }
+          [ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleURLTypes:1' "$plist" 2>/dev/null)" = "" ] || { echo "FAIL: more than one URL type"; exit 1; }
+          [ "$handoff" = "1" ] || { echo "FAIL: HCGNexusHandoff is $handoff, expected 1"; exit 1; }
           # The same check the "Verify build variant" build phase runs: backend marker in the code.
           Scripts/verify-build-variant.sh "$app" "$expected"
           echo "PASS: ${{ matrix.scheme }} is the $expected variant"
@@ -264,6 +275,36 @@ jobs:
                 echo "PASS: $scheme running after '$scenario'"
               else
                 echo "FAIL: $scheme is not running after '$scenario'"; status=1
+              fi
+            done
+          done
+          exit $status
+
+      - name: HCG Nexus handoff links (each variant's own scheme; nothing connects or runs)
+        if: always()
+        timeout-minutes: 10
+        run: |
+          mkdir -p shots/handoff; status=0
+          t() { local limit=$1; shift; perl -e 'alarm shift; exec @ARGV' "$limit" "$@"; }
+          id=00000000-0000-4000-8000-000000000000   # not a saved connection: the notice is shown
+          for scheme in HCGTerminal HCGTerminalUnleashed; do
+            app="$RUNNER_TEMP/DDsim/Build/Products/Debug-iphonesimulator/$scheme.app"
+            bundle=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Info.plist")
+            url_scheme=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleURLTypes:0:CFBundleURLSchemes:0' "$app/Info.plist")
+            echo "== $scheme ($bundle) scheme $url_scheme, HCGNexusHandoff=$(/usr/libexec/PlistBuddy -c 'Print :HCGNexusHandoff' "$app/Info.plist")"
+            t 30 xcrun simctl terminate "$UDID" "$bundle" 2>/dev/null || true
+            t 60 xcrun simctl launch "$UDID" "$bundle" -HCGSmokeScenario launch >/dev/null || { echo "FAIL: launch"; status=1; continue; }
+            sleep 6
+            n=0
+            for link in "$url_scheme://open" "$url_scheme://connection?id=$id" "$url_scheme://connection?id=$id&command=ls"; do
+              n=$((n+1))
+              if t 30 xcrun simctl openurl "$UDID" "$link"; then echo "opened $link"; else echo "FAIL: openurl $link"; status=1; fi
+              sleep 4
+              t 30 xcrun simctl io "$UDID" screenshot "shots/handoff/$scheme-$n.png" >/dev/null || echo "NOTE: screenshot timed out"
+              if t 30 xcrun simctl spawn "$UDID" launchctl list | grep -q "UIKitApplication:$bundle"; then
+                echo "PASS: $scheme running after $link"
+              else
+                echo "FAIL: $scheme not running after $link"; status=1
               fi
             done
           done
@@ -468,7 +509,7 @@ jobs:
           HCG_SSH_TEST: "1"
         run: |
           set -o pipefail
-          swift test --skip-build --filter "RemoteSSHTests|TerminalSecurityTests|RemoteFilesModelTests|DevToolsCenterTests|BuildAccessTests|DeveloperToolsTests" 2>&1 \
+          swift test --skip-build --filter "RemoteSSHTests|TerminalSecurityTests|RemoteFilesModelTests|DevToolsCenterTests|BuildAccessTests|DeveloperToolsTests|NexusHandoff" 2>&1 \
             | tee ../linux-ssh-tests.log | grep -E "Test Case .*(passed|failed|skipped)|error:|Executed [0-9]+ tests" | tail -80
           if grep -q "skipped" ../linux-ssh-tests.log; then echo "::warning::some SSH tests were skipped"; grep "skipped" ../linux-ssh-tests.log | head; fi
       - uses: actions/upload-artifact@v4

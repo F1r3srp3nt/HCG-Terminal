@@ -10,6 +10,11 @@ struct HCGTerminalApp: App {
     var body: some Scene {
         WindowGroup {
             RootView(model: model)
+                // HCG Nexus handoff (docs/NEXUS-HANDOFF.md). Links can only bring the app
+                // forward or show a saved connection; they never connect or run anything.
+                .onOpenURL { [model] url in
+                    Task { @MainActor in await model.handleOpenURL(url) }
+                }
         }
     }
 }
