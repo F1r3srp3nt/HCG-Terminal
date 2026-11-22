@@ -179,9 +179,9 @@ public final class PTYProcess: @unchecked Sendable {
     /// Opens a PTY pair and spawns `executable` on its secondary side in a new session.
     ///
     /// `controllingTerminalHelper`: the bundled `hcg-pty-helper`, when present. It runs first,
-    /// makes the terminal the session's controlling terminal (which `posix_spawn` cannot do on
-    /// Darwin) and then becomes `executable`. Without it the program still runs, without job
-    /// control.
+    /// makes the terminal the session's controlling terminal explicitly (TIOCSCTTY: posix_spawn
+    /// has no way to request it), changes directory without a shell trampoline, and then
+    /// becomes `executable`.
     public static func spawn(
         executable: String,
         arguments: [String],
@@ -243,8 +243,9 @@ public final class PTYProcess: @unchecked Sendable {
                 executable: launchExecutable, arguments: launchArguments, environment: env,
                 workingDirectory: launchDirectory, newSession: true, workingDirectoryStrategy: workingDirectoryStrategy
             ) { actions in
-                // Opening the terminal after setsid() makes it the controlling terminal on Linux.
-                // On Darwin it becomes stdio but not the controlling terminal (documented limitation).
+                // Opening the terminal after setsid() makes it the controlling terminal on Linux and,
+                // as observed on macOS CI, on Darwin too. hcg-pty-helper (TIOCSCTTY) guarantees it
+                // where that does not happen; whether iOS needs it is part of the device test.
                 posix_spawn_file_actions_addopen(&actions, 0, secondaryName, openFlags, 0)
                 posix_spawn_file_actions_adddup2(&actions, 0, 1)
                 posix_spawn_file_actions_adddup2(&actions, 0, 2)

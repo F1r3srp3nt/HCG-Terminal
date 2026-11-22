@@ -208,7 +208,11 @@ jobs:
             echo "-- every Mach-O carries an ldid signature"
             find "$app" -type f -print0 | while IFS= read -r -d '' f; do
               if file -b "$f" | grep -q Mach-O; then
-                codesign -dv "$f" 2>&1 | grep -q "Signature=adhoc" || { echo "not ldid/ad-hoc signed: $f"; codesign -dv "$f" 2>&1 | head -5; exit 1; }
+                # ldid writes a CodeDirectory without a certificate: codesign shows "CodeDirectory v=…"
+                # and no "Authority=" line. Anything else (unsigned, or an Apple certificate left over) fails.
+                info=$(codesign -dvvv "$f" 2>&1 || true)
+                echo "$info" | grep -q "CodeDirectory v=" || { echo "no code signature: $f"; echo "$info" | head -5; exit 1; }
+                if echo "$info" | grep -q "^Authority="; then echo "certificate signature left in: $f"; echo "$info" | grep "^Authority="; exit 1; fi
                 echo "ok $(basename "$f")"
               fi
             done

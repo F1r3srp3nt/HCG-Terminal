@@ -4,10 +4,11 @@
  *   hcg-pty-helper [-C <directory>] [--] <program> [arguments…]
  *
  * HCG Terminal starts this helper with posix_spawn() on the secondary side of a pseudo-terminal,
- * in a new session. On Darwin, opening a terminal does not make it the session's controlling
- * terminal, and posix_spawn() has no way to ask for that. Without a controlling terminal the
- * terminal driver cannot deliver Ctrl-C / Ctrl-Z / Ctrl-\ or window-size changes to the
- * foreground program, and shells disable job control.
+ * in a new session. posix_spawn() has no way to request a controlling terminal; whether opening
+ * the terminal provides one depends on the kernel (Linux and macOS do; iOS is checked on the
+ * device). Without a controlling terminal the terminal driver cannot deliver Ctrl-C / Ctrl-Z /
+ * Ctrl-\ or window-size changes to the foreground program, and shells disable job control.
+ * The helper makes it explicit, so it does not depend on that behaviour.
  *
  * The helper does exactly these things and then replaces itself with the requested program:
  *   1. setsid() if it is not already a session leader;

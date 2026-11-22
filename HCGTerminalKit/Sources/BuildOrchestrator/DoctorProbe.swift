@@ -89,6 +89,9 @@ public enum DoctorProbe {
         // .NET
         s += """
         if command -v dotnet >/dev/null 2>&1; then
+          # Without these, dotnet writes telemetry IDs and first-run files into $HOME (seen on macOS CI).
+          DOTNET_CLI_TELEMETRY_OPTOUT=1; DOTNET_NOLOGO=1; DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1; DOTNET_GENERATE_ASPNET_CERTIFICATE=false; DOTNET_ADD_GLOBAL_TOOLS_TO_PATH=false
+          export DOTNET_CLI_TELEMETRY_OPTOUT DOTNET_NOLOGO DOTNET_SKIP_FIRST_TIME_EXPERIENCE DOTNET_GENERATE_ASPNET_CERTIFICATE DOTNET_ADD_GLOBAL_TOOLS_TO_PATH
           blk dotnet.version; lim dotnet --version 2>&1 | head -12; endblk dotnet.version
           blk dotnet.sdks; lim dotnet --list-sdks 2>&1 | head -30; endblk dotnet.sdks
         fi

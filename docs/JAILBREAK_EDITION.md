@@ -20,12 +20,10 @@ Nothing in this milestone changes the Standard edition's entitlements, sandbox o
 
 **Local terminal**
 - **The shell:** the device's real installed shell (`zsh`, `bash` or `sh` from the bootstrap) runs in a pseudo-terminal as the app's user (`mobile`). The terminal shows real output, never simulated results.
-- **Job control:** `hcg-pty-helper` (source in `Unleashed-Helper/hcg-pty-helper.c`) makes the terminal the session's controlling terminal, which `posix_spawn` cannot do on iOS. With it:
-  - Ctrl-C, Ctrl-Z and Ctrl-\ reach the foreground program;
-  - window-size changes reach full-screen programs (`vim`, `top`, `less`);
-  - `/dev/tty` works.
-
-  Without the helper, the shell still runs, but without job control.
+- **Job control:** the shell needs a controlling terminal for Ctrl-C, Ctrl-Z and Ctrl-\ to reach the foreground program, for window-size changes to reach full-screen programs (`vim`, `top`, `less`), and for `/dev/tty` to work.
+  - On macOS CI, a terminal opened by the new session already becomes the controlling terminal. Whether iOS behaves the same is part of the device test.
+  - `hcg-pty-helper` (source in `Unleashed-Helper/hcg-pty-helper.c`) makes it explicit with `TIOCSCTTY`, so it does not depend on that behaviour. It also sets the working directory without a shell trampoline.
+  - The helper changes no privileges or signals. If it is missing, the shell still starts.
 - **Inherited behaviour:** working directory, environment variables, ANSI rendering, keyboard shortcuts and the key row, session history, interrupt, terminate (SIGHUP, then SIGKILL), and the command guard (typed `sudo`/`rm -rf`/`reboot` lines are confirmed first).
 - **Privileges:** privileged commands are never run automatically. `sudo` is only ever typed by you, and asks for its own password.
 
@@ -109,7 +107,7 @@ The CI artifact `hcg-terminal-unleashed-rootless-rc` holds the `.deb`, `.sha256`
 | 2 | Native iOS build | Release and Debug `iphoneos` builds and unsigned archives of both schemes in CI. |
 | 3 | Rootless package structure | CI: `dpkg-deb -I/-c`, extraction, variant check, HCG Repo inspector. |
 | 4 | Executable signing | CI: every Mach-O ad hoc / ldid-signed (`codesign -dv`), app entitlements printed (`ldid -e`), helper is arm64. |
-| 5 | Local shell and PTY | Linux CI and here: real shells in PTYs (`ExecutionProviderTests`, `PTYHelperTests`). Compared with and without the helper: controlling terminal, Ctrl-C, window-size signal, working directory. |
+| 5 | Local shell and PTY | Linux and macOS CI: real shells in PTYs (`ExecutionProviderTests`, `PTYHelperTests`). With the helper: controlling terminal, Ctrl-C, window-size signal, working directory, on Linux and on Darwin. On Linux the no-helper case is also checked. On Darwin a terminal opened by the new session is already the controlling terminal, so that case can't be reproduced there. |
 | 6 | Interactive terminal | Same PTY tests (interrupt, resize, programs that read the terminal). **On a device: not done.** |
 | 7 | Install on a jailbroken device | **Not done.** Needs the iPhone 11 Pro Max (iOS 17.4, Dopamine 2.x). |
 | 8 | Upgrade and uninstall | **Not done on a device.** Package scripts reviewed; they only run uicache. |
