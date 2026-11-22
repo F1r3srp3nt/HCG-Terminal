@@ -48,6 +48,8 @@ Requirements: Xcode 16 or later (CI uses Xcode 26.6), iOS / iPadOS 17 or later. 
 | Unsigned artifacts, kept apart | `Scripts/package-ios.sh standard dist` → `dist/standard/…`; `Scripts/package-ios.sh unleashed dist` → `dist/unleashed/…` (unsigned archive; Unleashed also an unsigned `.ipa`). Both refuse a bundle whose code does not match its variant. |
 | Jailbroken device (`.deb`) | `Scripts/package-ios.sh unleashed dist --deb rootless --ldid-entitlements <file>`; you install it with the device's package manager. See [`docs/UNLEASHED.md`](docs/UNLEASHED.md). |
 
+**Jailbreak Edition (HCG Terminal Unleashed via HCG Repo):** rootless `.deb` release candidate, job control in local shells, read-only jailbreak diagnostics. Not yet device-tested; see [`docs/JAILBREAK_EDITION.md`](docs/JAILBREAK_EDITION.md).
+
 **Doctor, Build & Install, Log Console:** check a Mac project's toolchain from the iPhone, run a real build (through HCG Executable Maker for iOS) as a job that survives disconnection, follow its log and get the product. See [`docs/DEV_TOOLS.md`](docs/DEV_TOOLS.md).
 
 **Settings → Capabilities & Access** lets you turn each area on or off (enforced in the services). A switch only limits HCG Terminal; it never grants anything. See [`docs/CAPABILITIES_AND_ACCESS.md`](docs/CAPABILITIES_AND_ACCESS.md). Remaining work: [`docs/TODO.md`](docs/TODO.md).

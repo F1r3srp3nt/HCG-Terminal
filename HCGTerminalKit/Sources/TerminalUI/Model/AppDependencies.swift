@@ -136,6 +136,9 @@ public protocol UnleashedTools: Sendable {
     func toolSession(_ path: String, arguments: [String]) async throws -> any TerminalSession
     /// Explicit, bounded checks. Only run when the user asks.
     func verifyShell() async -> EnvironmentAssessment.Operation
+    /// Read-only jailbreak diagnostics: install location and signature, rootless bootstrap,
+    /// package database health, repositories, tweak injection / Safe Mode clues, storage.
+    func jailbreakDiagnostics() async -> DiagnosticReport
     func verifyWrite(in directory: String) async -> EnvironmentAssessment.Operation
     /// Bootstrap roots the user entered (relocated installs). Probed read-only.
     func customBootstrapRoots() async -> [String]
