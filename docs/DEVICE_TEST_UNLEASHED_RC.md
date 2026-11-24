@@ -9,7 +9,7 @@
 | Jailbreak | Dopamine 2.x, rootless (`/var/jb`) |
 | Package manager | Zebra 1.1.x (repeat the install with Sileo if it is installed) |
 | Package | `com.hakmicapitalgroup.hcgterminal.unleashed_0.2.0~rc1_iphoneos-arm64.deb` from CI artifact `hcg-terminal-unleashed-rootless-rc` |
-| Expected SHA-256 | The value in `<deb>.sha256` from the same CI run (also in the PR and the release-approval message) |
+| Expected SHA-256 | `02626804763200f9e29d651a213bdb92330351d3052073e6a52cb86d62fc5a28` (frozen candidate, CI run 72; see `docs/releases/hcg-terminal-unleashed-0.2.0-rc1/FREEZE.md`) |
 
 Record for every step: **Pass / Fail / Not run**, plus a screenshot or a note. Stop at the first failure in sections A–C and report it.
 

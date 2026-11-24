@@ -140,7 +140,7 @@ The app shows this in Diagnostics → *HCG Ecosystem*.
 | HCG Connect | **Not available.** No sign-in client has been issued for HCG Terminal. When one is, Terminal will use HCG's central sign-in (system browser, PKCE, refresh token in the Keychain), not its own accounts. The `hcg--connect` repository is currently a placeholder. |
 | HCG Store licensing | **Not available.** The Store is not live. Access is enforced at download time by HCG Repo, not in the app. |
 | HCG Server | **Not available** for phones: companion pairing is designed, not built, and there is no command API. |
-| HCG Agent Runtime | **Does not exist yet** in any HCG product. |
+| HCG Agent Runtime | **Development project; not available to HCG Terminal yet.** Agent Runtime exists as an HCG development project, but it has no native release and HCG Terminal has no integration with it. Nothing is connected. (The in-app *HCG Ecosystem* text in 0.2.0~rc1 still says no interface exists; that wording is corrected in the next candidate.) |
 
 ## HCG Repo publication readiness
 
@@ -160,12 +160,10 @@ The app shows this in Diagnostics → *HCG Ecosystem*.
   - remove the `uikittools` and mixed-signature notes, which this candidate fixes;
   - mention `hcg-pty-helper`.
 - **`package.toml [review.entitlements]`:** unchanged. The helper and libraries carry no entitlements, so they need no review entry.
-- **An import request** `imports/hcg-terminal-unleashed-0.2.0-rc1-rootless.toml`:
-  - `kind = "github-artifact"`, repository `F1r3srp3nt/HCG-Terminal`;
-  - the CI run ID and commit;
-  - artifact `hcg-terminal-unleashed-rootless-rc`;
-  - the `.deb`'s SHA-256;
-  - `channel = "candidate"`.
+- **Importing the frozen package:** do not use an `imports/*.toml` request that points at CI run 72's artifact; that artifact expires on 2026-11-25.
+  - After approval, import the owner's frozen copy with `docs/releases/hcg-terminal-unleashed-0.2.0-rc1/hcg-repo-import-frozen-rc1.py`.
+  - The script pins the SHA-256 and uses the candidate channel, with HCG Repo's own checks.
+  - The prepared patch and the freeze record are in `docs/releases/hcg-terminal-unleashed-0.2.0-rc1/`.
 - **Do not reuse `0.1.0-1`.** It is locked.
 
 Pushing a `.deb` or an import request to any branch of the public HCG-repo repository already makes the file downloadable there. So nothing has been pushed to HCG-repo. Wait for your approval and the device test.
