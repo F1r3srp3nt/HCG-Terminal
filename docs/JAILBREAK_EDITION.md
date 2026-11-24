@@ -80,6 +80,36 @@ Nothing in this milestone changes the Standard edition's entitlements, sandbox o
 - If the app fails to start, remove it in Sileo or Zebra, or over SSH: `sudo dpkg -r com.hakmicapitalgroup.hcgterminal.unleashed`.
 - If the icon is missing, run `uicache -a`.
 
+## Startup recovery and Safe Mode (from 0.2.0~rc2)
+
+0.2.0~rc1 installed and registered on a Dopamine iPhone 11 Pro Max, but closed about a second after launch. The cause is not yet known. To make the app open regardless, and to leave evidence when it fails:
+
+- **Startup journal.** Before anything else starts, the app writes each startup step to `~/Library/Application Support/HCGTerminal/Startup/startup.log`. On a jailbroken device the app has no container, so this is `/var/mobile/Library/Application Support/HCGTerminal/Startup/`. A crash signal is recorded with the step it happened in, then handled by iOS as before, so the iOS crash report is still written. The journal also records the app version, iOS version, user ID and the tweak libraries injected into the app. It contains no passwords, keys, tokens, host names or commands.
+- **Recovery screen.** If the earlier launch did not finish starting, the app opens on *Startup Recovery* instead. It shows where the launch stopped, can share the startup report, and offers:
+  - *Start in Safe Mode*: skips jailbreak environment detection, the environment assessment and resuming background jobs. A banner runs them later, one at a time.
+  - *Start Normally*.
+
+  The app's services are not created until you choose, so the screen opens even if they are what failed.
+- **Diagnostics → Startup** shows and shares the current startup log.
+- **Shell, PTY helper, bootstrap.** None of them is touched at startup. A local shell starts only when you open a local session, and a failure there is reported in that session.
+
+### Collecting evidence from the device
+
+1. **iOS crash report:** Settings → Privacy & Security → Analytics & Improvements → Analytics Data → the newest `HCGTerminalUnleashed-…` entry → Share.
+2. **Startup report:** in the app (recovery screen or Diagnostics → Startup) → *Share Startup Report*. If the app cannot open at all, the same file is in Filza at the path above.
+3. **Direct launch** in NewTerm (prints loader and Swift errors): `/var/jb/Applications/HCGTerminalUnleashed.app/HCGTerminalUnleashed`, then Ctrl-C.
+
+### Tweak isolation (this app only, reversible)
+
+Look at *injected libraries* in the startup report first.
+
+To test the app without tweaks, use [Choicy](https://github.com/opa334/Choicy), if installed:
+1. Settings → Choicy → Applications → *HCG Terminal Unleashed* → enable *Disable Tweak Injection*.
+2. Open the app.
+3. Turn the switch off again afterwards.
+
+Choicy changes nothing for other apps. Do not turn off tweak injection globally and do not uninstall tweaks for this test.
+
 ## The package
 
 Built by `Scripts/package-ios.sh unleashed <out> --deb rootless --ldid-entitlements HCGTerminal-Support/Unleashed-jailbreak.entitlements --deb-version 0.2.0~rc1`. CI builds it on every push; see the *iOS · HCGTerminalUnleashed* job.

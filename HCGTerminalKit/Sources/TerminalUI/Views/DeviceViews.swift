@@ -484,6 +484,7 @@ struct DiagnosticsView: View {
         List {
             Group {
                 BuildIdentitySection(identity: model.dependencies.buildIdentity)
+                StartupLogSection()
                 Section {
                     NavigationLink { HCGEcosystemView() } label: { Label("HCG Ecosystem", systemImage: "point.3.connected.trianglepath.dotted") }
                 } footer: { Text("What works with HCG Repo, Nexus, Sentinel, Connect, Store and Server today.") }

@@ -74,7 +74,7 @@ public enum HCGEcosystem {
             ),
             Integration(
                 product: "HCG Agent Runtime", state: .notYetAvailable,
-                detail: "No Agent Runtime interface exists yet in any HCG product. Nothing is connected.",
+                detail: "Agent Runtime exists as an HCG development project, but it has no native release yet and HCG Terminal has no integration with it. Nothing is connected.",
                 link: nil
             ),
         ]

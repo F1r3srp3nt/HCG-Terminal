@@ -42,8 +42,11 @@ public struct RootView: View {
     @State private var smokeSheet: SmokeSheet?
     #endif
 
-    public init(model: TerminalAppModel) {
+    private let launch: LaunchController?
+
+    public init(model: TerminalAppModel, launch: LaunchController? = nil) {
         _model = State(initialValue: model)
+        self.launch = launch
     }
 
     public var body: some View {
@@ -57,8 +60,13 @@ public struct RootView: View {
         .environment(\.hcgAppearance, model.appearance)
         .tint(ModeAccent.color(model.preferredMode, accent: model.appearance.accent))
         .preferredColorScheme(model.appearance.theme == .dark ? .dark : nil)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if model.safeMode { SafeModeBanner(model: model) }
+        }
         .task {
+            launch?.interfaceAppeared()
             await model.bootstrap()
+            launch?.startupFinished()
             #if DEBUG
             await runSmokeScenario()
             #endif

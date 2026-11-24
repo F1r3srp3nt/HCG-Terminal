@@ -133,7 +133,12 @@ public struct JailbreakDiagnostics: Sendable {
     }
 
     func p(_ path: String) -> String { input.fileSystemRoot + path }
-    var jb: String { input.jailbreakRoot ?? "/var/jb" }
+    /// The rootless jailbreak root to check. An empty prefix (programs found at the system root)
+    /// still means the rootless root is `/var/jb`, never "" (which printed as "at .").
+    var jb: String {
+        guard let root = input.jailbreakRoot, !root.isEmpty, root != "/" else { return "/var/jb" }
+        return root
+    }
 
     public func report() -> DiagnosticReport {
         DiagnosticReport(sections: [installation(), bootstrap(), packages(), repositories(), injectionAndSafeMode(), storage()], generatedAt: input.now)

@@ -15,6 +15,11 @@ name: Apple builds (compile only)
 
 on:
   workflow_dispatch:
+    inputs:
+      release_version:
+        description: "Release-candidate Debian version to build once (e.g. 0.2.0~rc2). Empty: development build 0.2.0~dev.<run>."
+        required: false
+        default: ""
   push:
     branches: [main, "claude/**"]
 
@@ -194,7 +199,18 @@ jobs:
           # reuses that version. CI builds are development builds that sort below it (0.2.0~dev.N < 0.2.0~rc1)
           # and are never published by CI.
           RC_VERSION: "0.2.0~dev.${{ github.run_number }}"
+          RELEASE_VERSION: ${{ inputs.release_version }}
         run: |
+          if [ -n "$RELEASE_VERSION" ]; then
+            # A release candidate is built once, on main, from a manual run. A version that already
+            # has a freeze record (docs/releases/<package>-<version>/FREEZE.md) is never rebuilt.
+            echo "$RELEASE_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+~rc[0-9]+$' || { echo "FAIL: release_version must look like 0.2.0~rc2"; exit 1; }
+            [ "$GITHUB_REF" = "refs/heads/main" ] || { echo "FAIL: release candidates are built from main only"; exit 1; }
+            frozen="docs/releases/hcg-terminal-unleashed-$(echo "$RELEASE_VERSION" | tr '~' '-')/FREEZE.md"
+            [ ! -e "$frozen" ] || { echo "FAIL: $RELEASE_VERSION is frozen ($frozen); never rebuild it, use a new version"; exit 1; }
+            RC_VERSION="$RELEASE_VERSION"
+          fi
+          echo "Debian version: $RC_VERSION"
           brew install ldid dpkg >/dev/null
           for layout in rootless rootful; do
             Scripts/package-ios.sh unleashed "$RUNNER_TEMP/dist-$layout" --archive "$RUNNER_TEMP/${{ matrix.scheme }}.xcarchive" \
@@ -228,12 +244,16 @@ jobs:
           # HCG Repo's own validator (rootless layout, Mach-O signatures, reviewed entitlements,
           # dependencies, maintainer scripts). Pinned commit; inspect never writes to the pool.
           git clone -q https://github.com/F1r3srp3nt/HCG-repo "$RUNNER_TEMP/hcg-repo"
-          git -C "$RUNNER_TEMP/hcg-repo" checkout -q 4aa36a0
+          git -C "$RUNNER_TEMP/hcg-repo" checkout -q 09df297
           deb=$(ls "$RUNNER_TEMP"/dist-rootless/unleashed/*.deb)
           (cd "$RUNNER_TEMP/hcg-repo" && python3 bin/hcgrepo inspect "$deb") | tee logs/hcg-repo-inspect.log
 
-      - name: Development package files (.deb, SHA-256, manifest; short retention, not published)
+      - name: Installation check (scratch dpkg root; install, reinstall, remove, uicache calls)
         if: matrix.scheme == 'HCGTerminalUnleashed'
+        run: Scripts/check-deb-install.sh "$(ls "$RUNNER_TEMP"/dist-rootless/unleashed/*.deb)"
+
+      - name: Development package files (.deb, SHA-256, manifest; short retention, not published)
+        if: matrix.scheme == 'HCGTerminalUnleashed' && inputs.release_version == ''
         uses: actions/upload-artifact@v4
         with:
           name: hcg-terminal-unleashed-rootless-dev
@@ -242,6 +262,17 @@ jobs:
             ${{ runner.temp }}/dist-rootless/unleashed/*.deb.sha256
             ${{ runner.temp }}/dist-rootless/unleashed/*.deb.manifest.json
           retention-days: 3
+
+      - name: Release candidate files (.deb, SHA-256, manifest; not published)
+        if: matrix.scheme == 'HCGTerminalUnleashed' && inputs.release_version != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: hcg-terminal-unleashed-rootless-release-candidate
+          path: |
+            ${{ runner.temp }}/dist-rootless/unleashed/*.deb
+            ${{ runner.temp }}/dist-rootless/unleashed/*.deb.sha256
+            ${{ runner.temp }}/dist-rootless/unleashed/*.deb.manifest.json
+          retention-days: 30
 
       - name: Diagnostics summary
         if: always()
@@ -294,7 +325,7 @@ jobs:
             echo "== $scheme ($bundle, variant $(/usr/libexec/PlistBuddy -c 'Print :HCGBuildVariant' "$app/Info.plist"))"
             Scripts/verify-build-variant.sh "$app"
             xcrun simctl install "$UDID" "$app"
-            for scenario in launch dashboard unleashed-tap unleashed-checks session capabilities settings files diagnostics; do
+            for scenario in launch dashboard unleashed-tap unleashed-checks session capabilities settings files diagnostics startup-recovery safe-mode; do
               xcrun simctl terminate "$UDID" "$bundle" 2>/dev/null || true
               xcrun simctl launch "$UDID" "$bundle" -HCGSmokeScenario "$scenario" >/dev/null
               sleep 7
@@ -507,7 +538,7 @@ jobs:
           HCG_SSH_TEST: "1"
         run: |
           set -o pipefail
-          swift test --skip-build --filter "RemoteSSHTests|TerminalSecurityTests|RemoteFilesModelTests|DevToolsCenterTests|BuildAccessTests|DeveloperToolsTests|PTYHelperTests|JailbreakDiagnosticsTests|DeepLinkTests" 2>&1 \
+          swift test --skip-build --filter "RemoteSSHTests|TerminalSecurityTests|RemoteFilesModelTests|DevToolsCenterTests|BuildAccessTests|DeveloperToolsTests|PTYHelperTests|JailbreakDiagnosticsTests|DeepLinkTests|StartupJournalTests|LaunchControllerTests" 2>&1 \
             | tee ../linux-ssh-tests.log | grep -E "Test Case .*(passed|failed|skipped)|error:|Executed [0-9]+ tests" | tail -80
           if grep -q "skipped" ../linux-ssh-tests.log; then echo "::warning::some SSH tests were skipped"; grep "skipped" ../linux-ssh-tests.log | head; fi
       - uses: actions/upload-artifact@v4

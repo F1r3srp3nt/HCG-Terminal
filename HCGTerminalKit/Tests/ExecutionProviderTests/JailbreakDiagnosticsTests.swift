@@ -139,6 +139,18 @@ final class JailbreakDiagnosticsTests: XCTestCase {
         XCTAssertEqual(item(report, "packages", "status")?.status, .unknown)
     }
 
+    /// rc1 printed "at ." when the scan reported an empty prefix; the rootless root is /var/jb.
+    func testEmptyJailbreakPrefixStillNamesVarJb() throws {
+        var input = try makeDevice()
+        for prefix in ["", "/", nil] as [String?] {
+            input.jailbreakRoot = prefix
+            let report = JailbreakDiagnostics(input).report()
+            XCTAssertFalse(report.text.contains(" at ."), report.text)
+            XCTAssertFalse(report.text.contains("under ."), report.text)
+            XCTAssertTrue(item(report, "bootstrap", "jbroot")?.detail.contains("/var/jb") ?? false, item(report, "bootstrap", "jbroot")?.detail ?? "")
+        }
+    }
+
     func testDiagnosticsNeverWrite() throws {
         let input = try makeDevice()
         func snapshot() throws -> [String: Date] {

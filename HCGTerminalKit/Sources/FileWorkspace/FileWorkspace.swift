@@ -116,6 +116,17 @@ public final class FileWorkspace: Sendable {
         }
     }
 
+    /// A workspace whose folder could not be created. Every file operation fails with an error
+    /// instead of the app failing to launch.
+    public static var unavailable: FileWorkspace {
+        FileWorkspace(uncheckedRoot: URL(fileURLWithPath: "/nonexistent/HCGTerminal-Workspace", isDirectory: true))
+    }
+
+    private init(uncheckedRoot: URL) {
+        rootURL = uncheckedRoot
+        resolvedRootPath = uncheckedRoot.path
+    }
+
     /// `Documents/Workspace` inside the app container, visible in the Files app when the app
     /// enables document browsing.
     public static func appContainerDefault() throws -> FileWorkspace {

@@ -104,6 +104,9 @@ public final class TerminalAppModel {
     public var authorizationPrompt: PendingDecision<AuthorizationRequest>?
     public var hostKeyPrompt: PendingDecision<HostKeyPrompt>?
     public var errorMessage: String?
+    /// Started from the recovery screen after a failed launch: environment detection, the
+    /// environment assessment and resuming background jobs are skipped until asked for.
+    public var safeMode = false
 
     // MARK: Remote
     public private(set) var hosts: [HostProfile] = []
@@ -171,14 +174,29 @@ public final class TerminalAppModel {
 
     /// Wires prompts and loads persisted state. Call once from the root view.
     public func bootstrap() async {
+        let journal = StartupJournal.shared
+        journal?.phase("authorization prompts")
         await dependencies.gate.setPresenter { [weak self] request in
             await self?.ask(authorization: request) ?? false
         }
+        journal?.phase("saved hosts")
         hosts = await dependencies.hostStore.all()
+        journal?.phase("SSH keys (Keychain)")
         keys = dependencies.keyManager.list()
+        journal?.phase("build history")
         await builds.reload()
+        if safeMode {
+            // Safe Mode: the interface opens without background jobs or environment detection.
+            // Each can be run from the Safe Mode banner, where a failure is attributed to it.
+            journal?.note("safe mode: skipped resuming jobs, environment detection and assessment")
+            await DiagnosticLog.shared.record(.notice, "app", "Started in Safe Mode")
+            return
+        }
+        journal?.phase("resume background jobs")
         await devTools.resumeActiveJobs()
+        journal?.phase("environment detection")
         await refreshCapabilities()
+        journal?.phase("environment assessment")
         await refreshAssessment()
         if preferredMode != .vanilla, !isAvailable(preferredMode) {
             // A saved preference for a mode that cannot run here never takes effect.
@@ -187,6 +205,20 @@ public final class TerminalAppModel {
             await DiagnosticLog.shared.record(.notice, "mode", "Saved mode not available; using Vanilla")
         }
         await DiagnosticLog.shared.record(.info, "app", "Started", metadata: ["build": dependencies.distribution.rawValue, "mode": preferredMode.rawValue])
+    }
+
+    /// Leaves Safe Mode by running what it skipped, one step at a time, each recorded in the
+    /// startup journal so a failure is attributed to its step.
+    public func runSkippedStartupSteps() async {
+        let journal = StartupJournal.shared
+        safeMode = false
+        journal?.phase("environment detection (from Safe Mode)")
+        await refreshCapabilities()
+        journal?.phase("environment assessment (from Safe Mode)")
+        await refreshAssessment()
+        journal?.phase("resume background jobs (from Safe Mode)")
+        await devTools.resumeActiveJobs()
+        journal?.note("safe mode: skipped steps completed")
     }
 
     // MARK: - Capabilities

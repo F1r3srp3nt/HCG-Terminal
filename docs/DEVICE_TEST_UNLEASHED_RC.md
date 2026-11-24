@@ -1,4 +1,4 @@
-# Device test: HCG Terminal Unleashed 0.2.0~rc1 on iPhone 11 Pro Max
+# Device test: HCG Terminal Unleashed release candidates on iPhone 11 Pro Max
 
 **This is the release gate.** HCG Repo publication waits for a passing run of this checklist and the owner's explicit approval.
 
@@ -8,8 +8,8 @@
 | iOS | 17.4 |
 | Jailbreak | Dopamine 2.x, rootless (`/var/jb`) |
 | Package manager | Zebra 1.1.x (repeat the install with Sileo if it is installed) |
-| Package | `com.hakmicapitalgroup.hcgterminal.unleashed_0.2.0~rc1_iphoneos-arm64.deb` from CI artifact `hcg-terminal-unleashed-rootless-rc` |
-| Expected SHA-256 | `02626804763200f9e29d651a213bdb92330351d3052073e6a52cb86d62fc5a28` (frozen candidate, CI run 72; see `docs/releases/hcg-terminal-unleashed-0.2.0-rc1/FREEZE.md`) |
+| Package | The candidate under test, from HCG Repo Candidate (Zebra or Sileo) |
+| Expected SHA-256 | The SHA-256 given in that candidate's approval request (0.2.0~rc1: `02626804…fc5a28`, did not launch) |
 
 Record for every step: **Pass / Fail / Not run**, plus a screenshot or a note. Stop at the first failure in sections A–C and report it.
 
@@ -35,7 +35,9 @@ Record for every step: **Pass / Fail / Not run**, plus a screenshot or a note. S
 10. Run `ls -l /var/jb/Applications/HCGTerminalUnleashed.app/hcg-pty-helper`. It should be an executable (`-rwxr-xr-x`) owned by root.
 
 ## C. First launch and diagnostics
-11. Open the app. It must launch to the home screen without crashing. If it is killed immediately, note it and run `ldid -e /var/jb/Applications/HCGTerminalUnleashed.app/HCGTerminalUnleashed`.
+11. Open the app. It must open its interface without crashing.
+    - If it closes at once, open it a second time: from 0.2.0~rc2 it shows *Startup Recovery*. Share the startup report, then try *Start in Safe Mode*.
+    - Collect the evidence in docs/JAILBREAK_EDITION.md → *Collecting evidence from the device*.
 12. Unleashed Tools → **Jailbreak Diagnostics**:
     - *Install location* OK, path under `/var/jb/Applications`;
     - *Signature and entitlements* OK, "ad hoc / ldid signature; outside the app sandbox";
