@@ -191,7 +191,7 @@ public struct RootView: View {
                 Section {
                     VStack(alignment: .leading, spacing: 10) {
                         ModeSelector(selection: model.preferredMode, availability: availability) { model.selectMode($0) }
-                        ModeStatusLine(mode: model.preferredMode, available: availability(model.preferredMode))
+                        ModeStatusLine(mode: model.preferredMode, available: availability(model.preferredMode), safeMode: model.safeMode)
                         newSessionMenu
                     }
                     .listRowBackground(Color.clear)

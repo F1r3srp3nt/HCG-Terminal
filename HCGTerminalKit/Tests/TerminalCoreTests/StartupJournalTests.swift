@@ -51,6 +51,22 @@ final class StartupJournalTests: XCTestCase {
         XCTAssertTrue(journal.isReady)
     }
 
+    /// The real handler on every platform: SIGURG's default action is "ignore", so after the
+    /// handler records it and re-raises with the default action, this process carries on.
+    func testHandlerRecordsSignalAndPhaseAndRestoresDefault() throws {
+        let directory = try makeDirectory()
+        let first = StartupJournal.begin(directory: directory, installCrashHandlers: false)
+        first.phase("environment detection")
+        StartupJournal.prepareSignalPaths(log: first.logURL.path, signalFile: first.signalURL.path)
+        Darwinish.installHandler(SIGURG)
+        raise(SIGURG)
+        let second = StartupJournal.begin(directory: directory, installCrashHandlers: false)
+        XCTAssertEqual(second.previous?.lastPhase, "environment detection")
+        XCTAssertEqual(second.previous?.signal, SIGURG)
+        XCTAssertTrue(second.previous?.log.contains("!! crashed with signal \(SIGURG) during phase environment detection") ?? false, second.previous?.log ?? "")
+    }
+
+    #if os(Linux)
     /// A real crash: a forked child dies from SIGABRT with the handler installed. The handler must
     /// record the signal and the phase, and the default action must still end the process.
     func testCrashSignalIsRecordedAndProcessStillDies() throws {
@@ -79,4 +95,5 @@ final class StartupJournalTests: XCTestCase {
         XCTAssertTrue(second.previous?.log.contains("!! crashed with signal \(SIGABRT) during phase model") ?? false, second.previous?.log ?? "")
         XCTAssertTrue(second.previous?.summary.contains("SIGABRT") ?? false)
     }
+    #endif
 }

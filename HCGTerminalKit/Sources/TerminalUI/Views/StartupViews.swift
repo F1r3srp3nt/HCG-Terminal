@@ -1,6 +1,7 @@
 #if canImport(UIKit) && canImport(SwiftUI)
 import SwiftUI
 import TerminalCore
+import UIKit
 
 /// The app's first view. It shows the recovery screen after a failed launch, otherwise the app.
 public struct LaunchRootView: View {
@@ -102,7 +103,15 @@ struct SafeModeBanner: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .background(.orange.opacity(0.18))
+        .foregroundStyle(.primary)
+        // Opaque, so it never shows the header artwork through it.
+        .background {
+            ZStack {
+                Rectangle().fill(Color(uiColor: .systemBackground))
+                Rectangle().fill(Color.orange.opacity(0.22))
+            }
+            .ignoresSafeArea(edges: .top)
+        }
         .accessibilityElement(children: .combine)
     }
 }

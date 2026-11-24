@@ -248,10 +248,6 @@ jobs:
           deb=$(ls "$RUNNER_TEMP"/dist-rootless/unleashed/*.deb)
           (cd "$RUNNER_TEMP/hcg-repo" && python3 bin/hcgrepo inspect "$deb") | tee logs/hcg-repo-inspect.log
 
-      - name: Installation check (scratch dpkg root; install, reinstall, remove, uicache calls)
-        if: matrix.scheme == 'HCGTerminalUnleashed'
-        run: Scripts/check-deb-install.sh "$(ls "$RUNNER_TEMP"/dist-rootless/unleashed/*.deb)"
-
       - name: Development package files (.deb, SHA-256, manifest; short retention, not published)
         if: matrix.scheme == 'HCGTerminalUnleashed' && inputs.release_version == ''
         uses: actions/upload-artifact@v4
@@ -288,6 +284,25 @@ jobs:
         with:
           name: logs-${{ matrix.scheme }}
           path: logs/
+
+  deb-install:
+    # Installation check of the Unleashed .deb with Debian's own dpkg (Homebrew's dpkg on macOS
+    # cannot make dpkg's backup hard links during a reinstall). Scratch root only.
+    name: Linux · .deb installation check (install, reinstall, remove)
+    needs: ios
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: hcg-terminal-unleashed-rootless-*
+          path: debs
+          merge-multiple: true
+      - name: Install, reinstall, remove and purge in a scratch dpkg root
+        run: |
+          ls -l debs
+          Scripts/check-deb-install.sh "$(ls debs/*.deb)"
 
   simulator:
     name: iOS Simulator · launch smoke and package tests

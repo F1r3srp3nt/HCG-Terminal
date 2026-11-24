@@ -178,6 +178,7 @@ final class SessionHeaderSummaryTests: XCTestCase {
     func testUnavailableUnleashedStaysHonestlyLabelled() {
         XCTAssertEqual(SessionHeaderSummary.modeNote(preferred: .unleashed, available: false, target: .local(.vanilla)), "Unleashed not available here")
         XCTAssertEqual(SessionHeaderSummary.modeNote(preferred: .unleashed, available: nil, target: .local(.vanilla)), "Checking capabilities…")
+        XCTAssertEqual(SessionHeaderSummary.modeNote(preferred: .unleashed, available: nil, target: .local(.vanilla), safeMode: true), "Safe Mode: detection not run")
         XCTAssertEqual(SessionHeaderSummary.modeNote(preferred: .unleashed, available: true, target: .local(.vanilla)), "New local sessions: Unleashed")
         XCTAssertNil(SessionHeaderSummary.modeNote(preferred: .vanilla, available: true, target: .local(.vanilla)))
     }
