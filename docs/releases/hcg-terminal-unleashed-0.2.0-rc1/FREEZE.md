@@ -37,10 +37,10 @@ sha256sum -c com.hakmicapitalgroup.hcgterminal.unleashed_0.2.0~rc1_iphoneos-arm6
 
 ## Verify the source has not drifted
 
-Commits after `1cc76a7` on this branch touch documentation only. This must print nothing:
+After `1cc76a7`, only documentation changed, plus the CI version label: CI now builds `0.2.0~dev.<run>`, so a rebuild can never carry the frozen version. The app and packaging sources are unchanged. This must print nothing:
 
 ```sh
-git diff 1cc76a791cf785f80f4bd742224cd681c612d806 HEAD -- . ':!docs'
+git diff 1cc76a791cf785f80f4bd742224cd681c612d806 HEAD -- . ':!docs' ':!.github/workflows/apple-build.yml'
 ```
 
 ## Known issues carried by these frozen bytes (fixed in rc2, not here)

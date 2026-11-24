@@ -190,8 +190,10 @@ jobs:
       - name: Jailbreak package (.deb, Unleashed only; written to disk, never installed)
         if: matrix.scheme == 'HCGTerminalUnleashed'
         env:
-          # Release-candidate version for HCG Repo: sorts above the locked 0.1.0-1 and is never published by CI.
-          RC_VERSION: "0.2.0~rc1"
+          # 0.2.0~rc1 is frozen (docs/releases/hcg-terminal-unleashed-0.2.0-rc1/FREEZE.md): a rebuild never
+          # reuses that version. CI builds are development builds that sort below it (0.2.0~dev.N < 0.2.0~rc1)
+          # and are never published by CI.
+          RC_VERSION: "0.2.0~dev.${{ github.run_number }}"
         run: |
           brew install ldid dpkg >/dev/null
           for layout in rootless rootful; do
@@ -230,11 +232,11 @@ jobs:
           deb=$(ls "$RUNNER_TEMP"/dist-rootless/unleashed/*.deb)
           (cd "$RUNNER_TEMP/hcg-repo" && python3 bin/hcgrepo inspect "$deb") | tee logs/hcg-repo-inspect.log
 
-      - name: Release candidate files (.deb, SHA-256, manifest; short retention, not published)
+      - name: Development package files (.deb, SHA-256, manifest; short retention, not published)
         if: matrix.scheme == 'HCGTerminalUnleashed'
         uses: actions/upload-artifact@v4
         with:
-          name: hcg-terminal-unleashed-rootless-rc
+          name: hcg-terminal-unleashed-rootless-dev
           path: |
             ${{ runner.temp }}/dist-rootless/unleashed/*.deb
             ${{ runner.temp }}/dist-rootless/unleashed/*.deb.sha256
