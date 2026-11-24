@@ -651,9 +651,10 @@ struct HCGEcosystemView: View {
 
     var body: some View {
         let unleashed = model.dependencies.distribution == .unleashed
+        let nexusVersion = unleashed ? HCGNexusLink.installedNexusVersion() : nil
         List {
             Group {
-                ForEach(HCGEcosystem.integrations(isUnleashed: unleashed)) { item in
+                ForEach(HCGEcosystem.integrations(isUnleashed: unleashed, nexusVersion: nexusVersion)) { item in
                     VStack(alignment: .leading, spacing: 4) {
                         HStack {
                             Text(item.product).font(.subheadline.weight(.semibold))
@@ -664,6 +665,10 @@ struct HCGEcosystemView: View {
                         Text(item.detail).font(.caption).foregroundStyle(HCGPalette.textSecondary)
                         if let link = item.link {
                             Button("Open") { openURL(link) }.font(.caption.weight(.semibold)).buttonStyle(.borderless)
+                        }
+                        if let request = item.nexusRequest {
+                            // Navigation only: a Darwin notification with no payload. Nexus decides whether to open.
+                            Button("Open in HCG Nexus") { HCGNexusLink.post(request) }.font(.caption.weight(.semibold)).buttonStyle(.borderless)
                         }
                     }
                     .accessibilityElement(children: .combine)

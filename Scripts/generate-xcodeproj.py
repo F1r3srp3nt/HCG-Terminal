@@ -11,10 +11,10 @@ def oid():
 PROJECT, MAINGROUP, PRODUCTS, SYNC, PKGREF = oid(), oid(), oid(), oid(), oid()
 targets = [
     dict(name="HCGTerminal", display="HCG Terminal", bundle="com.hakmicapitalgroup.hcgterminal",
-         ent="HCGTerminal-Support/HCGTerminal.entitlements", cond="$(inherited)", variant="standard", folder="Variants/Standard",
+         ent="HCGTerminal-Support/HCGTerminal.entitlements", cond="$(inherited)", variant="standard", folder="Variants/Standard", plist="HCGTerminal-Support/Info.plist",
          products=["TerminalUI", "FileWorkspace"]),
     dict(name="HCGTerminalUnleashed", display="HCG Terminal Unleashed", bundle="com.hakmicapitalgroup.hcgterminal.unleashed",
-         ent="HCGTerminal-Support/HCGTerminalUnleashed.entitlements", cond="HCG_UNLEASHED_BUILD $(inherited)", variant="unleashed", folder="Variants/Unleashed",
+         ent="HCGTerminal-Support/HCGTerminalUnleashed.entitlements", cond="HCG_UNLEASHED_BUILD $(inherited)", variant="unleashed", folder="Variants/Unleashed", plist="HCGTerminal-Support/Info-Unleashed.plist",
          products=["TerminalUI", "FileWorkspace", "UnleashedIntegration"]),
 ]
 for t in targets:
@@ -82,7 +82,7 @@ def target_cfg(t, id_, name):
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				HCG_BUILD_VARIANT = {t['variant']};
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = "HCGTerminal-Support/Info.plist";
+				INFOPLIST_FILE = "{t['plist']}";
 				INFOPLIST_KEY_CFBundleDisplayName = "{t['display']}";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;

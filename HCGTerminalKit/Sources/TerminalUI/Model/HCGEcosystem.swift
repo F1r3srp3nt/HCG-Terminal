@@ -10,6 +10,9 @@ import Foundation
 public enum TerminalDeepLink: Equatable, Sendable {
     public enum Destination: String, CaseIterable, Sendable {
         case dashboard, files, hosts, builds, artifacts, console, tools, diagnostics, capabilities, settings, about
+        // Unleashed screens HCG Nexus opens directly (HCG Interchange routes; declared in Info-Unleashed.plist).
+        case packages, processes
+        case jailbreakDiagnostics = "jailbreak-diagnostics"
     }
 
     case open(Destination)
@@ -25,6 +28,42 @@ public enum TerminalDeepLink: Equatable, Sendable {
     }
 }
 
+/// Opening HCG Nexus (HCG Interchange Protocol v1, HCG-Nexus docs/INTERCHANGE.md). HCG Terminal posts a Darwin
+/// notification with no payload; Nexus opens its panel at its HCG Ecosystem dashboard (or HCG Terminal's page there)
+/// while the iPhone is unlocked and "Let HCG Apps Open Nexus" is on. Navigation only: nothing is sent, shared or run.
+public enum HCGNexusLink {
+    public static let openEcosystem = "com.hakmicapitalgroup.hcgnexus/open/ecosystem"
+    public static let minimumNexusVersion = "0.4.0" // first HCG Nexus that listens (0.4.0~beta1)
+
+    public static func openProduct(_ productID: String) -> String {
+        "com.hakmicapitalgroup.hcgnexus/open/product/\(productID)"
+    }
+
+    /// HCG Nexus's version from its Settings bundle, nil when not installed.
+    public static func installedNexusVersion(jailbreakRoot: String = "/var/jb") -> String? {
+        let path = jailbreakRoot + "/Library/PreferenceBundles/HCGNexusPrefs.bundle/Info.plist"
+        guard let info = NSDictionary(contentsOfFile: path), let version = info["CFBundleShortVersionString"] as? String, !version.isEmpty else { return nil }
+        return version
+    }
+
+    public static func supportsOpenRequests(nexusVersion: String?) -> Bool {
+        guard let nexusVersion else { return false }
+        return nexusVersion.compare(minimumNexusVersion, options: .numeric) != .orderedAscending
+    }
+
+    /// Posts the request. Returns false where Darwin notifications do not exist (non-Apple platforms).
+    @discardableResult
+    public static func post(_ name: String) -> Bool {
+        guard name == openEcosystem || name.hasPrefix("com.hakmicapitalgroup.hcgnexus/open/product/") else { return false }
+        #if canImport(Darwin)
+        CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFNotificationName(name as CFString), nil, nil, true)
+        return true
+        #else
+        return false
+        #endif
+    }
+}
+
 /// What HCG Terminal can actually do with other HCG products today. Statuses come from the
 /// products' own repositories and docs; nothing is shown as connected unless it is.
 public enum HCGEcosystem {
@@ -36,10 +75,24 @@ public enum HCGEcosystem {
         public var detail: String
         /// A link the user can open (never followed automatically).
         public var link: URL?
+        /// A Darwin request that brings up HCG Nexus (HCGNexusLink), sent only when the user taps.
+        public var nexusRequest: String? = nil
     }
 
-    public static func integrations(isUnleashed: Bool) -> [Integration] {
-        [
+    /// `nexusVersion`: the installed HCG Nexus (HCGNexusLink.installedNexusVersion()), nil when not installed.
+    public static func integrations(isUnleashed: Bool, nexusVersion: String? = nil) -> [Integration] {
+        let nexusOpens = isUnleashed && HCGNexusLink.supportsOpenRequests(nexusVersion: nexusVersion)
+        let nexusTail: String
+        if !isUnleashed {
+            nexusTail = ""
+        } else if nexusVersion == nil {
+            nexusTail = " HCG Nexus is not installed."
+        } else if nexusOpens {
+            nexusTail = " Open in HCG Nexus brings up its HCG Ecosystem dashboard at HCG Terminal Unleashed (only while unlocked, and only if Nexus allows HCG apps to open it)."
+        } else {
+            nexusTail = " Opening HCG Nexus from here needs HCG Nexus \(HCGNexusLink.minimumNexusVersion)~beta1 or later (installed: \(nexusVersion ?? ""))."
+        }
+        return [
             Integration(
                 product: "HCG Repo", state: isUnleashed ? .available : .notYetAvailable,
                 detail: isUnleashed
@@ -49,8 +102,9 @@ public enum HCGEcosystem {
             ),
             Integration(
                 product: "HCG Nexus", state: isUnleashed ? .available : .partial,
-                detail: "Nexus opens HCG Terminal by its bundle identifier. Nexus can also open a screen directly with \(isUnleashed ? "hcgterminal-unleashed" : "hcgterminal")://open/<dashboard|tools|diagnostics|console|hosts|builds|files|settings>; links only navigate.",
-                link: nil
+                detail: "Nexus opens HCG Terminal by its bundle identifier. Nexus can also open a screen directly with \(isUnleashed ? "hcgterminal-unleashed" : "hcgterminal")://open/<\(isUnleashed ? "dashboard|tools|jailbreak-diagnostics|packages|processes|diagnostics" : "dashboard|diagnostics")|console|hosts|files|capabilities|settings>; links only navigate." + nexusTail,
+                link: nil,
+                nexusRequest: nexusOpens ? HCGNexusLink.openProduct("terminal-unleashed") : nil
             ),
             Integration(
                 product: "HCG Sentinel", state: .partial,

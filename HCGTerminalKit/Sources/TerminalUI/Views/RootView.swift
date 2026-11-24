@@ -32,6 +32,7 @@ public struct RootView: View {
     @Environment(\.horizontalSizeClass) private var windowSizeClass
     @State private var showNewRemote = false
     @State private var showLoopback = false
+    @State private var linkSheet: DeepLinkSheet?
     @State private var renamingSession: SessionModel?
     @State private var renameTitle = ""
     #if DEBUG
@@ -114,6 +115,16 @@ public struct RootView: View {
             }
             Button("Cancel", role: .cancel) { renamingSession = nil }
         }
+        .sheet(item: $linkSheet) { sheet in
+            NavigationStack {
+                switch sheet {
+                case .processes: ProcessListView()
+                case .jailbreakDiagnostics: JailbreakDiagnosticsView()
+                }
+            }
+            .environment(model)
+            .environment(\.hcgAppearance, model.appearance)
+        }
         .onOpenURL { url in
             // Navigation only (see TerminalDeepLink): no session, command or setting change.
             guard case .open(let destination)? = TerminalDeepLink(url: url) else { return }
@@ -129,8 +140,14 @@ public struct RootView: View {
             case .diagnostics, .about: .diagnostics
             case .capabilities: .access
             case .settings: .preferences
+            case .packages: unleashed ? .unleashedTools : .access
+            case .processes: unleashed ? .unleashedTools : .diagnostics
+            case .jailbreakDiagnostics: unleashed ? .unleashedTools : .diagnostics
             }
             compactColumn = .detail
+            // The two screens that live one level inside Unleashed Tools open on top of it.
+            if unleashed, destination == .processes { linkSheet = .processes }
+            if unleashed, destination == .jailbreakDiagnostics { linkSheet = .jailbreakDiagnostics }
         }
         .alert("HCG Terminal", isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) {
             Button("OK", role: .cancel) { model.errorMessage = nil }
@@ -427,6 +444,12 @@ public struct RootView: View {
         }
     }
     #endif
+}
+
+/// Screens a navigation link opens on top of Unleashed Tools.
+enum DeepLinkSheet: String, Identifiable {
+    case processes, jailbreakDiagnostics
+    var id: String { rawValue }
 }
 
 #if DEBUG
