@@ -54,15 +54,15 @@ Scripts/package-ios.sh unleashed dist
 #   dist/unleashed/README.txt
 
 # Debian package for a jailbroken device (opt-in; needs `brew install ldid`, optionally `brew install dpkg`):
-Scripts/package-ios.sh unleashed dist --deb rootless --ldid-entitlements my-entitlements.plist
-#   dist/unleashed/com.hakmicapitalgroup.hcgterminal.unleashed_<version>-<build>_iphoneos-arm64.deb
+Scripts/package-ios.sh unleashed dist --deb rootless --ldid-entitlements HCGTerminal-Support/Unleashed-jailbreak.entitlements --deb-version 0.2.0~rc1
+#   dist/unleashed/com.hakmicapitalgroup.hcgterminal.unleashed_0.2.0~rc1_iphoneos-arm64.deb (+ .sha256, .manifest.json)
 #   (--deb rootful → _iphoneos-arm.deb, app in /Applications)
 ```
 
 What the script does and does not do:
 
 - It checks that the app declares the Unleashed variant and that its code contains the backend. If either check fails, nothing is packaged.
-- With `--deb` it pseudo-signs **only the copy inside the package**, using `ldid` and the entitlements file you pass. `HCGTerminal-Support/Unleashed-optional-entitlements.example.plist` is a starting point; which entitlements your jailbreak needs is your decision.
+- With `--deb` it bundles `hcg-pty-helper` (job control for local shells) and pseudo-signs **every Mach-O in the copy inside the package** with `ldid`: libraries and the helper without entitlements, the app executable with the entitlements file you pass. HCG Repo builds use `HCGTerminal-Support/Unleashed-jailbreak.entitlements` (no-sandbox only, as reviewed in HCG Repo). See [`JAILBREAK_EDITION.md`](JAILBREAK_EDITION.md).
 - The package's `postinst` runs `uicache` so the home screen shows the app. The package manager prints this step.
 - It never installs, uploads, signs with your team, or changes a device or Xcode signing settings.
 

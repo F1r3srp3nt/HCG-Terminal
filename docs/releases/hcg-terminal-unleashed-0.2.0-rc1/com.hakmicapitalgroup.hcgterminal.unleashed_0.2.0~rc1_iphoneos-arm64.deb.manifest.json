@@ -1,0 +1,105 @@
+{
+  "format": "hcg.terminal.deb-manifest",
+  "formatVersion": 1,
+  "package": "com.hakmicapitalgroup.hcgterminal.unleashed",
+  "version": "0.2.0~rc1",
+  "architecture": "iphoneos-arm64",
+  "layout": "rootless",
+  "file": "com.hakmicapitalgroup.hcgterminal.unleashed_0.2.0~rc1_iphoneos-arm64.deb",
+  "size": 7020986,
+  "sha256": "02626804763200f9e29d651a213bdb92330351d3052073e6a52cb86d62fc5a28",
+  "app": {
+    "version": "0.2.0",
+    "build": "1",
+    "sourceRevision": "1cc76a791cf7",
+    "minimumOS": "17.0"
+  },
+  "signing": {
+    "tool": "ldid",
+    "mainExecutableEntitlements": "Unleashed-jailbreak.entitlements"
+  },
+  "control": "Package: com.hakmicapitalgroup.hcgterminal.unleashed\nName: HCG Terminal Unleashed\nVersion: 0.2.0~rc1\nArchitecture: iphoneos-arm64\nMaintainer: Hakmi Capital Group\nAuthor: Hakmi Capital Group\nSection: Terminal_Support\nDepends: firmware (>= 17.0), uikittools\nDescription: Jailbreak edition of HCG Terminal: a local shell in a pseudo-terminal with job control, using only the access the device already grants. Never elevates by itself. App 0.2.0 (1), revision 1cc76a791cf7.\n",
+  "builtAt": "2026-11-22T17:56:58+00:00",
+  "installed": false,
+  "published": false,
+  "files": [
+    {
+      "path": "var/jb/Applications/HCGTerminalUnleashed.app/AppIcon60x60@2x.png",
+      "size": 34213,
+      "mode": "0o644",
+      "sha256": "6a3d392d729cadfc9990759e52f66f3c0817dc08a6bc6be6bdfb201515bdc647"
+    },
+    {
+      "path": "var/jb/Applications/HCGTerminalUnleashed.app/AppIcon76x76@2x~ipad.png",
+      "size": 51974,
+      "mode": "0o644",
+      "sha256": "86784c585baf819a14daa05f7c2fad7ea67964429b844bd7b6ef66fada4d90fc"
+    },
+    {
+      "path": "var/jb/Applications/HCGTerminalUnleashed.app/Assets.car",
+      "size": 2964568,
+      "mode": "0o644",
+      "sha256": "530bedc77df5ccf2ef88561246ec748deaeb52bc851fb0d3e175cb5fc86707ff"
+    },
+    {
+      "path": "var/jb/Applications/HCGTerminalUnleashed.app/HCGTerminalUnleashed",
+      "size": 9742256,
+      "mode": "0o755",
+      "sha256": "f55a2bea99c4a50b8c6cc1e036e4511b7ae10111b1dc7ddd1a1a1af44e1c0b5f",
+      "macho": true,
+      "entitlements_plist": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n\t<key>com.apple.private.security.no-sandbox</key>\n\t<true/>\n</dict>\n</plist>"
+    },
+    {
+      "path": "var/jb/Applications/HCGTerminalUnleashed.app/Info.plist",
+      "size": 3929,
+      "mode": "0o644",
+      "sha256": "1ff558850bb677f932f82ec0c10dc5863bf176af8f451f6ce84426a6662d219c"
+    },
+    {
+      "path": "var/jb/Applications/HCGTerminalUnleashed.app/PkgInfo",
+      "size": 8,
+      "mode": "0o644",
+      "sha256": "82502191c9484b04d685374f9879a0066069c49b8acae7a04b01d38d07e8eca0"
+    },
+    {
+      "path": "var/jb/Applications/HCGTerminalUnleashed.app/hcg-pty-helper",
+      "size": 51056,
+      "mode": "0o755",
+      "sha256": "4cb3e4f0f2df4c8d00db2cd48e53670ff14a25089b62fc9eca68456095da5c7e",
+      "macho": true,
+      "entitlements_plist": ""
+    },
+    {
+      "path": "var/jb/Applications/HCGTerminalUnleashed.app/swift-crypto_Crypto.bundle/Info.plist",
+      "size": 684,
+      "mode": "0o644",
+      "sha256": "8c13fd72a29d8b0693ec62e9fc9f29eb29227e37bc9df5dbeee242995c9a8312"
+    },
+    {
+      "path": "var/jb/Applications/HCGTerminalUnleashed.app/swift-crypto_Crypto.bundle/PrivacyInfo.xcprivacy",
+      "size": 398,
+      "mode": "0o644",
+      "sha256": "42fb8a30dd8d7ba0900e1bf17fe64ed8c12cfdb8a9c791ab6b4e1eceb0f299c0"
+    },
+    {
+      "path": "var/jb/Applications/HCGTerminalUnleashed.app/Frameworks/libswiftCompatibilitySpan.dylib",
+      "size": 138032,
+      "mode": "0o755",
+      "sha256": "73a39e06a15f00675ab52593eef89ba9ccfb7d3dec5201fed2355d70285cecc7",
+      "macho": true,
+      "entitlements_plist": ""
+    },
+    {
+      "path": "var/jb/Applications/HCGTerminalUnleashed.app/swift-nio_NIOPosix.bundle/Info.plist",
+      "size": 682,
+      "mode": "0o644",
+      "sha256": "9960a314bf5249ae3b4a8c0eaa84c2670b33674960cbf04eface92c38798725f"
+    },
+    {
+      "path": "var/jb/Applications/HCGTerminalUnleashed.app/swift-nio_NIOPosix.bundle/PrivacyInfo.xcprivacy",
+      "size": 599,
+      "mode": "0o644",
+      "sha256": "982f20d820bc4460acc9d4116c3e6c8ec837f717dc82edbb7308f7400515c909"
+    }
+  ]
+}

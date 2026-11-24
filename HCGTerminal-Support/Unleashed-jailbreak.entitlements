@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Entitlements for the HCG Terminal Unleashed .deb (HCG Repo builds), signed onto the app
+  executable with ldid by Scripts/package-ios.sh. NOT used by any Xcode target, not valid for the
+  App Store or TestFlight, and never applied to the standard HCG Terminal.
+
+  Deliberately minimal: leave the app sandbox so the app can start the device's own shell in a
+  pseudo-terminal. No platform-application, no task ports, no root, no container changes.
+  This exact set is the one recorded in HCG Repo's review
+  (packages/com.hakmicapitalgroup.hcgterminal.unleashed/package.toml). If a device test shows a
+  jailbreak needs more, change both places together after review. See docs/JAILBREAK_EDITION.md.
+-->
+<plist version="1.0">
+<dict>
+	<key>com.apple.private.security.no-sandbox</key>
+	<true/>
+</dict>
+</plist>

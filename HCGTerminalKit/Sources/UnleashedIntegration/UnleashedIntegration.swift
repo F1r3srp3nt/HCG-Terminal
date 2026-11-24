@@ -148,6 +148,12 @@ actor UnleashedToolsAdapter: UnleashedTools {
         return try await programs().launchSession(path, arguments: arguments, environment: UnleashedExecutionProvider.environment(for: scan, shell: shell))
     }
 
+    func jailbreakDiagnostics() async -> DiagnosticReport {
+        let scan = scan()
+        let input = JailbreakDiagnostics.currentProcess(jailbreakRoot: scan.environmentPrefix, environmentVisible: scan.environmentVisible)
+        return JailbreakDiagnostics(input).report()
+    }
+
     func verifyShell() async -> EnvironmentAssessment.Operation {
         cachedScan = nil
         let result = await programs().verifyShell()

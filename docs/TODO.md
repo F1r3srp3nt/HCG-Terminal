@@ -68,6 +68,14 @@ Legend: ✅ done and covered by automated checks · 🧪 done, verified only in 
   - [ ] A Theos build with your toolchain.
   - [ ] A `.deb` handed to dpkg on your jailbroken device.
 
+### Jailbreak Edition and HCG Repo candidate (see `JAILBREAK_EDITION.md`)
+- ✅ PTY helper: shells get a controlling terminal (Ctrl-C/Z, window size, job control); tested with and without the helper on a terminal opened like iOS opens it.
+- ✅ Jailbreak Diagnostics (read-only): install location and own entitlements, rootless bootstrap, dpkg health, repositories, tweak injection / Safe Mode clues, storage. Tested on fake device trees, shown to write nothing.
+- ✅ Navigation-only URL routes for Nexus; HCG Ecosystem status screen; host-label wrapping at accessibility sizes.
+- 🧪 Rootless `.deb` `0.2.0~rc1`: every Mach-O ldid-signed, helper bundled, `uikittools` declared, manifest and SHA-256; checked in CI with HCG Repo's own inspector.
+- 📱 **Needs the iPhone 11 Pro Max (iOS 17.4, Dopamine 2.x):** install, shell test, interactive programs, job control, upgrade, removal, Safe Mode/recovery check. Not complete until done.
+- ⏸ HCG Repo: candidate needs the owner's `connect` exception for `0.2.0~rc1`; nothing pushed to HCG-repo.
+
 ## Remaining milestones
 
 ### Device verification 📱

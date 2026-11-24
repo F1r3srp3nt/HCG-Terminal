@@ -189,20 +189,59 @@ jobs:
 
       - name: Jailbreak package (.deb, Unleashed only; written to disk, never installed)
         if: matrix.scheme == 'HCGTerminalUnleashed'
+        env:
+          # 0.2.0~rc1 is frozen (docs/releases/hcg-terminal-unleashed-0.2.0-rc1/FREEZE.md): a rebuild never
+          # reuses that version. CI builds are development builds that sort below it (0.2.0~dev.N < 0.2.0~rc1)
+          # and are never published by CI.
+          RC_VERSION: "0.2.0~dev.${{ github.run_number }}"
         run: |
           brew install ldid dpkg >/dev/null
           for layout in rootless rootful; do
             Scripts/package-ios.sh unleashed "$RUNNER_TEMP/dist-$layout" --archive "$RUNNER_TEMP/${{ matrix.scheme }}.xcarchive" \
-              --deb "$layout" --ldid-entitlements HCGTerminal-Support/Unleashed-optional-entitlements.example.plist
+              --deb "$layout" --ldid-entitlements HCGTerminal-Support/Unleashed-jailbreak.entitlements --deb-version "$RC_VERSION"
             deb=$(ls "$RUNNER_TEMP"/dist-$layout/unleashed/*.deb)
             echo "== $deb"
             dpkg-deb -I "$deb"
-            dpkg-deb -c "$deb" | grep -E "Applications/HCGTerminalUnleashed.app/(HCGTerminalUnleashed|Info.plist)$"
+            dpkg-deb -c "$deb" | grep -E "Applications/HCGTerminalUnleashed.app/(HCGTerminalUnleashed|Info.plist|hcg-pty-helper)$"
             mkdir -p "$RUNNER_TEMP/x-$layout" && dpkg-deb -x "$deb" "$RUNNER_TEMP/x-$layout"
             app=$(find "$RUNNER_TEMP/x-$layout" -name HCGTerminalUnleashed.app -maxdepth 4 -type d)
             Scripts/verify-build-variant.sh "$app" unleashed
-            ldid -e "$app/HCGTerminalUnleashed"
+            echo "-- entitlements of the app executable"; ldid -e "$app/HCGTerminalUnleashed"
+            echo "-- every Mach-O carries an ldid signature"
+            find "$app" -type f -print0 | while IFS= read -r -d '' f; do
+              if file -b "$f" | grep -q Mach-O; then
+                # ldid writes a CodeDirectory without a certificate: codesign shows "CodeDirectory v=…"
+                # and no "Authority=" line. Anything else (unsigned, or an Apple certificate left over) fails.
+                info=$(codesign -dvvv "$f" 2>&1 || true)
+                echo "$info" | grep -q "CodeDirectory v=" || { echo "no code signature: $f"; echo "$info" | head -5; exit 1; }
+                if echo "$info" | grep -q "^Authority="; then echo "certificate signature left in: $f"; echo "$info" | grep "^Authority="; exit 1; fi
+                echo "ok $(basename "$f")"
+              fi
+            done
+            file "$app/hcg-pty-helper" | grep -q "arm64" || { echo "helper is not arm64"; exit 1; }
+            cat "$deb.sha256"
           done
+
+      - name: HCG Repo inspection of the rootless candidate (read-only, nothing imported)
+        if: matrix.scheme == 'HCGTerminalUnleashed'
+        run: |
+          # HCG Repo's own validator (rootless layout, Mach-O signatures, reviewed entitlements,
+          # dependencies, maintainer scripts). Pinned commit; inspect never writes to the pool.
+          git clone -q https://github.com/F1r3srp3nt/HCG-repo "$RUNNER_TEMP/hcg-repo"
+          git -C "$RUNNER_TEMP/hcg-repo" checkout -q 4aa36a0
+          deb=$(ls "$RUNNER_TEMP"/dist-rootless/unleashed/*.deb)
+          (cd "$RUNNER_TEMP/hcg-repo" && python3 bin/hcgrepo inspect "$deb") | tee logs/hcg-repo-inspect.log
+
+      - name: Development package files (.deb, SHA-256, manifest; short retention, not published)
+        if: matrix.scheme == 'HCGTerminalUnleashed'
+        uses: actions/upload-artifact@v4
+        with:
+          name: hcg-terminal-unleashed-rootless-dev
+          path: |
+            ${{ runner.temp }}/dist-rootless/unleashed/*.deb
+            ${{ runner.temp }}/dist-rootless/unleashed/*.deb.sha256
+            ${{ runner.temp }}/dist-rootless/unleashed/*.deb.manifest.json
+          retention-days: 3
 
       - name: Diagnostics summary
         if: always()
@@ -294,7 +333,7 @@ jobs:
                           classic-launch classic-session enhanced-launch enhanced-dashboard reduced-launch reduced-session detailoff-session; do
             shot HCGTerminal "$scenario" -HCGSmokeScenario "$scenario"
           done
-          for scenario in tools long-name ansi classic-launch enhanced-dashboard; do
+          for scenario in tools long-name ansi classic-launch enhanced-dashboard jb-diagnostics ecosystem; do
             shot HCGTerminalUnleashed "$scenario" -HCGSmokeScenario "$scenario"
           done
           shot HCGTerminal session-keyboard-hidden -HCGSmokeScenario session -HCGSmokeKeyboardHidden
@@ -450,7 +489,7 @@ jobs:
         run: |
           apt-get update -qq
           # procps: ps/pgrep/pkill, which the detached build jobs use to stop a cancelled build.
-          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq openssh-server openssh-client openssl procps make perl >/dev/null
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq openssh-server openssh-client openssl procps make perl gcc libc6-dev >/dev/null
           bash Scripts/start-test-sshd.sh
           ssh -V
       - name: Build tests
@@ -468,7 +507,7 @@ jobs:
           HCG_SSH_TEST: "1"
         run: |
           set -o pipefail
-          swift test --skip-build --filter "RemoteSSHTests|TerminalSecurityTests|RemoteFilesModelTests|DevToolsCenterTests|BuildAccessTests|DeveloperToolsTests" 2>&1 \
+          swift test --skip-build --filter "RemoteSSHTests|TerminalSecurityTests|RemoteFilesModelTests|DevToolsCenterTests|BuildAccessTests|DeveloperToolsTests|PTYHelperTests|JailbreakDiagnosticsTests|DeepLinkTests" 2>&1 \
             | tee ../linux-ssh-tests.log | grep -E "Test Case .*(passed|failed|skipped)|error:|Executed [0-9]+ tests" | tail -80
           if grep -q "skipped" ../linux-ssh-tests.log; then echo "::warning::some SSH tests were skipped"; grep "skipped" ../linux-ssh-tests.log | head; fi
       - uses: actions/upload-artifact@v4

@@ -12,12 +12,16 @@ import UIKit
 /// Where something ran. Shown on every diagnostic, job, log line and artifact.
 struct ExecutionHostLabel: View {
     let context: ExecutionContext
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         Label(context.label, systemImage: context == .thisDevice ? "iphone" : "server.rack")
             .font(.caption.weight(.semibold))
             .foregroundStyle(HCGPalette.textSecondary)
-            .lineLimit(2)
+            // The host name and address must stay readable: at accessibility sizes the label
+            // wraps as far as it needs instead of truncating ("Build Mac (dev@…").
+            .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
+            .fixedSize(horizontal: false, vertical: dynamicTypeSize.isAccessibilitySize)
             .accessibilityLabel("Runs on \(context.label)")
     }
 }

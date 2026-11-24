@@ -39,6 +39,7 @@ public struct RootView: View {
     @State private var smokeKeyImport = false
     @State private var smokeDoctorHost: HostProfile?
     @State private var smokeJob: SmokeJobID?
+    @State private var smokeSheet: SmokeSheet?
     #endif
 
     public init(model: TerminalAppModel) {
@@ -105,6 +106,24 @@ public struct RootView: View {
             }
             Button("Cancel", role: .cancel) { renamingSession = nil }
         }
+        .onOpenURL { url in
+            // Navigation only (see TerminalDeepLink): no session, command or setting change.
+            guard case .open(let destination)? = TerminalDeepLink(url: url) else { return }
+            let unleashed = model.dependencies.distribution == .unleashed
+            selection = switch destination {
+            case .dashboard: .dashboard
+            case .files: .files
+            case .hosts: .hosts
+            case .builds: .builds
+            case .artifacts: .artifacts
+            case .console: .logConsole
+            case .tools: unleashed ? .unleashedTools : .access
+            case .diagnostics, .about: .diagnostics
+            case .capabilities: .access
+            case .settings: .preferences
+            }
+            compactColumn = .detail
+        }
         .alert("HCG Terminal", isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) {
             Button("OK", role: .cancel) { model.errorMessage = nil }
         } message: {
@@ -120,6 +139,16 @@ public struct RootView: View {
             NavigationStack { JobDetailView(jobID: item.id) }
                 .environment(model)
                 .environment(\.hcgAppearance, model.appearance)
+        }
+        .sheet(item: $smokeSheet) { sheet in
+            NavigationStack {
+                switch sheet {
+                case .jailbreakDiagnostics: JailbreakDiagnosticsView()
+                case .ecosystem: HCGEcosystemView()
+                }
+            }
+            .environment(model)
+            .environment(\.hcgAppearance, model.appearance)
         }
         .sheet(isPresented: $smokeKeyImport) {
             NavigationStack { KeyImportSheet() }
@@ -361,6 +390,8 @@ public struct RootView: View {
             smokeEditorPath = path
         case "new-remote": showNewRemote = true
         case "key-import": smokeKeyImport = true
+        case "jb-diagnostics": smokeSheet = .jailbreakDiagnostics
+        case "ecosystem": smokeSheet = .ecosystem
         case "doctor", "job", "console":
             Task {
                 let host = HostProfile(name: "Build Mac (sample)", hostname: "mac.local", username: "dev", auth: .password)
@@ -392,6 +423,11 @@ public struct RootView: View {
 
 #if DEBUG
 struct SmokeJobID: Identifiable { let id: UUID }
+
+enum SmokeSheet: String, Identifiable {
+    case jailbreakDiagnostics, ecosystem
+    var id: String { rawValue }
+}
 
 /// Synthetic terminal output for the CI screenshots (Debug builds only).
 enum SmokeTerminalContent {

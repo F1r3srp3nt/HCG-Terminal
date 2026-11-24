@@ -31,6 +31,7 @@ struct UnleashedToolsView: View {
                     NavigationLink { ProgramsView() } label: { Label("Programs", systemImage: "apple.terminal") }
                     NavigationLink { ProcessListView() } label: { Label("Processes", systemImage: "list.bullet.rectangle") }
                     NavigationLink { UnleashedEnvironmentView() } label: { Label("Environment and Tests", systemImage: "cpu") }
+                    NavigationLink { JailbreakDiagnosticsView() } label: { Label("Jailbreak Diagnostics", systemImage: "stethoscope") }
                 }
                 Section {
                     if let refusal = model.dependencies.access.denial(.packageManagement) {
@@ -483,6 +484,9 @@ struct DiagnosticsView: View {
         List {
             Group {
                 BuildIdentitySection(identity: model.dependencies.buildIdentity)
+                Section {
+                    NavigationLink { HCGEcosystemView() } label: { Label("HCG Ecosystem", systemImage: "point.3.connected.trianglepath.dotted") }
+                } footer: { Text("What works with HCG Repo, Nexus, Sentinel, Connect, Store and Server today.") }
                 if let assessment = model.assessment {
                     EnvironmentAssessmentSections(assessment: assessment)
                 }
@@ -537,6 +541,138 @@ struct DiagnosticsView: View {
         processes = await Task.detached { ProcessInspector.listProcesses() }.value
         entries = await DiagnosticLog.shared.recent()
         exportText = await DiagnosticLog.shared.exportText()
+    }
+}
+/// Read-only jailbreak diagnostics: install location and signature, rootless bootstrap, package
+/// database health, repositories, tweak injection and Safe Mode clues, storage. Nothing changes.
+struct JailbreakDiagnosticsView: View {
+    @Environment(TerminalAppModel.self) private var model
+    @State private var report: DiagnosticReport?
+    @State private var loading = false
+
+    var body: some View {
+        List {
+            Group {
+                if let report {
+                    ForEach(report.sections) { section in
+                        Section {
+                            ForEach(section.items) { item in DiagnosticItemRow(item: item) }
+                        } header: { Text(section.title) } footer: {
+                            if let footer = section.footer { Text(footer) }
+                        }
+                    }
+                    Section {
+                        ShareLink(item: report.text) { Label("Share Report", systemImage: "square.and.arrow.up") }
+                    } footer: {
+                        Text("Generated \(report.generatedAt.formatted(date: .abbreviated, time: .standard)) on this device. Reading only: nothing was installed, removed or changed.")
+                    }
+                } else if !loading {
+                    Section { Text("Diagnostics are not available in this build.").foregroundStyle(HCGPalette.textSecondary) }
+                }
+            }
+            .hcgRows()
+        }
+        .hcgScreenBackground()
+        .overlay { if loading { ProgressView("Reading this device…") } }
+        .navigationTitle("Jailbreak Diagnostics")
+        .navigationBarTitleDisplayMode(.inline)
+        .refreshable { await load() }
+        .task { if report == nil { await load() } }
+    }
+
+    private func load() async {
+        guard let tools = model.dependencies.unleashedTools else { return }
+        loading = true
+        report = await tools.jailbreakDiagnostics()
+        loading = false
+    }
+}
+
+struct DiagnosticItemRow: View {
+    let item: DiagnosticReport.Item
+    @State private var expanded = false
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $expanded) {
+            VStack(alignment: .leading, spacing: 3) {
+                ForEach(item.evidence, id: \.self) { line in
+                    Text(line).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
+                }
+                if item.evidence.isEmpty { Text("No further details.").font(.caption).foregroundStyle(HCGPalette.textSecondary) }
+            }
+        } label: {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Image(systemName: symbol).foregroundStyle(color).accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(item.title).font(.subheadline.weight(.semibold))
+                    Text(item.detail).font(.caption).foregroundStyle(HCGPalette.textSecondary)
+                }
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("\(item.title), \(label). \(item.detail)")
+        }
+    }
+
+    private var label: String {
+        switch item.status {
+        case .ok: "OK"
+        case .warning: "Warning"
+        case .problem: "Problem"
+        case .info: "Information"
+        case .unknown: "Not checked"
+        }
+    }
+
+    private var symbol: String {
+        switch item.status {
+        case .ok: "checkmark.circle.fill"
+        case .warning: "exclamationmark.triangle.fill"
+        case .problem: "xmark.octagon.fill"
+        case .info: "info.circle"
+        case .unknown: "questionmark.circle"
+        }
+    }
+
+    private var color: Color {
+        switch item.status {
+        case .ok: HCGPalette.ok
+        case .warning: HCGPalette.warn
+        case .problem: HCGPalette.loss
+        case .info: HCGPalette.accentSecondary
+        case .unknown: HCGPalette.textSecondary
+        }
+    }
+}
+/// What HCG Terminal can genuinely do with other HCG products today.
+struct HCGEcosystemView: View {
+    @Environment(TerminalAppModel.self) private var model
+    @Environment(\.openURL) private var openURL
+
+    var body: some View {
+        let unleashed = model.dependencies.distribution == .unleashed
+        List {
+            Group {
+                ForEach(HCGEcosystem.integrations(isUnleashed: unleashed)) { item in
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text(item.product).font(.subheadline.weight(.semibold))
+                            Spacer()
+                            Text(item.state.rawValue).font(.caption.weight(.semibold))
+                                .foregroundStyle(item.state == .available ? HCGPalette.ok : item.state == .partial ? HCGPalette.accentSecondary : HCGPalette.textSecondary)
+                        }
+                        Text(item.detail).font(.caption).foregroundStyle(HCGPalette.textSecondary)
+                        if let link = item.link {
+                            Button("Open") { openURL(link) }.font(.caption.weight(.semibold)).buttonStyle(.borderless)
+                        }
+                    }
+                    .accessibilityElement(children: .combine)
+                }
+            }
+            .hcgRows()
+        }
+        .hcgScreenBackground()
+        .navigationTitle("HCG Ecosystem")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 #endif
