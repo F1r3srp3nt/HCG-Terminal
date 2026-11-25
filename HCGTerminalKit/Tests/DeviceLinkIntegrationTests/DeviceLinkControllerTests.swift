@@ -420,7 +420,7 @@ final class DeviceLinkControllerTests: XCTestCase {
         XCTAssertTrue(server.requests("/unregister").isEmpty)
     }
 
-    func waitUntil(timeout: TimeInterval = 5, _ condition: () -> Bool) async throws {
+    private func waitUntil(timeout: TimeInterval = 5, _ condition: () -> Bool) async throws {
         let deadline = Date().addingTimeInterval(timeout)
         while !condition() {
             if Date() > deadline {
