@@ -33,10 +33,10 @@ public enum SessionHeaderSummary {
 
     /// A short note about the preferred local mode, when it matters for this header:
     /// unavailable, still being checked, or different from this local session's mode.
-    public static func modeNote(preferred: ExecutionMode, available: Bool?, target: ExecutionTarget) -> String? {
+    public static func modeNote(preferred: ExecutionMode, available: Bool?, target: ExecutionTarget, safeMode: Bool = false) -> String? {
         switch available {
         case nil:
-            return "Checking capabilities…"
+            return safeMode ? "Safe Mode: detection not run" : "Checking capabilities…"
         case false?:
             return "\(preferred.displayName) not available here"
         case true?:

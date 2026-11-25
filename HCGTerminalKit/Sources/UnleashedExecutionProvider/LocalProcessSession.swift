@@ -102,6 +102,9 @@ public actor LocalProcessSession: TerminalSession {
     private var awaitingAuthorization = false
     private var closed = false
     private var readerTask: Task<Void, Never>?
+    /// `hcg-pty-helper` when it is bundled (the jailbreak .deb): gives the shell a controlling
+    /// terminal, so Ctrl-C/Ctrl-Z, window size changes and job control work as in Terminal.app.
+    public let controllingTerminalHelper: String?
 
     private enum ReaderEvent: Sendable {
         case data([UInt8])
@@ -115,8 +118,10 @@ public actor LocalProcessSession: TerminalSession {
         workingDirectory: String?,
         observations: RuntimeObservations,
         gate: AuthorizationGate,
-        access: AccessPolicy = .shared
+        access: AccessPolicy = .shared,
+        controllingTerminalHelper: String? = PTYHelper.bundled()
     ) {
+        self.controllingTerminalHelper = controllingTerminalHelper
         self.access = access
         self.executable = executable
         self.arguments = arguments
@@ -138,7 +143,7 @@ public actor LocalProcessSession: TerminalSession {
         do {
             let process = try PTYProcess.spawn(
                 executable: executable, arguments: arguments, environment: environment,
-                workingDirectory: workingDirectory, size: size
+                workingDirectory: workingDirectory, size: size, controllingTerminalHelper: controllingTerminalHelper
             )
             self.process = process
             await observations.record(executable: executable, outcome: .succeeded(pid: process.pid))
@@ -267,5 +272,20 @@ public actor LocalProcessSession: TerminalSession {
         process = nil
         channel.yield(.stateChanged(.closed))
         channel.finish()
+    }
+}
+
+/// Finds the bundled controlling-terminal helper (see `Unleashed-Helper/hcg-pty-helper.c`).
+public enum PTYHelper {
+    public static let name = "hcg-pty-helper"
+
+    /// The helper inside the app bundle, if present and executable. `HCG_PTY_HELPER` overrides
+    /// the location (tests); an empty value turns the helper off.
+    public static func bundled(environment: [String: String] = ProcessInfo.processInfo.environment, bundlePath: String = Bundle.main.bundlePath) -> String? {
+        if let override = environment["HCG_PTY_HELPER"] {
+            return override.isEmpty || access(override, X_OK) != 0 ? nil : override
+        }
+        let path = (bundlePath as NSString).appendingPathComponent(name)
+        return access(path, X_OK) == 0 ? path : nil
     }
 }

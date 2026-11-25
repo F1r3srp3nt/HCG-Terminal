@@ -177,16 +177,23 @@ public final class PTYProcess: @unchecked Sendable {
     }
 
     /// Opens a PTY pair and spawns `executable` on its secondary side in a new session.
+    ///
+    /// `controllingTerminalHelper`: the bundled `hcg-pty-helper`, when present. It runs first,
+    /// makes the terminal the session's controlling terminal explicitly (TIOCSCTTY: posix_spawn
+    /// has no way to request it), changes directory without a shell trampoline, and then
+    /// becomes `executable`.
     public static func spawn(
         executable: String,
         arguments: [String],
         environment: [String: String],
         workingDirectory: String?,
-        size: TerminalSize
+        size: TerminalSize,
+        controllingTerminalHelper: String? = nil
     ) throws -> PTYProcess {
         try spawn(
             executable: executable, arguments: arguments, environment: environment,
-            workingDirectory: workingDirectory, size: size, workingDirectoryStrategy: .platformDefault
+            workingDirectory: workingDirectory, size: size, workingDirectoryStrategy: .platformDefault,
+            controllingTerminalHelper: controllingTerminalHelper
         )
     }
 
@@ -198,7 +205,9 @@ public final class PTYProcess: @unchecked Sendable {
         environment: [String: String],
         workingDirectory: String?,
         size: TerminalSize,
-        workingDirectoryStrategy: POSIX.WorkingDirectoryStrategy
+        workingDirectoryStrategy: POSIX.WorkingDirectoryStrategy,
+        controllingTerminalHelper: String? = nil,
+        openWithoutControllingTerminal: Bool = false
     ) throws -> PTYProcess {
         let (master, secondaryName) = try openPseudoTerminal()
         _ = fcntl(master, F_SETFD, FD_CLOEXEC)
@@ -217,14 +226,27 @@ public final class PTYProcess: @unchecked Sendable {
         setWindowSize(secondary, size)
 
         let env = environment.map { "\($0.key)=\($0.value)" }.sorted()
+        // With the helper: helper <executable> <arguments…>. argv[0] of the program stays what
+        // the caller asked for (a login shell's "-zsh" style name is passed by the caller).
+        // The helper also changes directory (-C), so no trampoline is needed on iOS.
+        let launchExecutable = controllingTerminalHelper ?? executable
+        var launchArguments = arguments
+        var launchDirectory = workingDirectory
+        if controllingTerminalHelper != nil {
+            launchArguments = (workingDirectory.map { ["-C", $0] } ?? []) + ["--", executable] + arguments
+            launchDirectory = nil
+        }
+        // Tests reproduce Darwin's behaviour (no controlling terminal from open) on Linux.
+        let openFlags = openWithoutControllingTerminal ? O_RDWR | O_NOCTTY : O_RDWR
         do {
             let pid = try POSIX.spawn(
-                executable: executable, arguments: arguments, environment: env,
-                workingDirectory: workingDirectory, newSession: true, workingDirectoryStrategy: workingDirectoryStrategy
+                executable: launchExecutable, arguments: launchArguments, environment: env,
+                workingDirectory: launchDirectory, newSession: true, workingDirectoryStrategy: workingDirectoryStrategy
             ) { actions in
-                // Opening the terminal after setsid() makes it the controlling terminal on Linux.
-                // On Darwin it becomes stdio but not the controlling terminal (documented limitation).
-                posix_spawn_file_actions_addopen(&actions, 0, secondaryName, O_RDWR, 0)
+                // Opening the terminal after setsid() makes it the controlling terminal on Linux and,
+                // as observed on macOS CI, on Darwin too. hcg-pty-helper (TIOCSCTTY) guarantees it
+                // where that does not happen; whether iOS needs it is part of the device test.
+                posix_spawn_file_actions_addopen(&actions, 0, secondaryName, openFlags, 0)
                 posix_spawn_file_actions_adddup2(&actions, 0, 1)
                 posix_spawn_file_actions_adddup2(&actions, 0, 2)
             }

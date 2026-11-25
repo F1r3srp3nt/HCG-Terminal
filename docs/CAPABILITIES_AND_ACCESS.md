@@ -29,8 +29,8 @@ The switches restrict HCG Terminal only:
 | Package management | On | Unleashed features | Inventory: `PackageManagerClient.inventory` (reads the dpkg status file, no shell needed). Changes: `authorizedCommand` also requires Local shell execution. |
 | Process inspection | On | — | `ProcessInspector.listProcesses` (returns *disabled* without reading the table) |
 | Privileged operations | **Off** | shell | `AuthorizationGate.decide`: requests are refused without asking while off. Covers commands typed in a shell and programs launched from Unleashed Tools. |
-| Remote SSH | On | — | `SSHConnection.connect` (before any network activity), `stream`, `openSession` |
-| Remote builds and tests | On | SSH | `BuildOrchestrator.run` (recorded as *could not start*; nothing is sent) |
+| Remote SSH | On | — | `SSHConnection.connect` (before any network activity), `stream`, `openSession`; every SFTP request (`SFTPClient`) |
+| Remote builds and tests | On | SSH | `BuildOrchestrator.run` (recorded as *could not start*; nothing is sent). Each host also has its own **Allow builds and tests** setting, checked there too. |
 
 Turning a prerequisite off also stops its dependents. The dependent keeps your setting and is shown as "Inactive: needs …".
 

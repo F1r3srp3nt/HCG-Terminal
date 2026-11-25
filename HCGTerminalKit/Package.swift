@@ -59,7 +59,12 @@ let package = Package(
         .target(name: "Diagnostics", dependencies: ["TerminalCore"]),
         .target(
             name: "TerminalSecurity",
-            dependencies: ["TerminalCore", .product(name: "Crypto", package: "swift-crypto")]
+            dependencies: [
+                "TerminalCore", .product(name: "Crypto", package: "swift-crypto"),
+                // AES-CTR for passphrase-protected keys on Linux only; Apple platforms use
+                // CommonCrypto, so the app does not link BoringSSL.
+                .product(name: "_CryptoExtras", package: "swift-crypto", condition: .when(platforms: [.linux])),
+            ]
         ),
         .target(name: "TerminalCapabilityProvider", dependencies: ["TerminalCore"]),
         .target(name: "FileWorkspace", dependencies: ["TerminalCore"]),
@@ -142,7 +147,7 @@ let package = Package(
         ),
         .testTarget(
             name: "DeveloperToolsTests",
-            dependencies: ["DeveloperWorkspace", "BuildOrchestrator", "ArtifactManager", "FileWorkspace", "TerminalCore"]
+            dependencies: ["DeveloperWorkspace", "BuildOrchestrator", "ArtifactManager", "FileWorkspace", "TerminalCore", "Diagnostics", "TerminalTestSupport"]
         ),
         .testTarget(
             name: "DeviceLinkIntegrationTests",
@@ -155,6 +160,7 @@ let package = Package(
             name: "TerminalUITests",
             dependencies: [
                 "TerminalUI", "TerminalCore", "TerminalCapabilityProvider", "TerminalSecurity", "FileWorkspace", "LocalCommandEngine",
+                "BuildOrchestrator", "DeveloperWorkspace", "Diagnostics", "ArtifactManager",
                 .product(name: "HCGDeviceLink", package: "HCGDeviceLink"),
             ]
         ),

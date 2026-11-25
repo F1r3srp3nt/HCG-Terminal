@@ -368,6 +368,7 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				HCG_BUILD_VARIANT = standard;
+				HCG_URL_SCHEME = hcgterminal;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "HCGTerminal-Support/Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = "HCG Terminal";
@@ -406,6 +407,7 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				HCG_BUILD_VARIANT = standard;
+				HCG_URL_SCHEME = hcgterminal;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "HCGTerminal-Support/Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = "HCG Terminal";
@@ -439,11 +441,12 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = HCGTerminal-Support/HCGTerminalUnleashed.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				HCG_BUILD_VARIANT = unleashed;
+				HCG_URL_SCHEME = "hcgterminal-unleashed";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "HCGTerminal-Support/Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = "HCG Terminal Unleashed";
@@ -458,7 +461,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 0.2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.hakmicapitalgroup.hcgterminal.unleashed;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -477,11 +480,12 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = HCGTerminal-Support/HCGTerminalUnleashed.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				HCG_BUILD_VARIANT = unleashed;
+				HCG_URL_SCHEME = "hcgterminal-unleashed";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "HCGTerminal-Support/Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = "HCG Terminal Unleashed";
@@ -496,7 +500,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 0.2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.hakmicapitalgroup.hcgterminal.unleashed;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";

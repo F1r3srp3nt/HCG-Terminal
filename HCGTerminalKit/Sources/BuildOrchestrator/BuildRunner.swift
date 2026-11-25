@@ -159,7 +159,9 @@ public actor BuildOrchestrator {
 
     /// Runs `plan`. `onOutput` receives log text as it arrives. Cancelling the calling task
     /// closes the remote channel.
-    public func run(_ plan: BuildPlan, on executor: any RemoteCommandExecuting, onOutput: @escaping @Sendable (String) -> Void = { _ in }) async -> BuildRun {
+    /// `hostAllowsBuilds` is the host's own "Allow builds and tests" setting; a refused run is
+    /// recorded and nothing is sent to the host.
+    public func run(_ plan: BuildPlan, on executor: any RemoteCommandExecuting, hostAllowsBuilds: Bool = true, onOutput: @escaping @Sendable (String) -> Void = { _ in }) async -> BuildRun {
         let id = UUID()
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withFullDate, .withTime, .withColonSeparatorInTime]
@@ -169,6 +171,13 @@ public actor BuildOrchestrator {
         // Nothing is sent to the host while remote builds (or SSH) are turned off.
         if let refusal = access.denial(.remoteBuilds) {
             run.status = .couldNotStart(refusal)
+            run.finishedAt = Date()
+            record(run)
+            return run
+        }
+
+        guard hostAllowsBuilds else {
+            run.status = .couldNotStart("Builds and tests are turned off for \(plan.hostName) in its host settings. Nothing was sent to the host.")
             run.finishedAt = Date()
             record(run)
             return run
@@ -282,6 +291,8 @@ public enum ArtifactDiscovery {
         case .swiftPackage: [".build/\(plan.configuration.rawValue.lowercased())"]
         case .xcodeProject, .xcodeWorkspace: ["\(BuildPlanner.derivedDataPath)/Build/Products"]
         case .dotnet: ["bin/\(plan.configuration.rawValue)", "."]
+        case .theos: ["packages"]
+        case .executableMaker: []
         }
     }
 
@@ -295,6 +306,10 @@ public enum ArtifactDiscovery {
             filter = "-maxdepth 2 \\( -name '*.app' -o -name '*.ipa' -o -name '*.xcarchive' -o -name '*.framework' -o -name '*.appex' \\) -prune"
         case .dotnet:
             filter = "-maxdepth 5 -path '*/bin/*' \\( -name '*.dll' -o -name '*.exe' -o -name '*.nupkg' \\) -type f"
+        case .theos:
+            filter = "-maxdepth 1 -name '*.deb' -type f"
+        case .executableMaker:
+            filter = "-maxdepth 0"
         }
         return RemoteShell.inDirectory(plan.projectPath, "for r in \(roots); do [ -d \"$r\" ] && find -H \"$r\" -mindepth 1 \(filter) -print 2>/dev/null; done | head -200 | while IFS= read -r p; do if [ -d \"$p\" ]; then t=d; else t=f; fi; printf '%s\\t%s\\n' \"$t\" \"$(cd \"$(dirname \"$p\")\" && pwd)/$(basename \"$p\")\"; done")
     }

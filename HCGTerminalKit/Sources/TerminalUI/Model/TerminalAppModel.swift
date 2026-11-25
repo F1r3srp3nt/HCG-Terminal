@@ -106,6 +106,9 @@ public final class TerminalAppModel {
     public var authorizationPrompt: PendingDecision<AuthorizationRequest>?
     public var hostKeyPrompt: PendingDecision<HostKeyPrompt>?
     public var errorMessage: String?
+    /// Started from the recovery screen after a failed launch: environment detection, the
+    /// environment assessment and resuming background jobs are skipped until asked for.
+    public var safeMode = false
 
     // MARK: Remote
     public private(set) var hosts: [HostProfile] = []
@@ -114,6 +117,8 @@ public final class TerminalAppModel {
 
     // MARK: Remote development
     public private(set) var builds: BuildCenter!
+    /// Doctor, detached build jobs, the Log Console and install handoff.
+    public private(set) var devTools: DevToolsCenter!
 
     // MARK: Capabilities & Access
     /// Mirror of the access switches for the interface. The services read the policy itself.
@@ -140,12 +145,32 @@ public final class TerminalAppModel {
         self.accessSettings = dependencies.access.settings
         self.appearance = dependencies.appearance.settings
         self.deviceLink = dependencies.deviceLink.map { DeviceLinkController(environment: $0) }
-        self.builds = BuildCenter(dependencies: dependencies) { [weak self] hostID in
+        self.builds = BuildCenter(dependencies: dependencies, hostAllowsBuilds: { [weak self] hostID in
+            // Read the saved profile, so a change made since the plan was drawn up applies.
+            let saved = await dependencies.hostStore.all().first { $0.id == hostID }
+            return saved?.remoteBuildsAllowed ?? self?.hosts.first { $0.id == hostID }?.remoteBuildsAllowed ?? false
+        }) { [weak self] hostID in
             guard let self, let host = self.hosts.first(where: { $0.id == hostID }) else {
                 throw RemoteSessionError.unknownHost
             }
             return try await self.connection(for: host)
         }
+        self.devTools = DevToolsCenter(
+            dependencies: dependencies,
+            connect: { [weak self] hostID in
+                guard let self, let host = self.hosts.first(where: { $0.id == hostID }) else { throw RemoteSessionError.unknownHost }
+                return try await self.connection(for: host)
+            },
+            hostFor: { [weak self] hostID in self?.hosts.first { $0.id == hostID } },
+            hostAllowsBuilds: { [weak self] hostID in
+                let saved = await dependencies.hostStore.all().first { $0.id == hostID }
+                return saved?.remoteBuildsAllowed ?? self?.hosts.first { $0.id == hostID }?.remoteBuildsAllowed ?? false
+            },
+            knownSecrets: { hostID in
+                // The host's saved password is removed from any log it appears in.
+                (try? dependencies.credentials.load(.hostPassword(hostID))).flatMap { $0 }.map { [String(decoding: $0, as: UTF8.self)] } ?? []
+            }
+        )
         self.builds.onRunFinished = { @MainActor [weak self] run in
             guard case .failed(let status) = run.status else {
                 if run.status == .succeeded { self?.recordVerification(.buildOrchestration, observation: "\(run.plan.title) on \(run.plan.hostName) finished (exit 0).") }
@@ -164,13 +189,29 @@ public final class TerminalAppModel {
 
     /// Wires prompts and loads persisted state. Call once from the root view.
     public func bootstrap() async {
+        let journal = StartupJournal.shared
+        journal?.phase("authorization prompts")
         await dependencies.gate.setPresenter { [weak self] request in
             await self?.ask(authorization: request) ?? false
         }
+        journal?.phase("saved hosts")
         hosts = await dependencies.hostStore.all()
+        journal?.phase("SSH keys (Keychain)")
         keys = dependencies.keyManager.list()
+        journal?.phase("build history")
         await builds.reload()
+        if safeMode {
+            // Safe Mode: the interface opens without background jobs or environment detection.
+            // Each can be run from the Safe Mode banner, where a failure is attributed to it.
+            journal?.note("safe mode: skipped resuming jobs, environment detection and assessment")
+            await DiagnosticLog.shared.record(.notice, "app", "Started in Safe Mode")
+            return
+        }
+        journal?.phase("resume background jobs")
+        await devTools.resumeActiveJobs()
+        journal?.phase("environment detection")
         await refreshCapabilities()
+        journal?.phase("environment assessment")
         await refreshAssessment()
         if preferredMode != .vanilla, !isAvailable(preferredMode) {
             // A saved preference for a mode that cannot run here never takes effect.
@@ -179,6 +220,20 @@ public final class TerminalAppModel {
             await DiagnosticLog.shared.record(.notice, "mode", "Saved mode not available; using Vanilla")
         }
         await DiagnosticLog.shared.record(.info, "app", "Started", metadata: ["build": dependencies.distribution.rawValue, "mode": preferredMode.rawValue])
+    }
+
+    /// Leaves Safe Mode by running what it skipped, one step at a time, each recorded in the
+    /// startup journal so a failure is attributed to its step.
+    public func runSkippedStartupSteps() async {
+        let journal = StartupJournal.shared
+        safeMode = false
+        journal?.phase("environment detection (from Safe Mode)")
+        await refreshCapabilities()
+        journal?.phase("environment assessment (from Safe Mode)")
+        await refreshAssessment()
+        journal?.phase("resume background jobs (from Safe Mode)")
+        await devTools.resumeActiveJobs()
+        journal?.note("safe mode: skipped steps completed")
     }
 
     // MARK: - Capabilities
@@ -537,9 +592,9 @@ public final class TerminalAppModel {
         }
         switch host.auth {
         case .password: return .password(try password())
-        case .key(let id): return .ed25519(try dependencies.keyManager.privateKey(for: id))
+        case .key(let id): return .key(try dependencies.keyManager.privateKey(for: id))
         case .keyThenPassword(let id):
-            return .keyThenPassword(rawKey: try dependencies.keyManager.privateKey(for: id).rawRepresentation, password: try password())
+            return .keyThenPassword(try dependencies.keyManager.privateKey(for: id), password: try password())
         }
     }
 
@@ -749,6 +804,21 @@ public final class TerminalAppModel {
             errorMessage = error.localizedDescription
             return nil
         }
+    }
+
+    /// Imports a private key file's text. Decryption (bcrypt, deliberately slow) runs off the
+    /// main actor. The passphrase is used once and not stored. Errors are returned to the caller
+    /// (the import sheet shows them in place).
+    @discardableResult
+    public func importKey(text: String, passphrase: String?, name: String?) async throws -> SSHKeyRecord {
+        let imported = try await Task.detached(priority: .userInitiated) {
+            try OpenSSHKeyImport.parse(text, passphrase: passphrase)
+        }.value
+        let chosen = name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let comment = !chosen.isEmpty ? chosen : (!imported.comment.isEmpty ? imported.comment : "imported \(imported.key.displayName) key")
+        let record = try dependencies.keyManager.importKey(imported, comment: comment)
+        keys = dependencies.keyManager.list()
+        return record
     }
 
     public func deleteKey(_ record: SSHKeyRecord) {

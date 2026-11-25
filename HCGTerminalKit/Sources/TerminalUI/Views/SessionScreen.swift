@@ -138,7 +138,7 @@ struct SessionHeader: View {
     }
 
     private var note: String? {
-        SessionHeaderSummary.modeNote(preferred: model.preferredMode, available: availability(model.preferredMode), target: session.target)
+        SessionHeaderSummary.modeNote(preferred: model.preferredMode, available: availability(model.preferredMode), target: session.target, safeMode: model.safeMode)
     }
 
     private var summary: some View {
@@ -196,7 +196,7 @@ struct SessionHeader: View {
             Label(session.backend.label, systemImage: "cpu")
                 .font(.footnote)
                 .foregroundStyle(HCGPalette.textSecondary)
-            ModeStatusLine(mode: model.preferredMode, available: availability(model.preferredMode))
+            ModeStatusLine(mode: model.preferredMode, available: availability(model.preferredMode), safeMode: model.safeMode)
             Button { showDetails = true } label: {
                 Label("Session details", systemImage: "info.circle").font(.footnote.weight(.semibold))
             }

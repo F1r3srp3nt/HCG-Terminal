@@ -1,0 +1,89 @@
+From 369ab08bcba0d6fa6ba40eb79b3bc8938ce47837 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 24 Nov 2026 10:14:20 +0000
+Subject: [PATCH] Proposal: HCG Terminal Unleashed 0.2.0~rc2 in HCG Repo
+ Candidate (awaiting owner approval; not pushed)
+
+---
+ ...terminal-unleashed-0.2.0-rc2-rootless.toml | 21 +++++++++++++++++++
+ .../CHANGELOG.md                              | 11 ++++++++++
+ .../package.toml                              |  9 +++++++-
+ 3 files changed, 40 insertions(+), 1 deletion(-)
+ create mode 100644 imports/hcg-terminal-unleashed-0.2.0-rc2-rootless.toml
+
+diff --git a/imports/hcg-terminal-unleashed-0.2.0-rc2-rootless.toml b/imports/hcg-terminal-unleashed-0.2.0-rc2-rootless.toml
+new file mode 100644
+index 0000000..1d61376
+--- /dev/null
++++ b/imports/hcg-terminal-unleashed-0.2.0-rc2-rootless.toml
+@@ -0,0 +1,21 @@
++# HCG Terminal Unleashed 0.2.0~rc2, rootless. Frozen release candidate (HCG-Terminal docs/releases/
++# hcg-terminal-unleashed-0.2.0-rc2/FREEZE.md). PROPOSAL: push only after the owner approves free public
++# Candidate-only distribution of this exact package (pushing this file starts Prepare packages).
++# Pinned to F1r3srp3nt/HCG-Terminal main @ 22912b4, Apple build run #77 (run 45365201577, manual run with
++# release_version=0.2.0~rc2), artifact hcg-terminal-unleashed-rootless-release-candidate (ID 14907036848,
++# zip SHA-256 0d91d5a29f43d770dd8ede70ca3125033151f943b25f6189b911ad790eeb3983, kept until 2026-12-24).
++# 7,053,756 bytes. Only these exact bytes are approved; never rebuilt.
++
++[request]
++package = "com.hakmicapitalgroup.hcgterminal.unleashed"
++version = "0.2.0~rc2"
++architecture = "iphoneos-arm64"
++channel = "candidate"
++
++[source]
++kind = "github-artifact"
++repository = "F1r3srp3nt/HCG-Terminal"
++run_id = 45365201577
++commit = "22912b4c7dc05de4256ffe12ab7070456de85622"
++artifact = "hcg-terminal-unleashed-rootless-release-candidate"
++sha256 = "597eb8f11519c9a91a0daa8c72eb9f70f5e38c4fc2e1ffaba469d8420606ff84"
+diff --git a/packages/com.hakmicapitalgroup.hcgterminal.unleashed/CHANGELOG.md b/packages/com.hakmicapitalgroup.hcgterminal.unleashed/CHANGELOG.md
+index 3772f08..232abf2 100644
+--- a/packages/com.hakmicapitalgroup.hcgterminal.unleashed/CHANGELOG.md
++++ b/packages/com.hakmicapitalgroup.hcgterminal.unleashed/CHANGELOG.md
+@@ -2,6 +2,17 @@
+ 
+ Entries are keyed by the exact Debian version in the package's control file (`## <version>`).
+ 
++## 0.2.0~rc2
++
++Frozen release candidate (SHA-256 `597eb8f11519c9a91a0daa8c72eb9f70f5e38c4fc2e1ffaba469d8420606ff84`, 7,053,756 bytes), built once by HCG-Terminal CI
++(main @ `22912b4`, run 45365201577) with `--deb-version 0.2.0~rc2`. App 0.2.0 (2). Same entitlements as rc1.
++
++- 0.2.0~rc1 installed and registered on an iPhone 11 Pro Max (iOS 17.4, Dopamine rootless) but closed about a second after launch. The cause needs the device's crash report.
++- Startup journal: each startup step, crash signals, iOS and app version and injected tweak libraries are written to `/var/mobile/Library/Application Support/HCGTerminal/Startup/`. No passwords, keys, tokens, host names or commands.
++- Startup Recovery: after a launch that did not finish, the app opens on a recovery screen first: share the startup report, Start in Safe Mode (no environment detection or background jobs), or Start Normally.
++- Jailbreak Diagnostics no longer prints "at ." for an empty prefix; the HCG Ecosystem screen gives Agent Runtime's real status.
++- Not yet verified on a physical device.
++
+ ## 0.2.0~rc1
+ 
+ Frozen release candidate (SHA-256 `02626804763200f9e29d651a213bdb92330351d3052073e6a52cb86d62fc5a28`, 7,020,986 bytes),
+diff --git a/packages/com.hakmicapitalgroup.hcgterminal.unleashed/package.toml b/packages/com.hakmicapitalgroup.hcgterminal.unleashed/package.toml
+index ca31bf2..4d36599 100644
+--- a/packages/com.hakmicapitalgroup.hcgterminal.unleashed/package.toml
++++ b/packages/com.hakmicapitalgroup.hcgterminal.unleashed/package.toml
+@@ -55,7 +55,11 @@ allow_setuid = []
+ 
+ [versions."0.2.0~rc1"]
+ status = "experimental"
+-label = "Experimental release candidate — free Candidate-only test build; not yet verified on a physical device."
++label = "Did not open on iPhone 11 Pro Max, iOS 17.4, Dopamine (2026-11-24): installs, then closes at launch. Use 0.2.0~rc2."
++
++[versions."0.2.0~rc2"]
++status = "experimental"
++label = "Experimental release candidate: free Candidate-only test build with startup recovery and Safe Mode. Not yet verified on a device."
+ 
+ [access]
+ # Free for users signed in with HCG Connect. Never stored or served publicly here.
+@@ -64,3 +68,6 @@ level = "connect"
+ # including future release candidates and releases, keeps level "connect". Not valid for the stable source.
+ exception = "Owner approved 2026-11-24: free public Candidate-only distribution of HCG Terminal Unleashed 0.2.0~rc1 for physical-device and repository-access testing."
+ exception_versions = ["0.2.0~rc1"]
++# PENDING OWNER APPROVAL for 0.2.0~rc2 (SHA-256 597eb8f11519c9a91a0daa8c72eb9f70f5e38c4fc2e1ffaba469d8420606ff84). On approval, replace the two lines above with:
++# exception = "Owner approved <date>: free public Candidate-only distribution of HCG Terminal Unleashed 0.2.0~rc1 and 0.2.0~rc2 (SHA-256 597eb8f11519c9a91a0daa8c72eb9f70f5e38c4fc2e1ffaba469d8420606ff84) for physical-device testing."
++# exception_versions = ["0.2.0~rc1", "0.2.0~rc2"]
+-- 
+2.43.0
+

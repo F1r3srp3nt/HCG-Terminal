@@ -108,6 +108,8 @@ public struct PackageInventoryRows: Hashable, Sendable {
 
 public enum PackageRequest: Hashable, Sendable {
     case install(String)
+    /// Install a .deb file on this device (a downloaded build artifact).
+    case installFile(String)
     case remove(String)
     case refreshIndexes
 }
@@ -143,6 +145,9 @@ public protocol UnleashedTools: Sendable {
     func toolSession(_ path: String, arguments: [String]) async throws -> any TerminalSession
     /// Explicit, bounded checks. Only run when the user asks.
     func verifyShell() async -> EnvironmentAssessment.Operation
+    /// Read-only jailbreak diagnostics: install location and signature, rootless bootstrap,
+    /// package database health, repositories, tweak injection / Safe Mode clues, storage.
+    func jailbreakDiagnostics() async -> DiagnosticReport
     func verifyWrite(in directory: String) async -> EnvironmentAssessment.Operation
     /// Bootstrap roots the user entered (relocated installs). Probed read-only.
     func customBootstrapRoots() async -> [String]
@@ -188,6 +193,9 @@ public struct AppDependencies: Sendable {
     /// HCG Device Link (Connected Devices): Keychain identity, pinned transport and the HCG
     /// Connect file. `nil` where the platform has neither (Linux); local features never depend on it.
     public var deviceLink: DeviceLinkEnvironment?
+    /// HCG Repo product page, shown in Settings and opened in Safari only when tapped. `nil` in
+    /// the standard build: only the Unleashed composition sets it.
+    public var hcgRepoPage: URL? = nil
 
     public init(
         distribution: DistributionBuild, workspace: FileWorkspace, vanilla: any LocalExecutionProvider,

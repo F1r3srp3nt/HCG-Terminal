@@ -133,6 +133,7 @@ public struct ModeSelector: View {
 struct ModeStatusLine: View {
     let mode: ExecutionMode
     let available: Bool?
+    var safeMode = false
     @Environment(\.hcgAppearance) private var appearance
 
     var body: some View {
@@ -150,7 +151,7 @@ struct ModeStatusLine: View {
 
     private var text: String {
         switch (mode, available) {
-        case (_, nil): "Checking capabilities…"
+        case (_, nil): safeMode ? "Safe Mode: capability detection has not run. Use Run Detection above." : "Checking capabilities…"
         case (.vanilla, _): "Vanilla: HCG built-in commands on the app workspace (not a system shell). Remote development available."
         case (.unleashed, true?): "Unleashed: local capabilities available as reported. Nothing is elevated automatically."
         case (.unleashed, false?): "Unleashed is not available here (see Capabilities & Access). Vanilla and remote development remain available."

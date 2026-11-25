@@ -1,4 +1,5 @@
 #if canImport(UIKit) && canImport(SwiftUI)
+import DeveloperWorkspace
 import FileWorkspace
 import SwiftUI
 import TerminalCapabilityProvider
@@ -13,6 +14,7 @@ enum SidebarItem: Hashable {
     case hosts
     case builds
     case artifacts
+    case logConsole
     case unleashedTools
     case connectedDevices
     case preferences
@@ -35,10 +37,17 @@ public struct RootView: View {
     @State private var renameTitle = ""
     #if DEBUG
     @State private var smokeEditorPath: WorkspacePath?
+    @State private var smokeKeyImport = false
+    @State private var smokeDoctorHost: HostProfile?
+    @State private var smokeJob: SmokeJobID?
+    @State private var smokeSheet: SmokeSheet?
     #endif
 
-    public init(model: TerminalAppModel) {
+    private let launch: LaunchController?
+
+    public init(model: TerminalAppModel, launch: LaunchController? = nil) {
         _model = State(initialValue: model)
+        self.launch = launch
     }
 
     public var body: some View {
@@ -52,8 +61,13 @@ public struct RootView: View {
         .environment(\.hcgAppearance, model.appearance)
         .tint(ModeAccent.color(model.preferredMode, accent: model.appearance.accent))
         .preferredColorScheme(model.appearance.theme == .dark ? .dark : nil)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if model.safeMode { SafeModeBanner(model: model) }
+        }
         .task {
+            launch?.interfaceAppeared()
             await model.bootstrap()
+            launch?.startupFinished()
             #if DEBUG
             await runSmokeScenario()
             #endif
@@ -101,12 +115,55 @@ public struct RootView: View {
             }
             Button("Cancel", role: .cancel) { renamingSession = nil }
         }
+        .onOpenURL { url in
+            // Navigation only (see TerminalDeepLink): no session, command or setting change.
+            guard case .open(let destination)? = TerminalDeepLink(url: url) else { return }
+            let unleashed = model.dependencies.distribution == .unleashed
+            selection = switch destination {
+            case .dashboard: .dashboard
+            case .files: .files
+            case .hosts: .hosts
+            case .builds: .builds
+            case .artifacts: .artifacts
+            case .console: .logConsole
+            case .tools: unleashed ? .unleashedTools : .access
+            case .diagnostics, .about: .diagnostics
+            case .capabilities: .access
+            case .settings: .preferences
+            }
+            compactColumn = .detail
+        }
         .alert("HCG Terminal", isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) {
             Button("OK", role: .cancel) { model.errorMessage = nil }
         } message: {
             Text(model.errorMessage ?? "")
         }
         #if DEBUG
+        .sheet(item: $smokeDoctorHost) { host in
+            NavigationStack { DoctorView(host: host, projectPath: "~/Developer/Sample App", project: .xcodeProject("SampleApp.xcodeproj")) }
+                .environment(model)
+                .environment(\.hcgAppearance, model.appearance)
+        }
+        .sheet(item: $smokeJob) { item in
+            NavigationStack { JobDetailView(jobID: item.id) }
+                .environment(model)
+                .environment(\.hcgAppearance, model.appearance)
+        }
+        .sheet(item: $smokeSheet) { sheet in
+            NavigationStack {
+                switch sheet {
+                case .jailbreakDiagnostics: JailbreakDiagnosticsView()
+                case .ecosystem: HCGEcosystemView()
+                }
+            }
+            .environment(model)
+            .environment(\.hcgAppearance, model.appearance)
+        }
+        .sheet(isPresented: $smokeKeyImport) {
+            NavigationStack { KeyImportSheet() }
+                .environment(model)
+                .environment(\.hcgAppearance, model.appearance)
+        }
         .sheet(isPresented: Binding(get: { smokeEditorPath != nil }, set: { if !$0 { smokeEditorPath = nil } })) {
             if let path = smokeEditorPath {
                 NavigationStack { TextFileEditor(path: path) }
@@ -135,7 +192,7 @@ public struct RootView: View {
                 Section {
                     VStack(alignment: .leading, spacing: 10) {
                         ModeSelector(selection: model.preferredMode, availability: availability) { model.selectMode($0) }
-                        ModeStatusLine(mode: model.preferredMode, available: availability(model.preferredMode))
+                        ModeStatusLine(mode: model.preferredMode, available: availability(model.preferredMode), safeMode: model.safeMode)
                         newSessionMenu
                     }
                     .listRowBackground(Color.clear)
@@ -175,6 +232,7 @@ public struct RootView: View {
                     NavigationLink(value: SidebarItem.hosts) { Label("Hosts & Projects", systemImage: "server.rack") }
                     NavigationLink(value: SidebarItem.builds) { Label("Builds & Tests", systemImage: "hammer") }
                     NavigationLink(value: SidebarItem.artifacts) { Label("Artifacts", systemImage: "shippingbox") }
+                    NavigationLink(value: SidebarItem.logConsole) { Label("Log Console", systemImage: "text.alignleft") }
                 } header: { Eyebrow("Remote development") }
 
                 Section {
@@ -257,6 +315,7 @@ public struct RootView: View {
         case .hosts: NavigationStack { HostsView() }
         case .builds: NavigationStack { BuildsView() }
         case .artifacts: NavigationStack { ArtifactsView() }
+        case .logConsole: NavigationStack { LogConsoleView() }
         case .unleashedTools: NavigationStack { UnleashedToolsView() }
         case .connectedDevices: NavigationStack { ConnectedDevicesView() }
         case .preferences: NavigationStack { PreferencesView() }
@@ -341,6 +400,20 @@ public struct RootView: View {
             try? model.dependencies.workspace.write("# My workspace\n\nProjects, scripts and notes.\n\nThis file was written by the CI screenshot run.\n", to: path)
             smokeEditorPath = path
         case "new-remote": showNewRemote = true
+        case "key-import": smokeKeyImport = true
+        case "jb-diagnostics": smokeSheet = .jailbreakDiagnostics
+        case "ecosystem": smokeSheet = .ecosystem
+        case "doctor", "job", "console":
+            Task {
+                let host = HostProfile(name: "Build Mac (sample)", hostname: "mac.local", username: "dev", auth: .password)
+                await model.saveHost(host, password: nil)
+                let job = await model.devTools.seedSmokeSample(host: host)
+                switch scenario {
+                case "doctor": smokeDoctorHost = host
+                case "job": smokeJob = SmokeJobID(id: job)
+                default: selection = .logConsole
+                }
+            }
         case "no-session":
             selection = .session(SessionID())
             compactColumn = .detail
@@ -361,6 +434,13 @@ public struct RootView: View {
 }
 
 #if DEBUG
+struct SmokeJobID: Identifiable { let id: UUID }
+
+enum SmokeSheet: String, Identifiable {
+    case jailbreakDiagnostics, ecosystem
+    var id: String { rawValue }
+}
+
 /// Synthetic terminal output for the CI screenshots (Debug builds only).
 enum SmokeTerminalContent {
     private static let esc = "\u{1B}["
@@ -495,6 +575,23 @@ struct PreferencesView: View {
                 } header: { Text("Distribution") }
                 .font(.footnote)
                 .foregroundStyle(HCGPalette.textSecondary)
+
+                // Unleashed build only (the standard build has no page set). Opened by the system
+                // like links in the terminal; HCG Terminal itself makes no request.
+                if model.dependencies.distribution == .unleashed, let page = model.dependencies.hcgRepoPage {
+                    Section {
+                        Button {
+                            if page.scheme?.lowercased() == "https" { UIApplication.shared.open(page) }
+                        } label: {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Label("HCG Repo", systemImage: "safari")
+                                Text("Product page (opens in Safari)")
+                                    .font(.footnote)
+                                    .foregroundStyle(HCGPalette.textSecondary)
+                            }
+                        }
+                    }
+                }
             }
             .hcgRows()
         }

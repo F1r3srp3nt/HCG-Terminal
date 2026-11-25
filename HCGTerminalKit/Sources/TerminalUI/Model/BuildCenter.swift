@@ -5,6 +5,14 @@ import Foundation
 import Observation
 import TerminalCore
 
+/// Stands in for a host that may not be used for builds; it never runs anything.
+struct RefusingExecutor: RemoteCommandExecuting {
+    let endpoint: RemoteEndpoint
+    func stream(_ command: String) -> AsyncThrowingStream<RemoteExecEvent, Error> {
+        AsyncThrowingStream { $0.finish(throwing: CancellationError()) }
+    }
+}
+
 /// Remote build, test and artifact state. Everything here runs on a remote host and is
 /// independent of the local mode.
 @MainActor
@@ -23,14 +31,21 @@ public final class BuildCenter {
     @ObservationIgnored private let workspaceProvider: @MainActor () -> AppDependencies
     @ObservationIgnored private var runningTask: Task<Void, Never>?
     @ObservationIgnored let executorFor: @MainActor (UUID) async throws -> any RemoteCommandExecuting
+    /// The host's own "Allow builds and tests" setting, read when a run starts.
+    @ObservationIgnored let hostAllowsBuilds: @MainActor (UUID) async -> Bool
     /// Called on the main actor when a run has been recorded.
     @ObservationIgnored public var onRunFinished: (@MainActor (BuildRun) -> Void)?
 
-    init(dependencies: AppDependencies, executorFor: @escaping @MainActor (UUID) async throws -> any RemoteCommandExecuting) {
+    init(
+        dependencies: AppDependencies,
+        hostAllowsBuilds: @escaping @MainActor (UUID) async -> Bool = { _ in true },
+        executorFor: @escaping @MainActor (UUID) async throws -> any RemoteCommandExecuting
+    ) {
         self.orchestrator = dependencies.orchestrator
         self.index = dependencies.artifactIndex
         self.workspaceProvider = { dependencies }
         self.executorFor = executorFor
+        self.hostAllowsBuilds = hostAllowsBuilds
     }
 
     public var isRunning: Bool { activePlan != nil }
@@ -58,8 +73,13 @@ public final class BuildCenter {
                 for await text in logStream { appendLog(text) }
             }
             do {
-                let executor = try await executorFor(plan.hostID)
-                let run = await orchestrator.run(plan, on: executor) { text in logSink.yield(text) }
+                let allowed = await hostAllowsBuilds(plan.hostID)
+                // A host with builds turned off is not even connected to: the orchestrator records
+                // the refusal against a stand-in that can run nothing.
+                let executor: any RemoteCommandExecuting = allowed
+                    ? try await executorFor(plan.hostID)
+                    : RefusingExecutor(endpoint: RemoteEndpoint(hostID: plan.hostID, displayName: plan.hostName, hostname: "", port: 22, username: ""))
+                let run = await orchestrator.run(plan, on: executor, hostAllowsBuilds: allowed) { text in logSink.yield(text) }
                 logSink.finish()
                 await logPump.value
                 onRunFinished?(run)

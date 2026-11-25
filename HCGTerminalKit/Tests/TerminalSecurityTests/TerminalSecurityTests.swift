@@ -77,7 +77,7 @@ final class SSHKeyTests: XCTestCase {
         XCTAssertEqual(manager.list(), [record])
 
         let key = try manager.privateKey(for: record.id)
-        XCTAssertEqual(SSHKeyManager.record(for: key.publicKey, id: record.id, comment: record.comment).publicKeyLine, record.publicKeyLine)
+        XCTAssertEqual(try key.publicKeyLine(comment: record.comment), record.publicKeyLine)
 
         try manager.delete(record.id)
         XCTAssertTrue(manager.list().isEmpty)

@@ -208,4 +208,31 @@ final class BuildAccessTests: XCTestCase {
         let history = await orchestrator.runs()
         XCTAssertEqual(history.count, 3, "refused runs are recorded, history is kept")
     }
+
+    func testHostSettingRefusesBuildsWithoutSendingAnything() async throws {
+        let host = HostProfile(name: "Shared Mac", hostname: "mac", username: "a", auth: .password, remoteBuildsAllowed: false)
+        let executor = ScriptedExecutor(endpoint: host.endpoint)
+        executor.responses = [("swift build", [.exit(status: 0)])]
+        let logs = FileManager.default.temporaryDirectory.appendingPathComponent("logs-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: logs) }
+        let orchestrator = BuildOrchestrator(logDirectory: logs, access: AccessPolicy.inMemory())
+        let plan = try BuildPlanner.plan(host: host, projectPath: "~/k", system: .swiftPackage, action: .build)
+        let refused = await orchestrator.run(plan, on: executor, hostAllowsBuilds: host.remoteBuildsAllowed)
+        guard case .couldNotStart(let reason) = refused.status else { return XCTFail("\(refused.status)") }
+        XCTAssertTrue(reason.contains("Shared Mac"), reason)
+        XCTAssertTrue(executor.commands.isEmpty, "nothing was sent to the host")
+        let allowed = await orchestrator.run(plan, on: executor, hostAllowsBuilds: true)
+        XCTAssertEqual(allowed.status, .succeeded)
+    }
+
+    func testHostsSavedBeforeTheSettingKeepBuildsAllowed() throws {
+        let legacy = Data(#"{"id":"6F1B4C1E-0000-4000-8000-000000000001","name":"Mac","hostname":"mac.local","port":22,"username":"ana","auth":{"password":{}},"projectsPath":"~/Developer"}"#.utf8)
+        let host = try JSONDecoder().decode(HostProfile.self, from: legacy)
+        XCTAssertTrue(host.remoteBuildsAllowed)
+        XCTAssertEqual(host.projectsPath, "~/Developer")
+        var changed = host
+        changed.remoteBuildsAllowed = false
+        let roundTrip = try JSONDecoder().decode(HostProfile.self, from: JSONEncoder().encode(changed))
+        XCTAssertFalse(roundTrip.remoteBuildsAllowed)
+    }
 }

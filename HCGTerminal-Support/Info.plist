@@ -20,6 +20,21 @@
 	<!-- Build identity, shown in Diagnostics. HCG_BUILD_VARIANT is set per target
 	     ("standard" or "unleashed"); HCGSourceRevision is stamped by
 	     Scripts/stamp-build-info.sh during the build. -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>$(HCG_URL_SCHEME)</string>
+			</array>
+		</dict>
+	</array>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>hcgsentinel</string>
+	</array>
 	<key>HCGBuildVariant</key>
 	<string>$(HCG_BUILD_VARIANT)</string>
 	<key>HCGSourceRevision</key>

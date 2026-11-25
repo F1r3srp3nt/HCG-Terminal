@@ -152,11 +152,14 @@ public enum DpkgStatusParser {
 
 public enum PackageAction: Hashable, Sendable {
     case install(String)
+    /// A .deb file on this device (for example a build downloaded from a host).
+    case installFile(String)
     case remove(String)
     case refreshIndexes
 
     public var title: String {
         switch self {
+        case .installFile(let path): "Install \((path as NSString).lastPathComponent)"
         case .install(let name): "Install \(name)"
         case .remove(let name): "Remove \(name)"
         case .refreshIndexes: "Refresh package lists"
@@ -239,6 +242,10 @@ public struct PackageManagerClient: Sendable {
         }
     }
 
+    static func shellQuote(_ value: String) -> String {
+        "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
     public static func isValidPackageName(_ name: String) -> Bool {
         guard let first = name.unicodeScalars.first, CharacterSet.lowercaseLetters.union(.decimalDigits).contains(first), name.count >= 2 else { return false }
         let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyz0123456789+-.")
@@ -247,8 +254,18 @@ public struct PackageManagerClient: Sendable {
 
     /// The command line for an action, exactly as it would be typed. No `sudo` is added.
     public func commandLine(for action: PackageAction) throws -> String {
+        if case .installFile(let path) = action {
+            // dpkg installs the file itself; apt is not involved.
+            guard let dpkg = tool("dpkg") else { throw PackageManagerError.notAvailable }
+            guard path.hasPrefix("/"), path.hasSuffix(".deb"), FileManager.default.fileExists(atPath: path) else {
+                throw PackageManagerError.failed("\(path) is not a .deb file on this device.")
+            }
+            return "\(dpkg.path) -i \(Self.shellQuote(path))"
+        }
         guard let apt = tool("apt-get") ?? tool("apt") else { throw PackageManagerError.notAvailable }
         switch action {
+        case .installFile:
+            preconditionFailure("handled above")
         case .install(let name), .remove(let name):
             guard Self.isValidPackageName(name) else { throw PackageManagerError.invalidPackageName(name) }
             let verb = if case .install = action { "install" } else { "remove" }
@@ -267,7 +284,7 @@ public struct PackageManagerClient: Sendable {
             title: action.title,
             commandLine: command,
             target: .local(.unleashed),
-            reasons: ["Changes installed packages on this device.", "Runs with the permissions the device grants to this app; apt may refuse without root."],
+            reasons: ["Changes installed packages on this device.", "Runs with the permissions the device grants to this app; apt and dpkg may refuse without root. Nothing is elevated and the device is not resprung."],
             requiredAccess: [.packageManagement]
         )
         switch await gate.decide(request) {

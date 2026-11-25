@@ -27,6 +27,7 @@ public enum UnleashedIntegration {
         var identity = BuildIdentity.current(linkedBackend: .unleashed)
         identity.backendMarker = UnleashedBackend.marker
         dependencies.buildIdentity = identity
+        dependencies.hcgRepoPage = HCGRepoPage.url
         dependencies.unleashedCapabilities = capabilities
         dependencies.unleashed = UnleashedExecutionProvider(capabilities: capabilities, observations: observations, gate: dependencies.gate, access: access)
         let tools = UnleashedToolsAdapter(capabilities: capabilities, observations: observations, gate: dependencies.gate, access: access)
@@ -71,6 +72,7 @@ actor UnleashedToolsAdapter: UnleashedTools {
     func authorizedPackageCommand(_ request: PackageRequest) async throws -> String {
         let action: PackageAction = switch request {
         case .install(let name): .install(name)
+        case .installFile(let path): .installFile(path)
         case .remove(let name): .remove(name)
         case .refreshIndexes: .refreshIndexes
         }
@@ -144,6 +146,12 @@ actor UnleashedToolsAdapter: UnleashedTools {
         let scan = scan()
         let shell = scan.shells.first ?? path
         return try await programs().launchSession(path, arguments: arguments, environment: UnleashedExecutionProvider.environment(for: scan, shell: shell))
+    }
+
+    func jailbreakDiagnostics() async -> DiagnosticReport {
+        let scan = scan()
+        let input = JailbreakDiagnostics.currentProcess(jailbreakRoot: scan.environmentPrefix, environmentVisible: scan.environmentVisible)
+        return JailbreakDiagnostics(input).report()
     }
 
     func verifyShell() async -> EnvironmentAssessment.Operation {
