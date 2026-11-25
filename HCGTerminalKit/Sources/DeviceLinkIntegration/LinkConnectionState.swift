@@ -36,6 +36,10 @@ public enum LinkConnectionState: Equatable, Sendable {
     case removed(reason: String)
     /// The HCG Connect session ended; sign in again.
     case signInEnded(reason: String)
+    /// HCG Server switched how it authorizes apps (local development pairing switched off, or
+    /// HCG Connect configured or removed), so it refuses this pairing (`authority_changed`).
+    /// Never retried automatically; the person pairs again with a new invitation.
+    case authorityChanged(reason: String)
 
     public var title: String {
         switch self {
@@ -47,6 +51,7 @@ public enum LinkConnectionState: Equatable, Sendable {
         case .offline: "Offline"
         case .removed: "Removed from the server"
         case .signInEnded: "Sign-in ended"
+        case .authorityChanged: "Pair again"
         }
     }
 
@@ -59,7 +64,7 @@ public enum LinkConnectionState: Equatable, Sendable {
             "Ask the owner of \(p.serverName) to approve this device. Compare the key fingerprint shown there with the one shown here."
         case .connected: "Presence and shared reports are synced while this screen is open."
         case .offline(let retry, let reason): "\(reason) Retrying in \(Int(retry.rounded(.up))) s."
-        case .removed(let reason), .signInEnded(let reason): reason
+        case .removed(let reason), .signInEnded(let reason), .authorityChanged(let reason): reason
         }
     }
 
@@ -155,6 +160,9 @@ public struct LinkConnectionMachine: Sendable {
             if error.code == "hcg_session_ended" {
                 return LinkFailureOutcome(state: .signInEnded(reason: Self.sentence(error.description) + " Sign in with HCG Connect again."), retryIn: nil)
             }
+            if error.code == "authority_changed" {
+                return LinkFailureOutcome(state: .authorityChanged(reason: Self.authorityChangedReason(error.description)), retryIn: nil)
+            }
             return LinkFailureOutcome(state: .removed(reason: Self.removedReason(error)), retryIn: nil)
         }
         if case .notSignedIn = error {
@@ -185,6 +193,11 @@ public struct LinkConnectionMachine: Sendable {
         }
     }
 
+    static func authorityChangedReason(_ serverMessage: String) -> String {
+        "HCG Server changed how it authorizes apps and no longer accepts this pairing: " + sentence(serverMessage)
+            + " Pair again with a new invitation from the server's owner."
+    }
+
     static func sentence(_ s: String) -> String {
         let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let last = t.last else { return t }
@@ -192,13 +205,24 @@ public struct LinkConnectionMachine: Sendable {
     }
 
     /// The state with nothing in flight, from what is stored locally.
+    ///
+    /// A local-development pairing (`PairingRecord.isLocalDevelopment`) needs neither HCG
+    /// Connect nor a sign-in: the server authorizes it by the installation key and the owner's
+    /// approval. Every other pairing keeps the HCG Connect requirements.
     public static func resting(
-        connect: HCGConnectSetup, signedIn: Bool, pairing: PairingRecord?, deviceFingerprint: String?
+        connect: HCGConnectSetup, signedIn: Bool, pairing: PairingRecord?, deviceFingerprint: String?, ended: LinkEndNote? = nil
     ) -> LinkConnectionState {
+        if let pairing, pairing.isLocalDevelopment {
+            return paired(pairing, deviceFingerprint: deviceFingerprint, ended: ended)
+        }
         if let problem = connect.problem { return .notConfigured(reason: problem) }
-        if pairing?.status == .removed { return .removed(reason: "This device was removed from \(pairing?.serverName ?? "the server").") }
+        if let pairing, pairing.status == .removed { return paired(pairing, deviceFingerprint: deviceFingerprint, ended: ended) }
         guard signedIn else { return .signedOut }
         guard let pairing else { return .notPaired(note: nil) }
+        return paired(pairing, deviceFingerprint: deviceFingerprint, ended: ended)
+    }
+
+    private static func paired(_ pairing: PairingRecord, deviceFingerprint: String?, ended: LinkEndNote?) -> LinkConnectionState {
         switch pairing.status {
         case .pending:
             return .pairing(PairingProgress(pending: true, requestId: pairing.requestId, serverName: pairing.serverName,
@@ -210,7 +234,58 @@ public struct LinkConnectionMachine: Sendable {
         case .expired:
             return .notPaired(note: "The last pairing request to \(pairing.serverName) expired before it was approved. Ask for a new invitation.")
         case .removed:
+            if let ended, ended.code == "authority_changed" { return .authorityChanged(reason: ended.reason) }
             return .removed(reason: "This device was removed from \(pairing.serverName).")
+        }
+    }
+}
+
+/// Why the server ended the link, kept next to the pairing record so that reopening the app
+/// shows the same reason (only `authority_changed` needs more than "removed").
+public struct LinkEndNote: Codable, Equatable, Sendable {
+    public var code: String
+    public var reason: String
+
+    public init(code: String, reason: String) {
+        self.code = code
+        self.reason = reason
+    }
+
+    /// `link-ended.json` beside the pairing record.
+    public static func url(besides pairingFile: PairingRecordFile) -> URL {
+        pairingFile.url.deletingLastPathComponent().appendingPathComponent("link-ended.json")
+    }
+
+    public static func load(besides pairingFile: PairingRecordFile) -> LinkEndNote? {
+        (try? Data(contentsOf: url(besides: pairingFile))).flatMap { try? JSONDecoder().decode(LinkEndNote.self, from: $0) }
+    }
+
+    public static func save(_ note: LinkEndNote?, besides pairingFile: PairingRecordFile) {
+        let url = url(besides: pairingFile)
+        guard let note, let data = try? JSONEncoder().encode(note) else {
+            try? FileManager.default.removeItem(at: url)
+            return
+        }
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? data.write(to: url, options: [.atomic])
+    }
+}
+
+/// How a local-development connection is labelled everywhere it is shown.
+public enum LinkAuthorityText {
+    /// Shown wherever a local-development pairing, invitation or installation appears.
+    public static let localDevelopmentLabel = "LOCAL DEVELOPMENT — not an HCG account"
+    public static let localDevelopmentExplanation =
+        "The server's owner approved this device on that server only. No HCG account is used, nothing is granted on HCG services, and the server refuses every remote action."
+
+    /// A display name for an authority value from HCG Server (`hcg-connect`, `local-development`, `not-configured`).
+    public static func label(_ authority: String?) -> String {
+        switch authority {
+        case DeviceLinkProtocol.Authority.hcgConnect: "HCG Connect"
+        case DeviceLinkProtocol.Authority.localDevelopment: localDevelopmentLabel
+        case "not-configured": "Not configured"
+        case nil, "": "Not reported"
+        case let other?: other
         }
     }
 }

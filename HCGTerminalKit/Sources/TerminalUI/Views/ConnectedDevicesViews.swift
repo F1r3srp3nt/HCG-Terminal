@@ -7,7 +7,8 @@ import TerminalCore
 import UIKit
 
 /// Connected Devices (HCG Device Link): this installation, HCG Connect sign-in, pairing with an
-/// HCG Server, paired devices and the reports they share.
+/// HCG Server (HCG Connect, or the server's local development mode), the server as a
+/// development host (`HCGServerHostSections`), paired devices and the reports they share.
 ///
 /// Everything received from the server or another device is shown as plain text
 /// (`Text(verbatim:)`): no Markdown, no links, nothing copied into a command line, nothing run.
@@ -48,6 +49,7 @@ struct ConnectedDevicesScreen: View {
                 connectionSection
                 if showsPairSection { pairSection }
                 if link.state.isLinked {
+                    HCGServerHostSections(link: link)
                     devicesSection
                     inboxSection
                     approvalsSection
@@ -107,7 +109,8 @@ struct ConnectedDevicesScreen: View {
 
     private var showsPairSection: Bool {
         switch link.state {
-        case .notPaired, .signedOut, .removed: link.environment.connect.configuration != nil
+        // Without HCG Connect, only a local-development invitation can be used; the section says so.
+        case .notPaired, .signedOut, .removed, .authorityChanged, .notConfigured: true
         default: false
         }
     }
@@ -116,6 +119,11 @@ struct ConnectedDevicesScreen: View {
 
     private var accountSection: some View {
         Section {
+            if link.isLocalDevelopment {
+                LocalDevelopmentBadge()
+                Text(verbatim: LinkAuthorityText.localDevelopmentExplanation)
+                    .font(.footnote).foregroundStyle(HCGPalette.textSecondary).fixedSize(horizontal: false, vertical: true)
+            }
             switch link.environment.connect {
             case .notConfigured(let reason):
                 Label {
@@ -207,6 +215,7 @@ struct ConnectedDevicesScreen: View {
                 FingerprintRow(title: "This device's key", fingerprint: progress.deviceFingerprint)
             }
             if let pairing = link.pairing {
+                if pairing.isLocalDevelopment { LocalDevelopmentBadge() }
                 LabeledContent("Server", value: pairing.serverName)
                 LabeledContent("Address", value: pairing.serverAddress)
             }
@@ -225,6 +234,7 @@ struct ConnectedDevicesScreen: View {
         case .offline: "wifi.exclamationmark"
         case .pairing: "hourglass"
         case .removed, .signInEnded: "xmark.octagon"
+        case .authorityChanged: "arrow.triangle.2.circlepath.circle"
         case .notConfigured: "slash.circle"
         case .signedOut, .notPaired: "circle.dashed"
         }
@@ -234,7 +244,7 @@ struct ConnectedDevicesScreen: View {
         switch link.state {
         case .connected: HCGPalette.ok
         case .offline, .pairing: HCGPalette.warn
-        case .removed, .signInEnded: HCGPalette.loss
+        case .removed, .signInEnded, .authorityChanged: HCGPalette.loss
         case .notConfigured, .signedOut, .notPaired: HCGPalette.muted
         }
     }
@@ -252,6 +262,11 @@ struct ConnectedDevicesScreen: View {
             if !invitationCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 switch link.previewInvitation(invitationCode) {
                 case .success(let invitation):
+                    if invitation.isLocalDevelopment {
+                        LocalDevelopmentBadge()
+                        Text("This server is in local development pairing mode. Its owner approves this device on that server only; no HCG account is used or sent.")
+                            .font(.footnote).foregroundStyle(HCGPalette.textSecondary).fixedSize(horizontal: false, vertical: true)
+                    }
                     LabeledContent("Server", value: invitation.hostName)
                     LabeledContent("Address", value: invitation.hostAddress)
                     FingerprintRow(title: "Server key", fingerprint: invitation.fingerprint)
@@ -267,16 +282,21 @@ struct ConnectedDevicesScreen: View {
                         Label("Send Pairing Request", systemImage: "link.badge.plus")
                     }
                     .buttonStyle(.hcgProminent)
-                    .disabled(!link.canPair || link.isBusy)
-                    if !link.signedIn {
-                        Text("Sign in with HCG Connect first.").font(.footnote).foregroundStyle(HCGPalette.warn)
+                    .disabled(!link.canPair(invitation) || link.isBusy)
+                    if !invitation.isLocalDevelopment {
+                        if link.environment.connect.configuration == nil {
+                            Text("This invitation needs an HCG Connect sign-in, which is not configured for HCG Terminal yet. Only an invitation from a server in local development pairing mode can be used now.")
+                                .font(.footnote).foregroundStyle(HCGPalette.warn).fixedSize(horizontal: false, vertical: true)
+                        } else if !link.signedIn {
+                            Text("Sign in with HCG Connect first.").font(.footnote).foregroundStyle(HCGPalette.warn)
+                        }
                     }
                 case .failure(let problem):
                     Text(verbatim: problem.description).font(.footnote).foregroundStyle(HCGPalette.warn)
                 }
             }
         } header: { Text("Pair with HCG Server") } footer: {
-            Text("Create an invitation in HCG Server on your Mac and paste its code here. The connection is pinned to the server key in the code. The server's owner approves this device after comparing its key fingerprint.")
+            Text("Create an invitation in HCG Server on your Mac and paste its code here. The connection is pinned to the server key in the code. The server's owner approves this device after comparing its key fingerprint. An invitation from a server in local development pairing mode is marked \(LinkAuthorityText.localDevelopmentLabel).")
         }
     }
 
@@ -569,6 +589,9 @@ struct RemoteDeviceRow: View {
                 DeviceRoleBadge(role: .remote)
             }
             Text(verbatim: appLine).font(.caption).foregroundStyle(HCGPalette.textSecondary)
+            if device.authority == DeviceLinkProtocol.Authority.localDevelopment {
+                LocalDevelopmentBadge()
+            }
             HStack(spacing: 6) {
                 Image(systemName: device.state == .online ? "circle.fill" : "circle")
                     .font(.caption2)

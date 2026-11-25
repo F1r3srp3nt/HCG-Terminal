@@ -55,7 +55,7 @@ Requirements: Xcode 16 or later (CI uses Xcode 26.6), iOS / iPadOS 17 or later. 
 
 **Settings → Capabilities & Access** lets you turn each area on or off (enforced in the services). A switch only limits HCG Terminal; it never grants anything. See [`docs/CAPABILITIES_AND_ACCESS.md`](docs/CAPABILITIES_AND_ACCESS.md). Remaining work: [`docs/TODO.md`](docs/TODO.md).
 
-**Connected Devices** (sidebar → Device) pairs this app with an HCG Server through HCG Device Link, lists your other paired HCG devices and shows reports they share, as plain text only. HCG has not issued an HCG Connect client for HCG Terminal yet, so sign-in is shown as not configured and nothing is contacted. See [`docs/CONNECTED_DEVICES.md`](docs/CONNECTED_DEVICES.md).
+**Connected Devices** (sidebar → Device) pairs this app with an HCG Server through HCG Device Link, shows the server as a development host (host summary, hosted services with **Open in Safari**, read-only diagnostics), lists your other paired HCG devices and shows reports they share, as plain text only. HCG has not issued an HCG Connect client for HCG Terminal yet, so sign-in is shown as not configured; a server in local development pairing mode can still be paired, labelled **LOCAL DEVELOPMENT — not an HCG account**. See [`docs/CONNECTED_DEVICES.md`](docs/CONNECTED_DEVICES.md).
 
 Check what is installed in **Diagnostics → Build**: variant (from the linked code), version, build number, source revision and bundle ID. [`docs/BUILD_VARIANTS.md`](docs/BUILD_VARIANTS.md) explains the two variants and why the first TestFlight build was the standard one.
 

@@ -36,6 +36,10 @@ public struct OpenedLinkReport: Equatable, Sendable, Identifiable {
 /// one operation) without ending the connection.
 public enum LinkSection: String, Sendable, CaseIterable {
     case devices, inbox, approvals
+    /// The HCG Server host and the services it hosts (`link/services`).
+    case services
+    /// Read-only server diagnostics (`link/diagnostics`).
+    case diagnostics
 }
 
 struct NoAccessToken: AccessTokenProvider {
@@ -46,7 +50,16 @@ struct NoAccessToken: AccessTokenProvider {
 
 /// Drives HCG Device Link for the Connected Devices screen: identity, HCG Connect sign-in,
 /// pairing, and the foreground sync loop (heartbeat every 20 s, inbox every 10 s, back-off on
-/// retryable errors, stop when the link ends).
+/// retryable errors, stop when the link ends). With each heartbeat it also reads the HCG Server
+/// host, its hosted services and its read-only diagnostics.
+///
+/// Two pairing paths exist. A normal invitation uses HCG Connect (sign-in and tokens). An
+/// invitation from a server in local development pairing mode (`Invitation.isLocalDevelopment`)
+/// uses `LocalDevelopmentTokens` (no HCG token is ever sent); the pairing record remembers that,
+/// and the screen labels it "LOCAL DEVELOPMENT — not an HCG account".
+///
+/// Remote action execution stays disabled: this controller never requests or runs an action,
+/// and offers no remote shell.
 ///
 /// Nothing received from the server is executed or changes what this app may do locally. The
 /// capabilities sent with each heartbeat come from `capabilityProvider`, which the app computes
@@ -67,6 +80,22 @@ public final class DeviceLinkController {
     public private(set) var inbox: [LinkMessageHeader] = []
     public private(set) var approvals: LinkApprovals?
     public private(set) var sectionProblems: [LinkSection: String] = [:]
+    /// The server's computer, as the last successful `link/services` answer described it.
+    public private(set) var hostSummary: LinkHostSummary?
+    /// The services HCG Server hosts (nil until loaded; empty when it hosts none).
+    public private(set) var hostedServices: [LinkHostedService]?
+    /// When `hostSummary` and `hostedServices` were last loaded (this device's clock).
+    public private(set) var hostingUpdatedAt: Date?
+    /// Read-only, redacted server diagnostics.
+    public private(set) var diagnostics: LinkDiagnostics?
+    /// Why opening a hosted service failed, by service ID.
+    public private(set) var serviceProblems: [String: String] = [:]
+    /// The service whose single-use link is being requested.
+    public private(set) var openingService: String?
+    /// The last service opened in the system browser (the link itself is not kept).
+    public private(set) var openedTicket: OpenedServiceTicket?
+    /// Why the server ended the link, when it was `authority_changed` (shown after a relaunch too).
+    public private(set) var endNote: LinkEndNote?
     public private(set) var lastSync: Date?
     /// The outcome of the last action the person took (pairing, removal, sign-in).
     public var notice: String?
@@ -82,6 +111,8 @@ public final class DeviceLinkController {
     @ObservationIgnored private var machine = LinkConnectionMachine()
     @ObservationIgnored private var activated = false
     @ObservationIgnored private var syncGeneration = 0
+    /// The error behind the current `offline` state (to tell "unreachable" from "answered with an error").
+    @ObservationIgnored private var lastFailure: DeviceLinkError?
     /// Whether `activate()` and pairing start the foreground sync loop (tests drive `syncNow()`).
     @ObservationIgnored public var automaticSync = true
 
@@ -100,6 +131,31 @@ public final class DeviceLinkController {
 
     public var signedIn: Bool { account != nil }
 
+    /// The pairing was made in HCG Server's local development mode: no HCG account, this server only.
+    public var isLocalDevelopment: Bool { pairing?.isLocalDevelopment == true }
+
+    /// Whether the server answered the last sync round, from real requests only.
+    public var hostAvailability: HostAvailability {
+        switch state {
+        case .connected:
+            if let lastSync { return .reachable(at: lastSync) }
+            return .unknown
+        case .offline(let retry, let reason):
+            switch lastFailure {
+            case .server?, .invalidResponse?: return .failing(reason: reason, retryIn: retry)
+            default: return .unreachable(reason: reason, retryIn: retry)
+            }
+        default:
+            return .unknown
+        }
+    }
+
+    /// The last opened link's CA matches the CA the server's diagnostics report (nil when either is unknown).
+    public var ticketCAMatchesDiagnostics: Bool? {
+        guard let ticket = openedTicket, let ca = diagnostics?.tls.gatewayCaSha256, !ca.isEmpty else { return nil }
+        return ticket.caFingerprint.lowercased() == ca.lowercased()
+    }
+
     /// Other installations of the server's boundary (this one is shown separately).
     public var remoteDevices: [LinkInstallation] {
         guard let devices else { return [] }
@@ -116,6 +172,7 @@ public final class DeviceLinkController {
             hasLoaded = true
             loadIdentity()
             pairing = environment.pairingFile.load()
+            endNote = LinkEndNote.load(besides: environment.pairingFile)
             if let configuration = environment.connect.configuration {
                 let auth = HCGConnectAuth(configuration: configuration, expectedContract: HCGConnectSetup.contract, send: environment.connectSend)
                 session = HCGConnectSession(auth: auth, store: SecretTokenStore(store: environment.secrets), now: environment.now)
@@ -157,7 +214,8 @@ public final class DeviceLinkController {
     }
 
     private func resetToResting() {
-        state = LinkConnectionMachine.resting(connect: environment.connect, signedIn: signedIn, pairing: pairing, deviceFingerprint: identity?.fingerprint)
+        state = LinkConnectionMachine.resting(connect: environment.connect, signedIn: signedIn, pairing: pairing,
+                                              deviceFingerprint: identity?.fingerprint, ended: endNote)
         if case .connected = state, let lastSync { state = .connected(lastSync: lastSync) }
     }
 
@@ -193,10 +251,17 @@ public final class DeviceLinkController {
         }
         let made = DeviceLinkClient(
             configuration: DeviceLinkConfiguration(baseURL: base, serverFingerprint: pairing.serverFingerprint, installationId: installation.installationId),
-            signer: installation.signer, transport: transport, tokens: session ?? NoAccessToken(), now: environment.now
+            signer: installation.signer, transport: transport, tokens: tokens(localDevelopment: pairing.isLocalDevelopment), now: environment.now
         )
         client = made
         return made
+    }
+
+    /// Local development: never an HCG token (the server refuses one). Otherwise HCG Connect.
+    private func tokens(localDevelopment: Bool) -> any AccessTokenProvider {
+        if localDevelopment { return LocalDevelopmentTokens() }
+        if let session { return session }
+        return NoAccessToken()
     }
 
     // MARK: - HCG Connect
@@ -237,6 +302,8 @@ public final class DeviceLinkController {
         account = nil
         resetToResting()
         notice = "Signed out of HCG Connect on this device."
+        // A local-development pairing does not use the sign-in and keeps syncing.
+        startSyncIfNeeded()
     }
 
     // MARK: - Pairing
@@ -250,8 +317,18 @@ public final class DeviceLinkController {
         }
     }
 
-    public var canPair: Bool {
-        guard signedIn, identity != nil, environment.connect.configuration != nil else { return false }
+    /// Whether a normal (HCG Connect) invitation can be used now.
+    public var canPair: Bool { canPair(localDevelopment: false) }
+
+    /// Whether this invitation can be used now. A local-development invitation needs no HCG
+    /// Connect configuration or sign-in; any other invitation does.
+    public func canPair(_ invitation: Invitation) -> Bool { canPair(localDevelopment: invitation.isLocalDevelopment) }
+
+    private func canPair(localDevelopment: Bool) -> Bool {
+        guard identity != nil else { return false }
+        if !localDevelopment {
+            guard signedIn, environment.connect.configuration != nil else { return false }
+        }
         if let pairing { return pairing.status != .approved && pairing.status != .pending }
         return true
     }
@@ -259,15 +336,17 @@ public final class DeviceLinkController {
     /// Sends the pairing request for an invitation code. The server's owner approves it after
     /// comparing this installation's key fingerprint.
     public func pair(code: String) async {
-        guard canPair, let installation else {
-            notice = "Sign in with HCG Connect first. A paired device must be removed before pairing again."
-            return
-        }
         let invitation: Invitation
         switch previewInvitation(code) {
         case .success(let parsed): invitation = parsed
         case .failure(let problem):
             notice = problem.description
+            return
+        }
+        guard canPair(invitation), let installation else {
+            notice = invitation.isLocalDevelopment
+                ? "A paired device must be removed before pairing again."
+                : "Sign in with HCG Connect first. A paired device must be removed before pairing again."
             return
         }
         guard let base = invitation.baseURL else {
@@ -282,7 +361,7 @@ public final class DeviceLinkController {
         defer { isBusy = false }
         let candidate = DeviceLinkClient(
             configuration: DeviceLinkConfiguration(baseURL: base, serverFingerprint: invitation.fingerprint, installationId: installation.installationId),
-            signer: installation.signer, transport: transport, tokens: session ?? NoAccessToken(), now: environment.now
+            signer: installation.signer, transport: transport, tokens: tokens(localDevelopment: invitation.isLocalDevelopment), now: environment.now
         )
         let device = environment.describeDevice()
         let info = LinkInstallationInfo(
@@ -297,9 +376,12 @@ public final class DeviceLinkController {
                 return
             }
             let record = PairingRecord(invitation: invitation, requestId: status.requestId, status: Self.recordStatus(status.status), at: environment.now())
+            // The record keeps the invitation's `authMode`, so every later request uses the same path.
             try? environment.pairingFile.save(record)
             pairing = record
             client = candidate
+            clearServerData()
+            setEndNote(nil)
             machine = LinkConnectionMachine()
             notice = record.status == .approved ? "Paired with \(record.serverName)." : "Pairing request sent to \(record.serverName)."
             resetToResting()
@@ -413,6 +495,13 @@ public final class DeviceLinkController {
                 _ = try await client.heartbeat(capabilities: advertisedCapabilities)
                 try await section(.devices) { self.devices = try await client.devices() }
                 try await section(.approvals) { self.approvals = try await client.approvals() }
+                try await section(.services) {
+                    let answer = try await client.services()
+                    self.hostSummary = answer.host
+                    self.hostedServices = answer.services
+                    self.hostingUpdatedAt = self.environment.now()
+                }
+                try await section(.diagnostics) { self.diagnostics = try await client.diagnostics() }
             }
             if doInbox || heartbeat {
                 try await section(.inbox) {
@@ -425,15 +514,19 @@ public final class DeviceLinkController {
             }
             let now = environment.now()
             lastSync = now
+            lastFailure = nil
             state = machine.succeeded(at: now)
             return nil
         } catch let error as DeviceLinkError {
+            lastFailure = error
             let outcome = machine.failed(error)
             state = outcome.state
             if outcome.retryIn == nil { await linkEnded() }
             return outcome.retryIn
         } catch {
-            let outcome = machine.failed(.invalidResponse(error.localizedDescription))
+            let wrapped = DeviceLinkError.invalidResponse(error.localizedDescription)
+            lastFailure = wrapped
+            let outcome = machine.failed(wrapped)
             state = outcome.state
             return outcome.retryIn
         }
@@ -446,26 +539,60 @@ public final class DeviceLinkController {
             try await body()
             sectionProblems[part] = nil
         } catch let error as DeviceLinkError where !error.endsLink && !error.isRetryable && error.code != "not_signed_in" {
-            sectionProblems[part] = error.description
+            switch part {
+            case .services:
+                // Show nothing rather than an earlier answer the server no longer gives.
+                hostSummary = nil
+                hostedServices = nil
+                hostingUpdatedAt = nil
+                sectionProblems[part] = HostingText.sectionFailure(error)
+            case .diagnostics:
+                diagnostics = nil
+                sectionProblems[part] = HostingText.sectionFailure(error)
+            default:
+                sectionProblems[part] = error.description
+            }
         }
+    }
+
+    /// Drops everything the server sent (devices, reports, host, services, diagnostics).
+    private func clearServerData() {
+        devices = nil
+        inbox = []
+        approvals = nil
+        hostSummary = nil
+        hostedServices = nil
+        hostingUpdatedAt = nil
+        diagnostics = nil
+        serviceProblems = [:]
+        openedTicket = nil
+        sectionProblems = [:]
+        lastFailure = nil
+    }
+
+    private func setEndNote(_ note: LinkEndNote?) {
+        endNote = note
+        LinkEndNote.save(note, besides: environment.pairingFile)
     }
 
     /// The server ended the link: remember it, so returning to the screen does not retry.
     /// A removed installation stays removed until the person pairs again; an ended HCG session
     /// signs out locally, so the next attempt needs a fresh sign-in.
+    /// `authority_changed` is handled the same way, and its reason is kept for the next launch.
     private func linkEnded() async {
         switch state {
-        case .removed:
+        case .removed, .authorityChanged:
             if var record = pairing {
                 record.status = .removed
                 record.updatedAt = environment.now()
                 try? environment.pairingFile.save(record)
                 pairing = record
             }
+            if case .authorityChanged(let reason) = state {
+                setEndNote(LinkEndNote(code: "authority_changed", reason: reason))
+            }
             client = nil
-            devices = nil
-            inbox = []
-            approvals = nil
+            clearServerData()
             // The key is bound to a registration the server no longer accepts; pairing again
             // uses a new installation ID and key.
             InstallationIdentity.reset(store: environment.secrets)
@@ -495,6 +622,44 @@ public final class DeviceLinkController {
         if let updated = try? await client.acknowledge(messageId: messageId, opened: true),
            let index = inbox.firstIndex(where: { $0.messageId == messageId }) {
             inbox[index] = updated
+        }
+    }
+
+    // MARK: - Hosted services
+
+    /// Asks HCG Server for a single-use, 60-second link to one hosted service and returns it for
+    /// the system browser (Safari verifies the gateway with the HCG Server Local CA). Returns nil,
+    /// with the reason in `serviceProblems`, when nothing should be opened. The link is not kept.
+    public func openService(_ service: LinkHostedService) async -> URL? {
+        guard let client, state.isLinked else {
+            serviceProblems[service.id] = "This device is not connected to HCG Server."
+            return nil
+        }
+        openingService = service.id
+        defer { openingService = nil }
+        do {
+            let ticket = try await client.openService(service.id)
+            guard let url = URL(string: ticket.url), url.scheme?.lowercased() == "https", let host = url.host, !host.isEmpty else {
+                serviceProblems[service.id] = "HCG Server returned a link that is not an HTTPS address. It was not opened."
+                return nil
+            }
+            serviceProblems[service.id] = nil
+            openedTicket = OpenedServiceTicket(serviceId: service.id, serviceName: service.name, caFingerprint: ticket.caFingerprint,
+                                               note: ticket.note, expiresAt: ticket.expiresAt, openedAt: environment.now())
+            return url
+        } catch let error as DeviceLinkError {
+            if error.endsLink {
+                lastFailure = error
+                state = machine.failed(error).state
+                await linkEnded()
+                deactivate()
+            } else {
+                serviceProblems[service.id] = HostingText.openFailure(error)
+            }
+            return nil
+        } catch {
+            serviceProblems[service.id] = error.localizedDescription
+            return nil
         }
     }
 
@@ -533,13 +698,11 @@ public final class DeviceLinkController {
     private func forgetLocally(silently: Bool) {
         deactivate()
         try? environment.pairingFile.save(nil)
+        setEndNote(nil)
         InstallationIdentity.reset(store: environment.secrets)
         pairing = nil
         client = nil
-        devices = nil
-        inbox = []
-        approvals = nil
-        sectionProblems = [:]
+        clearServerData()
         lastSync = nil
         machine = LinkConnectionMachine()
         loadIdentity()

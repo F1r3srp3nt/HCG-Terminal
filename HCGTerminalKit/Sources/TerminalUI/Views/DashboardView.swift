@@ -191,7 +191,12 @@ struct DashboardView: View {
         guard link.hasLoaded else { return "Pair with an HCG Server to see your other HCG devices and the reports they share." }
         if link.state.isLinked {
             let unread = link.inbox.filter { $0.status != "opened" }.count
-            return "\(link.remoteDevices.count) other device\(link.remoteDevices.count == 1 ? "" : "s") · \(unread) unread report\(unread == 1 ? "" : "s")"
+            var summary = "\(link.remoteDevices.count) other device\(link.remoteDevices.count == 1 ? "" : "s") · \(unread) unread report\(unread == 1 ? "" : "s")"
+            if let services = link.hostedServices {
+                summary += " · \(services.count) hosted service\(services.count == 1 ? "" : "s")"
+            }
+            if link.isLocalDevelopment { summary = LinkAuthorityText.localDevelopmentLabel + "\n" + summary }
+            return summary
         }
         return link.state.detail
     }

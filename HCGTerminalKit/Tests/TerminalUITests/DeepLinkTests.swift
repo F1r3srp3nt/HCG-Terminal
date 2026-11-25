@@ -27,7 +27,9 @@ final class DeepLinkTests: XCTestCase {
         XCTAssertEqual(byName["HCG Connect"]?.state, .notYetAvailable)
         XCTAssertEqual(byName["HCG Store licensing"]?.state, .notYetAvailable)
         XCTAssertEqual(byName["HCG Agent Runtime"]?.state, .notYetAvailable)
-        XCTAssertEqual(byName["HCG Server"]?.state, .notYetAvailable)
+        // Device Link pairing and the host view exist; remote actions and a remote shell do not.
+        XCTAssertEqual(byName["HCG Server"]?.state, .partial)
+        XCTAssertTrue(byName["HCG Server"]?.detail.contains("Remote actions stay disabled") == true)
         XCTAssertEqual(byName["HCG Repo"]?.state, .available)
         XCTAssertEqual(HCGEcosystem.integrations(isUnleashed: false).first { $0.product == "HCG Repo" }?.state, .notYetAvailable)
     }

@@ -9,11 +9,12 @@ import XCTest
 enum InvitationFixture {
     static let serverFingerprint = String(repeating: "5e", count: 32)
 
-    static func code(expires: Date = Date().addingTimeInterval(600)) -> String {
-        let payload: [String: Any] = [
+    static func code(expires: Date = Date().addingTimeInterval(600), authMode: String? = nil) -> String {
+        var payload: [String: Any] = [
             "v": 1, "id": "inv_test", "s": "single-use-secret", "hd": "dev_host", "hn": "Studio Mac",
             "ha": "192.168.1.10:7610", "fp": serverFingerprint, "exp": LinkJSON.formatDate(expires),
         ]
+        if let authMode { payload["am"] = authMode }
         let data = try! JSONSerialization.data(withJSONObject: payload)
         return "hcg1-" + LinkCrypto.base64URL(data)
     }
@@ -29,6 +30,16 @@ final class FakeLinkServer: LinkTransport, @unchecked Sendable {
     /// When set, every request is answered with this error.
     var failure: (status: Int, code: String, retryable: Bool)?
     var installationFingerprint = ""
+    /// Answers for the hosting routes: `false` → `501 hosting_unavailable` (a server without hosting).
+    var hosting = true
+    /// `lan` or `loopback` (then opening a service is refused with `gateway_local_only`).
+    var exposure = "lan"
+    var ticketURL = "https://dev-mac.local:7620/access/ticket?t=single-use"
+    static let caFingerprint = String(repeating: "ca", count: 32)
+    /// Per-path failures (path suffix → answer), checked after `failure`.
+    var pathFailures: [String: (status: Int, code: String, retryable: Bool)] = [:]
+    /// When set, every request fails before reaching the server (network down).
+    var transportFailure: TransportFailure?
 
     var requests: [LinkHTTPRequest] { lock.withLock { _requests } }
     func requests(_ suffix: String) -> [LinkHTTPRequest] { requests.filter { $0.url.path.hasSuffix(suffix) } }
@@ -37,11 +48,29 @@ final class FakeLinkServer: LinkTransport, @unchecked Sendable {
 
     func send(_ request: LinkHTTPRequest) async throws -> LinkHTTPResponse {
         lock.withLock { _requests.append(request) }
+        if let down = lock.withLock({ self.transportFailure }) { throw down }
         if let failure = lock.withLock({ self.failure }) {
             return json(failure.status, #"{"error":"Refused: \#(failure.code)","code":"\#(failure.code)","retryable":\#(failure.retryable),"protocol":"hcg.devicelink/1"}"#)
         }
         let path = request.url.path
+        if let failure = lock.withLock({ pathFailures.first { path.hasSuffix($0.key) }?.value }) {
+            return json(failure.status, #"{"error":"Refused: \#(failure.code)","code":"\#(failure.code)","retryable":\#(failure.retryable),"protocol":"hcg.devicelink/1"}"#)
+        }
         let host = #"{"deviceId":"dev_host","name":"Studio Mac","fingerprint":"\#(InvitationFixture.serverFingerprint)"}"#
+        let (hosting, exposure, ticketURL) = lock.withLock { (self.hosting, self.exposure, self.ticketURL) }
+        if !hosting, ["/host", "/services", "/diagnostics", "/open"].contains(where: { path.hasSuffix($0) }) {
+            return json(501, #"{"error":"this server does not host services","code":"hosting_unavailable","retryable":false}"#)
+        }
+        let hostSummary = #"""
+        {"deviceId":"dev_host","name":"Studio Mac","platform":"darwin","osVersion":"26.1","architecture":"arm64","cpuModel":"Apple M3 Pro",
+         "logicalCpus":12,"memoryTotalBytes":38654705664,"memoryAvailableBytes":13314398618,"loadAverage":[1.5,1.25,1],
+         "agentVersion":"0.9.0","agentStartedAt":"2026-11-14T08:00:00Z","gatewayExposure":"\#(exposure)","sampledAt":"\#(Self.time)"}
+        """#
+        let service = #"""
+        {"id":"system-tester","productId":"hcg.system-tester","name":"HCG System Tester","version":"0.1.0","runtime":"native-process",
+         "status":"running","health":"ok","uptimeSeconds":7500,"restarts":1,"lastHealthAt":"\#(Self.time)","capabilities":["dashboard","health"],
+         "gatewayPublished":true,"openable":\#(exposure == "lan")}
+        """#
         switch (request.method, path) {
         case ("POST", "/peer/v1/link/pair"):
             let body = try JSONSerialization.jsonObject(with: request.body) as! [String: Any]
@@ -87,6 +116,23 @@ final class FakeLinkServer: LinkTransport, @unchecked Sendable {
         case ("POST", "/peer/v1/link/messages/m1/ack"):
             let state = (try? JSONSerialization.jsonObject(with: request.body) as? [String: Any])?["state"] as? String
             return json(200, header(status: state == "opened" ? "opened" : "delivered"))
+        case ("GET", "/peer/v1/link/services"):
+            return json(200, #"{"host":\#(hostSummary),"services":[\#(service)]}"#)
+        case ("POST", "/peer/v1/link/services/system-tester/open"):
+            guard exposure == "lan" else {
+                return json(409, #"{"error":"the gateway is reachable from the Mac only; approve local-network exposure on the Mac first","code":"gateway_local_only","retryable":false}"#)
+            }
+            return json(200, #"{"url":"\#(ticketURL)","expiresAt":"2026-11-14T10:01:00Z","caFingerprint":"\#(Self.caFingerprint)","note":"Opens once within 60 seconds."}"#)
+        case ("GET", "/peer/v1/link/diagnostics"):
+            return json(200, #"""
+            {"generatedAt":"\#(Self.time)","server":{"available":true,"agentVersion":"0.9.0","startedAt":"2026-11-14T08:00:00Z","uptimeSeconds":7200,
+              "authority":"local-development"},
+             "tls":{"deviceApi":"TLS 1.3, server key pinned by the app","serverKeySha256":"\#(InvitationFixture.serverFingerprint)","gatewayRunning":true,
+              "gatewayExposure":"\#(exposure)","gatewayCaSha256":"\#(Self.caFingerprint)","gatewayLeafExpires":"2027-02-14T10:00:00Z"},
+             "services":[\#(service)],
+             "securityEvents":[{"time":"\#(Self.time)","severity":"warning","message":"Rejected a request with a bad signature from [address]"}],
+             "failedAuthentications24h":2,"summary":["HCG Server 0.9.0 is running.","1 of 1 hosted services healthy."]}
+            """#)
         case ("POST", "/peer/v1/link/unregister"):
             return json(200, #"{"status":"revoked"}"#)
         default:
@@ -115,6 +161,32 @@ final class TestClock: @unchecked Sendable {
     func advance(_ seconds: TimeInterval) { lock.withLock { current = current.addingTimeInterval(seconds) } }
 }
 
+/// A controller on memory stores and a fake server, with automatic sync off (tests call `syncNow()`).
+@MainActor
+func makeTestLinkController(folder: URL, connect: HCGConnectSetup, store: MemorySecretStore, server: FakeLinkServer,
+                            variant: TerminalLinkVariant = .vanilla, reports: [ExecutionMode: CapabilityReport] = [:],
+                            clock: TestClock = TestClock()) -> DeviceLinkController {
+    let environment = DeviceLinkEnvironment(
+        variant: variant, appVersion: "1.0", secrets: store,
+        pairingFile: PairingRecordFile(url: folder.appendingPathComponent("pairing.json")),
+        connect: connect, makeTransport: { _ in server },
+        describeDevice: { LinkDeviceDescription(name: "This iPhone", platform: "iOS 18.1", deviceId: nil) },
+        now: { clock.now() },
+        // Sleeping advances the test clock by the requested time, after a short real pause.
+        sleep: { seconds in
+            try await Task.sleep(nanoseconds: 2_000_000)
+            clock.advance(seconds)
+        },
+        preferSecureEnclave: false
+    )
+    let access = AccessPolicy.allEnabled()
+    let controller = DeviceLinkController(environment: environment) {
+        TerminalLinkCapabilities.advertised(distribution: variant, reports: reports, access: access)
+    }
+    controller.automaticSync = false
+    return controller
+}
+
 @MainActor
 final class DeviceLinkControllerTests: XCTestCase {
     var folder: URL!
@@ -136,28 +208,10 @@ final class DeviceLinkControllerTests: XCTestCase {
         return store
     }
 
-    private func makeController(connect: HCGConnectSetup = readyConnect, store: MemorySecretStore = signedInStore(), server: FakeLinkServer,
-                                variant: TerminalLinkVariant = .vanilla, reports: [ExecutionMode: CapabilityReport] = [:],
-                                clock: TestClock = TestClock()) -> DeviceLinkController {
-        let environment = DeviceLinkEnvironment(
-            variant: variant, appVersion: "1.0", secrets: store,
-            pairingFile: PairingRecordFile(url: folder.appendingPathComponent("pairing.json")),
-            connect: connect, makeTransport: { _ in server },
-            describeDevice: { LinkDeviceDescription(name: "This iPhone", platform: "iOS 18.1", deviceId: nil) },
-            now: { clock.now() },
-            // Sleeping advances the test clock by the requested time, after a short real pause.
-            sleep: { seconds in
-                try await Task.sleep(nanoseconds: 2_000_000)
-                clock.advance(seconds)
-            },
-            preferSecureEnclave: false
-        )
-        let access = AccessPolicy.allEnabled()
-        let controller = DeviceLinkController(environment: environment) {
-            TerminalLinkCapabilities.advertised(distribution: variant, reports: reports, access: access)
-        }
-        controller.automaticSync = false
-        return controller
+    func makeController(connect: HCGConnectSetup = readyConnect, store: MemorySecretStore = signedInStore(), server: FakeLinkServer,
+                        variant: TerminalLinkVariant = .vanilla, reports: [ExecutionMode: CapabilityReport] = [:],
+                        clock: TestClock = TestClock()) -> DeviceLinkController {
+        makeTestLinkController(folder: folder, connect: connect, store: store, server: server, variant: variant, reports: reports, clock: clock)
     }
 
     func testNotConfiguredContactsNothing() async {
@@ -366,7 +420,7 @@ final class DeviceLinkControllerTests: XCTestCase {
         XCTAssertTrue(server.requests("/unregister").isEmpty)
     }
 
-    private func waitUntil(timeout: TimeInterval = 5, _ condition: () -> Bool) async throws {
+    func waitUntil(timeout: TimeInterval = 5, _ condition: () -> Bool) async throws {
         let deadline = Date().addingTimeInterval(timeout)
         while !condition() {
             if Date() > deadline {

@@ -68,8 +68,8 @@ public enum HCGEcosystem {
                 link: nil
             ),
             Integration(
-                product: "HCG Server", state: .notYetAvailable,
-                detail: "HCG Server's companion devices (phones pairing over mutual TLS) are designed but not built, and it has no command or build interface. Use SSH hosts in HCG Terminal instead.",
+                product: "HCG Server", state: .partial,
+                detail: "Connected Devices pairs HCG Terminal with an HCG Server over HCG Device Link (pinned TLS, signed requests). Until HCG Connect is issued, only a server in local development pairing mode can be paired (LOCAL DEVELOPMENT — not an HCG account). It shows the server's host, hosted services and read-only diagnostics, and opens a hosted service in Safari. Remote actions stay disabled and there is no remote shell over Device Link; use SSH hosts for commands and builds.",
                 link: nil
             ),
             Integration(
