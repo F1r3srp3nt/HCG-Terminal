@@ -11,6 +11,13 @@ public struct Invitation: Sendable, Equatable {
     public var hostAddress: String
     public var fingerprint: String
     public var expiresAt: Date?
+    /// How the server authorizes apps: nil (HCG Connect sign-in) or
+    /// `"local-development"` (owner approval only, no HCG account; this server only).
+    public var authMode: String? = nil
+
+    /// The server is in local development pairing mode: pair without an HCG
+    /// sign-in, and label the connection "LOCAL DEVELOPMENT — not an HCG account".
+    public var isLocalDevelopment: Bool { authMode == DeviceLinkProtocol.Authority.localDevelopment }
 
     public enum Problem: Error, Equatable, CustomStringConvertible {
         case notAnInvitation
@@ -39,6 +46,7 @@ public struct Invitation: Sendable, Equatable {
         var ha: String
         var fp: String
         var exp: String?
+        var am: String?
     }
 
     /// Parses a code, tolerating whitespace and line breaks from copy/paste.
@@ -53,7 +61,7 @@ public struct Invitation: Sendable, Equatable {
         let exp = p.exp.flatMap(LinkJSON.parseDate)
         if let exp = exp, exp < now { throw Problem.expired }
         return Invitation(invitationId: p.id, secret: p.s, hostDeviceId: p.hd, hostName: p.hn, hostAddress: p.ha,
-                          fingerprint: p.fp.lowercased(), expiresAt: exp)
+                          fingerprint: p.fp.lowercased(), expiresAt: exp, authMode: p.am)
     }
 
     /// `https://host:port` of the server's device API.

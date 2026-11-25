@@ -129,6 +129,9 @@ public struct PairingRecord: Codable, Sendable, Equatable {
     public var requestId: String
     public var status: Status
     public var updatedAt: Date
+    /// `"local-development"` when paired without HCG Connect (older records: nil).
+    public var authMode: String?
+    public var isLocalDevelopment: Bool { authMode == DeviceLinkProtocol.Authority.localDevelopment }
 
     public init(invitation: Invitation, requestId: String, status: Status, at: Date = Date()) {
         serverAddress = invitation.hostAddress
@@ -138,6 +141,7 @@ public struct PairingRecord: Codable, Sendable, Equatable {
         self.requestId = requestId
         self.status = status
         updatedAt = at
+        authMode = invitation.authMode
     }
 
     public var baseURL: URL? { URL(string: "https://" + serverAddress) }

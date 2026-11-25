@@ -6,6 +6,15 @@ public protocol AccessTokenProvider: Sendable {
     func accessToken(forceRefresh: Bool) async throws -> String
 }
 
+/// The token provider for a server in local development pairing mode
+/// (`Invitation.isLocalDevelopment`): no HCG token is ever sent. The server
+/// authorizes the installation key and the owner's approval only, for that
+/// server alone; it never grants access to HCG services.
+public struct LocalDevelopmentTokens: AccessTokenProvider {
+    public init() {}
+    public func accessToken(forceRefresh: Bool) async throws -> String { "" }
+}
+
 /// Why a Device Link operation failed, in terms the app can act on.
 public enum DeviceLinkError: Error, Equatable, CustomStringConvertible {
     case server(status: Int, body: LinkErrorBody)
@@ -42,7 +51,7 @@ public enum DeviceLinkError: Error, Equatable, CustomStringConvertible {
     /// The installation must stop syncing and show this state (never retried automatically).
     public var endsLink: Bool {
         ["device_revoked", "unknown_installation", "wrong_account", "app_mismatch", "untrusted_client", "pin_mismatch",
-         "access_revoked", "hcg_session_ended"].contains(code)
+         "access_revoked", "hcg_session_ended", "authority_changed"].contains(code)
     }
 
     public var description: String {
@@ -226,6 +235,27 @@ public actor DeviceLinkClient {
     }
 
     public func approvals() async throws -> LinkApprovals { try await call("GET", p + "/approvals") }
+
+    // MARK: hosting (HCG Server development host)
+
+    /// Approved, non-sensitive facts about the server's computer.
+    public func host() async throws -> LinkHostSummary { try await call("GET", p + "/host") }
+
+    /// The services HCG Server hosts and their lifecycle and health.
+    public func services() async throws -> LinkServices { try await call("GET", p + "/services") }
+
+    /// A single-use, 60-second link that opens one hosted service in the
+    /// browser (needs `link.services.open`). Fails with `gateway_local_only`
+    /// until the owner approves local-network exposure on the server.
+    public func openService(_ id: String) async throws -> LinkOpenTicket {
+        guard id.range(of: "^[a-z0-9][a-z0-9-]{0,62}$", options: .regularExpression) != nil else {
+            throw DeviceLinkError.invalidRequest("not a service ID: \(id)")
+        }
+        return try await call("POST", p + "/services/" + id + "/open")
+    }
+
+    /// Read-only, redacted server health and security diagnostics (needs `link.diagnostics.read`).
+    public func diagnostics() async throws -> LinkDiagnostics { try await call("GET", p + "/diagnostics") }
 
     /// Removes this installation from the server. Needs only the installation key.
     public func unregister() async throws {

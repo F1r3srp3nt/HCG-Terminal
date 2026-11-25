@@ -8,7 +8,7 @@ public enum DeviceLinkProtocol {
     public static let reportSchema = "hcg.diagnostic-report/1"
     public static let redactionPolicy = "hcg.redaction/1"
     /// Version of this Swift client package (bump on every change; vendored copies must match).
-    public static let clientVersion = "1.0.0"
+    public static let clientVersion = "1.1.0"
 
     public enum Header {
         public static let protocolVersion = "HCG-Link-Protocol"
@@ -17,6 +17,14 @@ public enum DeviceLinkProtocol {
         public static let nonce = "HCG-Link-Nonce"
         public static let signature = "HCG-Link-Signature"
         public static let organisation = "HCG-Link-Organisation"
+    }
+
+    /// Who authorized an installation.
+    public enum Authority {
+        /// HCG Connect sign-in and ERP App Access (production).
+        public static let hcgConnect = "hcg-connect"
+        /// Owner approval only, no HCG account; this one server only (development).
+        public static let localDevelopment = "local-development"
     }
 
     /// Foreground polling cadence.
@@ -151,6 +159,8 @@ public struct LinkInstallation: Codable, Sendable, Equatable, Identifiable {
     public var state: LinkPresenceState
     public var revokedAt: Date?
     public var revokedBy: String?
+    /// `hcg-connect` or `local-development` (servers before 1.1: nil).
+    public var authority: String?
 
     public var id: String { installationId }
 
@@ -313,4 +323,97 @@ public enum LinkJSON {
         e.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         return e
     }
+}
+
+// MARK: hosting (HCG Server development host)
+
+/// Approved, non-sensitive facts about the server's computer (no user names,
+/// paths, addresses or environment).
+public struct LinkHostSummary: Codable, Sendable, Equatable {
+    public var deviceId: String
+    public var name: String
+    public var platform: String
+    public var osVersion: String?
+    public var architecture: String
+    public var cpuModel: String?
+    public var logicalCpus: Int
+    public var memoryTotalBytes: UInt64?
+    public var memoryAvailableBytes: UInt64?
+    public var loadAverage: [Double]?
+    public var agentVersion: String
+    public var agentStartedAt: Date
+    /// `loopback` (this Mac only) or `lan` (approved for the local network).
+    public var gatewayExposure: String
+    public var sampledAt: Date
+}
+
+public struct LinkHostedService: Codable, Sendable, Equatable, Identifiable {
+    public var id: String
+    public var productId: String
+    public var name: String
+    public var version: String
+    public var runtime: String
+    /// registered | starting | running | unhealthy | stopping | stopped | crashed | failed
+    public var status: String
+    /// ok | failing | unknown
+    public var health: String
+    public var detail: String?
+    public var uptimeSeconds: Int64?
+    public var restarts: Int
+    public var lastHealthAt: Date?
+    public var capabilities: [String]
+    public var gatewayPublished: Bool
+    /// Published and the gateway is approved for the local network.
+    public var openable: Bool
+
+    public var isHealthy: Bool { health == "ok" }
+}
+
+public struct LinkServices: Codable, Sendable, Equatable {
+    public var host: LinkHostSummary
+    public var services: [LinkHostedService]
+}
+
+/// A single-use, 60-second link into one hosted service. Open it in the
+/// system browser; it verifies the gateway with the HCG Server Local CA.
+public struct LinkOpenTicket: Codable, Sendable, Equatable {
+    public var url: String
+    public var expiresAt: Date
+    public var caFingerprint: String
+    public var note: String
+}
+
+public struct LinkDiagServer: Codable, Sendable, Equatable {
+    public var available: Bool
+    public var agentVersion: String
+    public var startedAt: Date
+    public var uptimeSeconds: Int64
+    /// hcg-connect | local-development | not-configured
+    public var authority: String
+}
+
+public struct LinkDiagTLS: Codable, Sendable, Equatable {
+    public var deviceApi: String
+    public var serverKeySha256: String
+    public var gatewayRunning: Bool
+    public var gatewayExposure: String
+    public var gatewayCaSha256: String
+    public var gatewayLeafExpires: Date?
+}
+
+public struct LinkDiagEvent: Codable, Sendable, Equatable {
+    public var time: Date
+    public var severity: String
+    public var message: String
+}
+
+/// Read-only, redacted server health and security diagnostics.
+public struct LinkDiagnostics: Codable, Sendable, Equatable {
+    public var generatedAt: Date
+    public var server: LinkDiagServer
+    public var tls: LinkDiagTLS
+    public var services: [LinkHostedService]
+    public var securityEvents: [LinkDiagEvent]
+    public var failedAuthentications24h: Int
+    public var summary: [String]
 }
